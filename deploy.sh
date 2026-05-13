@@ -9,6 +9,78 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m' # No Color
 
+# Helper function for Chromebook fleet inventory seeding
+configure_inventory_seeding() {
+    echo -e "\n${YELLOW}--- Chromebook Fleet Inventory Seeding Configuration ---${NC}"
+    echo "Would you like to configure automated Chromebook Fleet Inventory Seeding to anchor enterprise devices in Cloud Identity?"
+    read -p "Configure Seeding? (y/n): " DO_SEED
+    
+    if [[ "$DO_SEED" =~ ^[Yy]$ ]]; then
+        echo ""
+        echo "Select scheduling frequency for synchronizing active Directory Chromebooks with Cloud Identity:"
+        echo "  1) One-Time Execution (Run Crawl Now)"
+        echo "  2) Daily Recurring Schedule (GCP Cloud Scheduler Cron)"
+        echo "  3) Weekly Recurring Schedule (GCP Cloud Scheduler Cron)"
+        echo ""
+        read -p "Enter option [1-3]: " SEED_OPTION
+        
+        case $SEED_OPTION in
+          1)
+            echo -e "\n${BLUE}Launching inventory seeding script...${NC}"
+            if [ -d "backend/venv" ]; then
+                source backend/venv/bin/activate
+            elif [ -d "venv" ]; then
+                source venv/bin/activate
+            else
+                # Fallback to global python or create temp venv
+                python3 -m venv backend/venv && source backend/venv/bin/activate
+                pip install --quiet -r backend/requirements.txt --index-url https://pypi.org/simple
+            fi
+            python3 backend/scripts/seed_company_inventory.py
+            ;;
+          2)
+            echo -e "\n${BLUE}Configuring Daily GCP Cloud Scheduler Job...${NC}"
+            read -p "Enter your Google Cloud Project ID: " GCP_PROJECT
+            read -p "Enter target Cloud Scheduler region [us-central1]: " GCP_REGION
+            GCP_REGION=${GCP_REGION:-us-central1}
+            
+            gcloud scheduler jobs create http seed-chromebook-inventory-daily \
+                --schedule="0 2 * * *" \
+                --uri="https://device-trust-gateway-HASH-uc.a.run.app/api/cron/cleanup" \
+                --http-method=POST \
+                --headers="X-Cloudscheduler=true" \
+                --location="$GCP_REGION" \
+                --project="$GCP_PROJECT" \
+                --description="Daily crawl of active Chromebooks for Cloud Identity anchoring"
+                
+            echo -e "${GREEN}✔ Daily Cloud Scheduler Job configured successfully! (Runs at 2:00 AM daily)${NC}"
+            ;;
+          3)
+            echo -e "\n${BLUE}Configuring Weekly GCP Cloud Scheduler Job...${NC}"
+            read -p "Enter your Google Cloud Project ID: " GCP_PROJECT
+            read -p "Enter target Cloud Scheduler region [us-central1]: " GCP_REGION
+            GCP_REGION=${GCP_REGION:-us-central1}
+            
+            gcloud scheduler jobs create http seed-chromebook-inventory-weekly \
+                --schedule="0 3 * * 0" \
+                --uri="https://device-trust-gateway-HASH-uc.a.run.app/api/cron/cleanup" \
+                --http-method=POST \
+                --headers="X-Cloudscheduler=true" \
+                --location="$GCP_REGION" \
+                --project="$GCP_PROJECT" \
+                --description="Weekly crawl of active Chromebooks for Cloud Identity anchoring"
+                
+            echo -e "${GREEN}✔ Weekly Cloud Scheduler Job configured successfully! (Runs at 3:00 AM every Sunday)${NC}"
+            ;;
+          *)
+            echo -e "${RED}Invalid scheduling option. Skipping seeding configuration.${NC}"
+            ;;
+        esac
+    else
+        echo -e "${BLUE}Skipping inventory seeding configuration.${NC}"
+    fi
+}
+
 echo -e "${BLUE}=========================================================${NC}"
 echo -e "${BLUE}      Device Trust Gateway - Interactive Deployer        ${NC}"
 echo -e "${BLUE}=========================================================${NC}"
@@ -16,11 +88,9 @@ echo ""
 echo "Please select your desired deployment target:"
 echo "  1) Google Cloud (GCP Cloud Run + Secret Manager)"
 echo "  2) On-Premise (Docker Compose + Local .env)"
-echo "  3) Local Development Environment (FastAPI + React)"
-echo "  4) Seed Company-Owned Chromebook Inventory"
-echo "  5) Exit"
+echo "  3) Exit"
 echo ""
-read -p "Enter option [1-5]: " OPTION
+read -p "Enter option [1-3]: " OPTION
 
 case $OPTION in
   1)
@@ -68,6 +138,9 @@ case $OPTION in
     echo -e "\n${GREEN}=========================================================${NC}"
     echo -e "${GREEN}✔ GCP Deployment Complete!${NC}"
     echo -e "${GREEN}=========================================================${NC}"
+    
+    # Trigger seamless inventory seeding configuration
+    configure_inventory_seeding
     ;;
     
   2)
@@ -98,90 +171,12 @@ EOF
     echo -e "\n${GREEN}=========================================================${NC}"
     echo -e "${GREEN}✔ On-Premise Deployment Complete! Backend running on port 8080.${NC}"
     echo -e "${GREEN}=========================================================${NC}"
+    
+    # Trigger seamless inventory seeding configuration
+    configure_inventory_seeding
     ;;
     
   3)
-    echo -e "\n${YELLOW}--- Setting up Local Development Environment ---${NC}"
-    
-    echo -e "\n${BLUE}[1/2] Setting up Python virtual environment & backend dependencies...${NC}"
-    cd backend
-    python3 -m venv venv
-    source venv/bin/activate
-    pip install --upgrade pip
-    pip install -r requirements.txt
-    cd ..
-    
-    echo -e "\n${BLUE}[2/2] Setting up React frontend dependencies...${NC}"
-    cd frontend
-    npm install
-    cd ..
-    
-    echo -e "\n${GREEN}=========================================================${NC}"
-    echo -e "${GREEN}✔ Local Dev Environment Initialized Successfully!${NC}"
-    echo -e "To run the backend server: ${YELLOW}cd backend && source venv/bin/activate && uvicorn backend.main:app --reload --port 8080${NC}"
-    echo -e "To run the frontend UI:    ${YELLOW}cd frontend && npm start${NC}"
-    echo -e "${GREEN}=========================================================${NC}"
-    ;;
-    
-  4)
-    echo -e "\n${YELLOW}--- Chromebook Fleet Inventory Seeding Configuration ---${NC}"
-    echo "Select scheduling frequency for synchronizing active Directory Chromebooks with Cloud Identity:"
-    echo "  1) One-Time Execution (Run Crawl Now)"
-    echo "  2) Daily Recurring Schedule (GCP Cloud Scheduler Cron)"
-    echo "  3) Weekly Recurring Schedule (GCP Cloud Scheduler Cron)"
-    echo ""
-    read -p "Enter option [1-3]: " SEED_OPTION
-    
-    case $SEED_OPTION in
-      1)
-        echo -e "\n${BLUE}Launching inventory seeding script...${NC}"
-        if [ -d "backend/venv" ]; then
-            source backend/venv/bin/activate
-        fi
-        python3 backend/scripts/seed_company_inventory.py
-        ;;
-      2)
-        echo -e "\n${BLUE}Configuring Daily GCP Cloud Scheduler Job...${NC}"
-        read -p "Enter your Google Cloud Project ID: " GCP_PROJECT
-        read -p "Enter target Cloud Scheduler region [us-central1]: " GCP_REGION
-        GCP_REGION=${GCP_REGION:-us-central1}
-        
-        gcloud scheduler jobs create http seed-chromebook-inventory-daily \
-            --schedule="0 2 * * *" \
-            --uri="https://device-trust-gateway-HASH-uc.a.run.app/api/cron/cleanup" \
-            --http-method=POST \
-            --headers="X-Cloudscheduler=true" \
-            --location="$GCP_REGION" \
-            --project="$GCP_PROJECT" \
-            --description="Daily crawl of active Chromebooks for Cloud Identity anchoring"
-            
-        echo -e "${GREEN}✔ Daily Cloud Scheduler Job configured successfully! (Runs at 2:00 AM daily)${NC}"
-        ;;
-      3)
-        echo -e "\n${BLUE}Configuring Weekly GCP Cloud Scheduler Job...${NC}"
-        read -p "Enter your Google Cloud Project ID: " GCP_PROJECT
-        read -p "Enter target Cloud Scheduler region [us-central1]: " GCP_REGION
-        GCP_REGION=${GCP_REGION:-us-central1}
-        
-        gcloud scheduler jobs create http seed-chromebook-inventory-weekly \
-            --schedule="0 3 * * 0" \
-            --uri="https://device-trust-gateway-HASH-uc.a.run.app/api/cron/cleanup" \
-            --http-method=POST \
-            --headers="X-Cloudscheduler=true" \
-            --location="$GCP_REGION" \
-            --project="$GCP_PROJECT" \
-            --description="Weekly crawl of active Chromebooks for Cloud Identity anchoring"
-            
-        echo -e "${GREEN}✔ Weekly Cloud Scheduler Job configured successfully! (Runs at 3:00 AM every Sunday)${NC}"
-        ;;
-      *)
-        echo -e "${RED}Invalid scheduling option. Exiting.${NC}"
-        exit 1
-        ;;
-    esac
-    ;;
-    
-  5)
     echo "Exiting."
     exit 0
     ;;

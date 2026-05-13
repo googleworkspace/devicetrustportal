@@ -51,11 +51,16 @@ To launch the deployer from your terminal, run:
 ./deploy.sh
 ```
 
-You will be presented with an interactive menu:
-1. **Google Cloud (GCP Cloud Run + Secret Manager):** Prompts for project ID/region, enables GCP APIs, seeds Secret Manager configurations, and deploys directly to Cloud Run.
-2. **On-Premise (Docker Compose + Local `.env`):** Automatically generates a baseline `.env` file and launches containerized services in daemon mode.
-3. **Local Development Environment:** Installs Python virtual environment dependencies and Node.js frontend modules automatically.
-4. **Seed Company-Owned Chromebook Inventory:** Prompts for scheduling frequency to crawl Directory API Chromebooks and anchor them in Cloud Identity.
+You will be presented with a simplified interactive menu:
+```text
+Please select your desired deployment target:
+  1) Google Cloud (GCP Cloud Run + Secret Manager)
+  2) On-Premise (Docker Compose + Local .env)
+  3) Exit
+```
+
+### Seamless Fleet Seeding Integration:
+Upon successful deployment to either **Google Cloud** or **On-Premise**, the script automatically prompts you to configure automated Chromebook inventory seeding (`seed_company_inventory.py`). You can choose to execute an immediate one-time crawl or configure recurring daily/weekly Google Cloud Scheduler jobs.
 
 ---
 
@@ -63,7 +68,7 @@ You will be presented with an interactive menu:
 
 For organizations with tens of thousands or hundreds of thousands of active ChromeOS devices, we provide an automated inventory seeding tool (`seed_company_inventory.py`).
 
-You can launch this tool directly from `./deploy.sh` (Option 4) and select one of three execution frequencies:
+This tool is seamlessly integrated into `./deploy.sh` and supports three execution frequencies:
 1. **One-Time Execution:** Runs the crawl immediately from your terminal, paginating through the Directory API and executing batch registration requests against Cloud Identity.
 2. **Daily Recurring Schedule:** Configures a Google Cloud Scheduler cron job to run daily at 2:00 AM.
 3. **Weekly Recurring Schedule:** Configures a Google Cloud Scheduler cron job to run every Sunday at 3:00 AM.
