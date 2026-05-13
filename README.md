@@ -13,7 +13,7 @@ The **Device Trust Gateway** is a secure bridge application designed for organiz
 6. [Manual Setup: Docker (On-Premise)](#-manual-setup-docker-on-premise)
 7. [Manual Setup: Google Cloud (GCP Cloud Run)](#-manual-setup-google-cloud-gcp-cloud-run)
 8. [Configuration & Admin UI](#-configuration--admin-ui)
-9. [Firewall & Network Allowlist](#-firewall--network-allowlist)
+9. [Firewall, Network Allowlist & Anti-Spoofing](#-firewall-network-allowlist--anti-spoofing)
 
 ---
 
@@ -160,13 +160,14 @@ Once the application is running, Workspace Administrators can dynamically update
 
 ---
 
-## 🔐 Firewall & Network Allowlist
+## 🔐 Firewall, Network Allowlist & Anti-Spoofing
 
-If you are deploying the Gateway on-premise (Docker Compose) inside an enterprise network, explicit firewall rules are required for both incoming user traffic and outgoing Google API communication.
+If you are deploying the Gateway on-premise (Docker Compose) inside an enterprise network, explicit firewall rules are required for both incoming user traffic and outgoing Google API communication, alongside strict reverse proxy anti-spoofing security measures.
 
-For the complete, detailed specification covering exact ports, protocols, and reverse proxy header requirements, please refer to our dedicated documentation:
+For the complete, detailed specification covering exact ports, protocols, reverse proxy header stripping, and Uvicorn trust configurations, please refer to our dedicated enterprise guide:
 👉 **[docs/network_requirements.md](docs/network_requirements.md)**
 
-### Summary of Rules:
-* **📥 Inbound (Ingress):** Allow TCP ports `80` and `443` from internal campus subnets (for Network-Gated approvals) and optionally the external internet (for off-campus Trust Chaining). Ensure reverse proxies preserve `X-Forwarded-For` client IP headers.
-* **📤 Outbound (Egress):** Allow TCP port `443` (HTTPS) from the Gateway host to Google API endpoints including `cloudidentity.googleapis.com`, `admin.googleapis.com`, `oauth2.googleapis.com`, `secretmanager.googleapis.com`, and `pubsub.googleapis.com`.
+### Summary of Anti-Spoofing Security Tiers:
+* **🛡️ Upstream Proxy Stripping:** Enterprise reverse proxies (Nginx, F5, Cloudflare) must actively strip forged `X-Forwarded-For` headers arriving from external internet interfaces, overwriting them with authentic TCP socket client IPs.
+* **🔒 Uvicorn Trust Gating (`--forwarded-allow-ips`):** Configure Uvicorn to only accept forwarded IP headers if they arrive directly from the known internal IP address of your reverse proxy host.
+* **🔑 Session Binding:** Network IP trust alone cannot grant device approval. Requesting clients must also present a valid, authenticated Google Workspace OIDC Bearer token session for the target user.
