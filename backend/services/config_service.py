@@ -1,0 +1,81 @@
+import os
+import json
+from typing import Dict, Any, List
+from pydantic import BaseModel, Field
+from dotenv import load_dotenv, set_key
+
+load_dotenv()
+
+class TenantConfig(BaseModel):
+    customer_id: str = Field(default="customers/my_customer", description="Google Workspace Customer Resource Name")
+    inactivity_threshold_days: int = Field(default=90, description="Days of inactivity before automated revocation")
+    trusted_ip_ranges: List[str] = Field(default=["127.0.0.1/32", "10.0.0.0/8"], description="Trusted IP CIDR ranges for network gating")
+    chaining_allowed_groups: List[str] = Field(default=["trust-chaining-allowed@example.com"], description="Google Groups allowed to perform trust chaining")
+    chaining_allowed_ous: List[str] = Field(default=["/Staff", "/Faculty"], description="Organizational Units allowed to perform trust chaining")
+
+class ConfigService:
+    def __init__(self):
+        self.project_id = os.getenv("GOOGLE_CLOUD_PROJECT")
+        self.secret_name = os.getenv("SECRET_NAME", "device_trust_gateway_config")
+        self.mock_mode = os.getenv("MOCK_MODE", "false").lower() == "true"
+        self.use_secret_manager = os.getenv("USE_SECRET_MANAGER", "false").lower() == "true" and not self.mock_mode
+        
+        if self.use_secret_manager:
+            try:
+                from google.cloud import secretmanager
+                self.sm_client = secretmanager.SecretManagerServiceClient()
+            except Exception as e:
+                print(f"Warning: Failed to initialize Secret Manager client: {e}. Falling back to .env")
+                self.use_secret_manager = False
+
+    def get_tenant_config(self) -> TenantConfig:
+        if self.use_secret_manager and self.project_id:
+            try:
+                name = f"projects/{self.project_id}/secrets/{self.secret_name}/versions/latest"
+                response = self.sm_client.access_secret_version(request={"name": name})
+                payload = response.payload.data.decode("UTF-8")
+                data = json.loads(payload)
+                return TenantConfig(**data)
+            except Exception as e:
+                print(f"Error reading from Secret Manager: {e}. Falling back to local config.")
+
+        return TenantConfig(
+            customer_id=os.getenv("TENANT_CUSTOMER_ID", "customers/my_customer"),
+            inactivity_threshold_days=int(os.getenv("TENANT_INACTIVITY_THRESHOLD", 90)),
+            trusted_ip_ranges=json.loads(os.getenv("TENANT_TRUSTED_IPS", '["127.0.0.1/32", "10.0.0.0/8"]')),
+            chaining_allowed_groups=json.loads(os.getenv("TENANT_CHAINING_GROUPS", '["trust-chaining-allowed@example.com"]')),
+            chaining_allowed_ous=json.loads(os.getenv("TENANT_CHAINING_OUS", '["/Staff", "/Faculty"]'))
+        )
+
+    def update_tenant_config(self, config: TenantConfig) -> bool:
+        if self.mock_mode:
+            return True
+            
+        config_dict = config.model_dump()
+        config_json = json.dumps(config_dict)
+
+        if self.use_secret_manager and self.project_id:
+            try:
+                parent = f"projects/{self.project_id}/secrets/{self.secret_name}"
+                self.sm_client.add_secret_version(
+                    request={"parent": parent, "payload": {"data": config_json.encode("UTF-8")}}
+                )
+                return True
+            except Exception as e:
+                print(f"Error updating Secret Manager: {e}. Falling back to local .env update.")
+
+        dotenv_path = os.path.join(os.getcwd(), ".env")
+        if not os.path.exists(dotenv_path):
+            with open(dotenv_path, "w") as f:
+                f.write("# Device Trust Gateway Configuration\n")
+
+        set_key(dotenv_path, "TENANT_CUSTOMER_ID", config.customer_id)
+        set_key(dotenv_path, "TENANT_INACTIVITY_THRESHOLD", str(config.inactivity_threshold_days))
+        set_key(dotenv_path, "TENANT_TRUSTED_IPS", json.dumps(config.trusted_ip_ranges))
+        set_key(dotenv_path, "TENANT_CHAINING_GROUPS", json.dumps(config.chaining_allowed_groups))
+        set_key(dotenv_path, "TENANT_CHAINING_OUS", json.dumps(config.chaining_allowed_ous))
+        
+        load_dotenv(dotenv_path, override=True)
+        return True
+
+config_service = ConfigService()
