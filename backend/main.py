@@ -1,5 +1,7 @@
+import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from backend.routes import admin, chaining, network_auth, cron, webhook
 
 app = FastAPI(
@@ -8,7 +10,6 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Enable CORS for frontend communication
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -26,8 +27,13 @@ app.include_router(webhook.router)
 
 @app.get("/health")
 def health_check():
-    """Health check endpoint for load balancers and container orchestration."""
     return {"status": "OK"}
+
+# Serve React static frontend build files
+if os.path.exists("frontend/build"):
+    app.mount("/", StaticFiles(directory="frontend/build", html=True), name="frontend")
+elif os.path.exists("../frontend/build"):
+    app.mount("/", StaticFiles(directory="../frontend/build", html=True), name="frontend")
 
 if __name__ == "__main__":
     import uvicorn

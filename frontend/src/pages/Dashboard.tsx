@@ -1,13 +1,21 @@
 import React, { useState, useEffect } from "react";
 import { triggerCronCleanup } from "../services/api";
+import { GoogleLoginButton } from "../components/GoogleLoginButton";
 
 export const Dashboard: React.FC = () => {
   const [userEmail, setUserEmail] = useState(() => localStorage.getItem("userEmail") || "student@example.com");
   const [message, setMessage] = useState("");
+  const [authToken, setAuthToken] = useState(() => localStorage.getItem("googleIdToken") || "");
 
   useEffect(() => {
     localStorage.setItem("userEmail", userEmail);
   }, [userEmail]);
+
+  const handleLoginSuccess = (email: string, token: string) => {
+    setUserEmail(email);
+    setAuthToken(token);
+    setMessage(`Successfully authenticated with Google Sign-In as ${email}`);
+  };
 
   const handleCron = async () => {
     try {
@@ -20,22 +28,32 @@ export const Dashboard: React.FC = () => {
 
   return (
     <div style={{ padding: "20px", fontFamily: "sans-serif", maxWidth: "800px", margin: "0 auto" }}>
-      <header style={{ borderBottom: "1px solid #ccc", paddingBottom: "10px", marginBottom: "20px" }}>
+      <header style={{ borderBottom: "1px solid #ccc", paddingBottom: "15px", marginBottom: "20px" }}>
         <h1>Device Trust Gateway</h1>
-        <div style={{ marginTop: "10px" }}>
-          <label style={{ fontWeight: "bold", marginRight: "10px" }}>Active User:</label>
-          <input
-            type="email"
-            value={userEmail}
-            onChange={(e) => setUserEmail(e.target.value)}
-            style={{ padding: "5px", width: "250px" }}
-          />
-          <span style={{ marginLeft: "10px", fontSize: "12px", color: "#666" }}>(Update to simulate different roles)</span>
+        
+        {/* Google Sign-In Authentication */}
+        <div style={{ backgroundColor: "#f8f9fa", padding: "15px", borderRadius: "6px", marginTop: "15px" }}>
+          <h3 style={{ marginTop: 0, marginBottom: "10px", fontSize: "16px" }}>Google Authentication</h3>
+          <p style={{ fontSize: "14px", color: "#555", marginBottom: "15px" }}>
+            Sign in with your Google Workspace account to authorize live device approvals and access admin configurations.
+          </p>
+          <GoogleLoginButton onLoginSuccess={handleLoginSuccess} />
+          
+          <div style={{ marginTop: "15px", borderTop: "1px solid #ddd", paddingTop: "10px" }}>
+            <label style={{ fontWeight: "bold", marginRight: "10px", fontSize: "14px" }}>Active Session Role:</label>
+            <input
+              type="email"
+              value={userEmail}
+              onChange={(e) => setUserEmail(e.target.value)}
+              style={{ padding: "5px", width: "250px" }}
+            />
+            <span style={{ marginLeft: "10px", fontSize: "12px", color: "#666" }}>(Editable for local dev simulation)</span>
+          </div>
         </div>
       </header>
 
       {message && (
-        <div style={{ padding: "10px", backgroundColor: "#e6f7ff", border: "1px solid #91d5ff", marginBottom: "20px" }}>
+        <div style={{ padding: "12px", backgroundColor: "#e6f7ff", border: "1px solid #91d5ff", marginBottom: "20px", borderRadius: "4px" }}>
           {message}
         </div>
       )}
