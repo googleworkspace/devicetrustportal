@@ -9,6 +9,7 @@ import sys
 import time
 import random
 import google.auth
+from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from googleapiclient.http import BatchHttpRequest
@@ -21,8 +22,19 @@ SCOPES = [
 class InventorySeeder:
     def __init__(self):
         self.customer_id = os.getenv("TENANT_CUSTOMER_ID", "my_customer")
+        key_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+        admin_email = os.getenv("WORKSPACE_ADMIN_EMAIL")
+
         try:
-            credentials, _ = google.auth.default(scopes=SCOPES)
+            if key_path and admin_email and os.path.exists(key_path):
+                print(f"Initializing Google API client with DWD impersonation for subject: {admin_email}")
+                credentials = service_account.Credentials.from_service_account_file(
+                    key_path, scopes=SCOPES, subject=admin_email
+                )
+            else:
+                print("Initializing Google API client using Application Default Credentials (ADC)...")
+                credentials, _ = google.auth.default(scopes=SCOPES)
+
             self.admin_service = build("admin", "directory_v1", credentials=credentials)
             self.ci_service = build("cloudidentity", "v1", credentials=credentials)
         except Exception as e:
@@ -65,7 +77,8 @@ class InventorySeeder:
                     continue
                 else:
                     print(f"\n❌ Live API Error during pagination: {e}")
-                    print("Ensure your Google Cloud Service Account or user credentials possess Domain-Wide Delegation (DWD) for Workspace Admin Directory and Cloud Identity Devices.")
+                    print("\n[Authorization Diagnostic] This error indicates insufficient Google Workspace Admin Directory privileges.")
+                    print("Please ensure that your Service Account has been granted Domain-Wide Delegation (DWD) in the Google Workspace Admin Console, and that WORKSPACE_ADMIN_EMAIL is set to a valid Super Administrator email address.")
                     sys.exit(1)
                 
         print("\n=========================================================")

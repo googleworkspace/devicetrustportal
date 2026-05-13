@@ -2,6 +2,7 @@ import os
 import datetime
 from typing import List, Dict, Any, Optional
 import google.auth
+from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
@@ -11,15 +12,23 @@ class CloudIdentityService:
             "https://www.googleapis.com/auth/cloud-identity.devices",
             "https://www.googleapis.com/auth/cloud-identity"
         ]
+        key_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+        admin_email = os.getenv("WORKSPACE_ADMIN_EMAIL")
+
         try:
-            credentials, _ = google.auth.default(scopes=self.scopes)
+            if key_path and admin_email and os.path.exists(key_path):
+                credentials = service_account.Credentials.from_service_account_file(
+                    key_path, scopes=self.scopes, subject=admin_email
+                )
+            else:
+                credentials, _ = google.auth.default(scopes=self.scopes)
+
             self.service = build("cloudidentity", "v1", credentials=credentials)
         except Exception as e:
             print(f"Error initializing Cloud Identity service: {e}")
             self.service = None
 
     def approve_device_user(self, device_user_name: str, customer_id: str) -> Dict[str, Any]:
-        """Approves a device user to access organizational data."""
         if not self.service:
             raise Exception("Cloud Identity service not initialized with valid credentials")
 
@@ -32,7 +41,6 @@ class CloudIdentityService:
             raise Exception(f"Cloud Identity API error during approve: {e}")
 
     def lookup_device_user(self, user_email: str, raw_device_id: str, customer_id: str) -> Optional[str]:
-        """Option A: Lookup fully qualified device user resource name."""
         if not self.service:
             raise Exception("Cloud Identity service not initialized with valid credentials")
 
@@ -61,7 +69,6 @@ class CloudIdentityService:
             raise Exception(f"Cloud Identity API error during lookup: {e}")
 
     def parse_endpoint_verification_header(self, ev_header: str) -> Optional[str]:
-        """Option B: Parse device resource name directly from Endpoint Verification / CAA headers."""
         if "devices/" in ev_header and "/deviceUsers/" in ev_header:
             parts = ev_header.split("devices/")
             if len(parts) > 1:
@@ -70,7 +77,6 @@ class CloudIdentityService:
         return None
 
     def list_inactive_devices(self, threshold_days: int, customer_id: str) -> List[Dict[str, Any]]:
-        """Finds devices whose last sync time exceeds the threshold."""
         if not self.service:
             raise Exception("Cloud Identity service not initialized with valid credentials")
 
@@ -96,7 +102,6 @@ class CloudIdentityService:
             raise Exception(f"Cloud Identity API error during inactive list: {e}")
 
     def revoke_device_user(self, device_user_name: str, customer_id: str) -> Dict[str, Any]:
-        """Revokes approved status by deleting or blocking the device user."""
         if not self.service:
             raise Exception("Cloud Identity service not initialized with valid credentials")
 

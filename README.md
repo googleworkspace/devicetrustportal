@@ -62,8 +62,13 @@ Please select your desired deployment target:
   3) Exit
 ```
 
-### Seamless Fleet Seeding Integration:
-Upon successful deployment to either **Google Cloud** or **On-Premise**, the script automatically prompts you to configure automated Chromebook inventory seeding (`seed_company_inventory.py`). You can choose to execute an immediate one-time crawl, configure recurring daily/weekly Google Cloud Scheduler jobs, or establish real-time event-driven Pub/Sub webhooks.
+### Domain-Wide Delegation (DWD) Setup Wizard:
+When configuring live API execution or Chromebook fleet seeding, the script launches an interactive DWD Setup Wizard:
+1. Automatically verifies or creates a dedicated Google Cloud Service Account (`device-trust-gateway-sa`).
+2. Generates and downloads a private JSON key (`dwd_key.json`).
+3. Extracts your exact Service Account Client ID.
+4. Displays explicit instructions to authorize the Client ID and required scopes in the Google Workspace Admin Console (`https://admin.google.com/ac/owl/domainwidedelegation`), pausing execution until you confirm authorization.
+5. Prompts for your Super Administrator email and exports credentials for flawless impersonation.
 
 ---
 

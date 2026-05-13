@@ -9,6 +9,66 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m' # No Color
 
+# Helper function for interactive Domain-Wide Delegation (DWD) Setup
+setup_domain_wide_delegation() {
+    echo -e "\n${YELLOW}===================================================================================================${NC}"
+    echo -e "${YELLOW}      Google Workspace Domain-Wide Delegation (DWD) Setup Wizard                                  ${NC}"
+    echo -e "${YELLOW}===================================================================================================${NC}"
+    echo -e "Live API calls to Google Workspace Admin Directory and Cloud Identity require a Service Account"
+    echo -e "configured with Domain-Wide Delegation (DWD) and a designated Super Administrator email to impersonate."
+    echo ""
+    
+    read -p "Enter your Google Cloud Project ID: " GCP_PROJECT
+    SA_NAME="device-trust-gateway-sa"
+    SA_EMAIL="${SA_NAME}@${GCP_PROJECT}.iam.gserviceaccount.com"
+    
+    echo -e "\n${BLUE}[1/4] Verifying Service Account '$SA_EMAIL'...${NC}"
+    if ! gcloud iam service-accounts describe "$SA_EMAIL" --project="$GCP_PROJECT" &>/dev/null; then
+        echo "Creating new Service Account '$SA_NAME'..."
+        gcloud iam service-accounts create "$SA_NAME" \
+            --display-name="Device Trust Gateway Service Account for DWD" \
+            --project="$GCP_PROJECT" --quiet
+    else
+        echo -e "${GREEN}✔ Service Account exists.${NC}"
+    fi
+    
+    echo -e "\n${BLUE}[2/4] Generating JSON Private Key...${NC}"
+    KEY_FILE="dwd_key.json"
+    if [ ! -f "$KEY_FILE" ]; then
+        gcloud iam service-accounts keys create "$KEY_FILE" \
+            --iam-account="$SA_EMAIL" \
+            --project="$GCP_PROJECT" --quiet
+        echo -e "${GREEN}✔ JSON key downloaded to '$(pwd)/$KEY_FILE'.${NC}"
+    else
+        echo -e "${GREEN}✔ Existing key file '$KEY_FILE' detected.${NC}"
+    fi
+    
+    echo -e "\n${BLUE}[3/4] Retrieving Service Account Client ID...${NC}"
+    CLIENT_ID=$(gcloud iam service-accounts describe "$SA_EMAIL" --project="$GCP_PROJECT" --format="value(oauth2ClientId)" 2>/dev/null || gcloud iam service-accounts describe "$SA_EMAIL" --project="$GCP_PROJECT" --format="value(uniqueId)")
+    
+    echo -e "\n${RED}===================================================================================================${NC}"
+    echo -e "${YELLOW}🔑 REQUIRED WORKSPACE ADMIN CONSOLE ACTION:${NC}"
+    echo -e "To authorize this Service Account to read Chromebook fleets and approve BYOD devices:"
+    echo -e "  1. Open the Google Workspace Admin Console: https://admin.google.com/ac/owl/domainwidedelegation"
+    echo -e "  2. Click ${YELLOW}'Add new'${NC}."
+    echo -e "  3. In the ${YELLOW}'Client ID'${NC} field, copy and paste this exact numeric ID:"
+    echo -e "     ${GREEN}${CLIENT_ID}${NC}"
+    echo -e "  4. In the ${YELLOW}'OAuth Scopes'${NC} field, copy and paste this exact comma-separated string:"
+    echo -e "     ${GREEN}https://www.googleapis.com/auth/admin.directory.device.chromeos.readonly,https://www.googleapis.com/auth/cloud-identity.devices${NC}"
+    echo -e "  5. Click ${YELLOW}'Authorize'${NC}."
+    echo -e "${RED}===================================================================================================${NC}\n"
+    
+    read -p "Press [ENTER] when Domain-Wide Delegation has been successfully authorized in the Workspace Admin console..."
+    
+    echo ""
+    read -p "Enter the email address of a Workspace Super Administrator to impersonate (e.g., admin@yourdomain.com): " ADMIN_EMAIL
+    
+    export GOOGLE_APPLICATION_CREDENTIALS="$(pwd)/$KEY_FILE"
+    export WORKSPACE_ADMIN_EMAIL="$ADMIN_EMAIL"
+    
+    echo -e "\n${GREEN}✔ DWD Setup Complete! Credentials exported for live API execution.${NC}"
+}
+
 # Helper function for Chromebook fleet inventory seeding
 configure_inventory_seeding() {
     echo -e "\n${YELLOW}--- Chromebook Fleet Inventory Seeding Configuration ---${NC}"
@@ -27,7 +87,10 @@ configure_inventory_seeding() {
         
         case $SEED_OPTION in
           1)
-            echo -e "\n${BLUE}Launching inventory seeding script...${NC}"
+            # Establish DWD credentials before live execution
+            setup_domain_wide_delegation
+            
+            echo -e "\n${BLUE}Launching live inventory seeding script...${NC}"
             if [ -d "backend/venv" ]; then
                 source backend/venv/bin/activate
             elif [ -d "venv" ]; then
@@ -175,7 +238,6 @@ case $OPTION in
     echo -e "\n${BLUE}[5/5] Building container and deploying to Cloud Run (suppressing build logs)...${NC}"
     IMAGE_TAG="gcr.io/$GCP_PROJECT/device-trust-gateway"
     
-    # Suppress massive Cloud Build streaming output for clean terminal UX
     gcloud builds submit --config cloudbuild.yaml . --project="$GCP_PROJECT" --suppress-logs
     
     gcloud run deploy device-trust-gateway \
