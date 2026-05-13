@@ -63,18 +63,19 @@ Please select your desired deployment target:
 ```
 
 ### Seamless Fleet Seeding Integration:
-Upon successful deployment to either **Google Cloud** or **On-Premise**, the script automatically prompts you to configure automated Chromebook inventory seeding (`seed_company_inventory.py`). You can choose to execute an immediate one-time crawl or configure recurring daily/weekly Google Cloud Scheduler jobs.
+Upon successful deployment to either **Google Cloud** or **On-Premise**, the script automatically prompts you to configure automated Chromebook inventory seeding (`seed_company_inventory.py`). You can choose to execute an immediate one-time crawl, configure recurring daily/weekly Google Cloud Scheduler jobs, or establish real-time event-driven Pub/Sub webhooks.
 
 ---
 
 ## 💻 Chromebook Fleet Seeding Tool
 
-For organizations with tens of thousands or hundreds of thousands of active ChromeOS devices, we provide an automated inventory seeding tool (`seed_company_inventory.py`).
+For organizations with tens of thousands or hundreds of thousands of active ChromeOS devices, we provide an automated inventory seeding tool (`seed_company_inventory.py`) and real-time webhook endpoints (`/api/webhook/chrome-enrollment`).
 
-This tool is seamlessly integrated into `./deploy.sh` and supports three execution frequencies:
+This tool is seamlessly integrated into `./deploy.sh` and supports four execution frequencies:
 1. **One-Time Execution:** Runs the crawl immediately from your terminal, paginating through the Directory API and executing batch registration requests against Cloud Identity.
 2. **Daily Recurring Schedule:** Configures a Google Cloud Scheduler cron job to run daily at 2:00 AM.
 3. **Weekly Recurring Schedule:** Configures a Google Cloud Scheduler cron job to run every Sunday at 3:00 AM.
+4. **Event-Driven Real-Time Webhook (Pub/Sub Push) + Weekly Safety Net:** Establishes a real-time Google Cloud Pub/Sub push subscription listening for Google Workspace Reports API enrollment events (`ENTERPRISE_ENROLLMENT`), anchoring newly enrolled Chromebooks instantly while maintaining a weekly recurring sync as a reliable safety net.
 
 ---
 
@@ -127,7 +128,7 @@ docker-compose -f deploy/docker-compose.yml up --build -d
 
 1. Enable required Google Cloud APIs:
 ```bash
-gcloud services enable run.googleapis.com secretmanager.googleapis.com cloudidentity.googleapis.com cloudscheduler.googleapis.com
+gcloud services enable run.googleapis.com secretmanager.googleapis.com cloudidentity.googleapis.com cloudscheduler.googleapis.com pubsub.googleapis.com
 ```
 
 2. Create a Secret Manager secret to hold dynamic tenant configurations:
@@ -163,5 +164,4 @@ For the complete, detailed specification covering exact ports, protocols, and re
 
 ### Summary of Rules:
 * **📥 Inbound (Ingress):** Allow TCP ports `80` and `443` from internal campus subnets (for Network-Gated approvals) and optionally the external internet (for off-campus Trust Chaining). Ensure reverse proxies preserve `X-Forwarded-For` client IP headers.
-* **📤 Outbound (Egress):** Allow TCP port `443` (HTTPS) from the Gateway host to Google API endpoints including `cloudidentity.googleapis.com`, `admin.googleapis.com`, `oauth2.googleapis.com`, and `secretmanager.googleapis.com`.
-
+* **📤 Outbound (Egress):** Allow TCP port `443` (HTTPS) from the Gateway host to Google API endpoints including `cloudidentity.googleapis.com`, `admin.googleapis.com`, `oauth2.googleapis.com`, `secretmanager.googleapis.com`, and `pubsub.googleapis.com`.

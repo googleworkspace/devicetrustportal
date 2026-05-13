@@ -21,8 +21,9 @@ configure_inventory_seeding() {
         echo "  1) One-Time Execution (Run Crawl Now)"
         echo "  2) Daily Recurring Schedule (GCP Cloud Scheduler Cron)"
         echo "  3) Weekly Recurring Schedule (GCP Cloud Scheduler Cron)"
+        echo "  4) Event-Driven Real-Time Webhook (Pub/Sub Push) + Weekly Safety Net"
         echo ""
-        read -p "Enter option [1-3]: " SEED_OPTION
+        read -p "Enter option [1-4]: " SEED_OPTION
         
         case $SEED_OPTION in
           1)
@@ -70,6 +71,41 @@ configure_inventory_seeding() {
                 --description="Weekly crawl of active Chromebooks for Cloud Identity anchoring"
                 
             echo -e "${GREEN}✔ Weekly Cloud Scheduler Job configured successfully! (Runs at 3:00 AM every Sunday)${NC}"
+            ;;
+          4)
+            echo -e "\n${BLUE}Configuring Event-Driven Pub/Sub Push Webhook & Weekly Cron Safety Net...${NC}"
+            read -p "Enter your Google Cloud Project ID: " GCP_PROJECT
+            read -p "Enter target GCP region [us-central1]: " GCP_REGION
+            GCP_REGION=${GCP_REGION:-us-central1}
+            
+            # 1. Create Pub/Sub Topic
+            TOPIC_NAME="chrome-enrollment-events"
+            echo "Verifying Pub/Sub topic '$TOPIC_NAME'..."
+            gcloud pubsub topics create "$TOPIC_NAME" --project="$GCP_PROJECT" 2>/dev/null || echo "Topic already exists."
+            
+            # 2. Create Push Subscription
+            SUB_NAME="chrome-enrollment-webhook-sub"
+            WEBHOOK_URI="https://device-trust-gateway-HASH-uc.a.run.app/api/webhook/chrome-enrollment"
+            
+            echo "Creating Pub/Sub Push Subscription targeting '$WEBHOOK_URI'..."
+            gcloud pubsub subscriptions create "$SUB_NAME" \
+                --topic="$TOPIC_NAME" \
+                --push-endpoint="$WEBHOOK_URI" \
+                --ack-deadline=60 \
+                --project="$GCP_PROJECT" 2>/dev/null || echo "Subscription already configured."
+                
+            # 3. Create Weekly Safety Net Cron
+            echo "Configuring Weekly Cloud Scheduler safety net..."
+            gcloud scheduler jobs create http seed-chromebook-inventory-weekly \
+                --schedule="0 3 * * 0" \
+                --uri="https://device-trust-gateway-HASH-uc.a.run.app/api/cron/cleanup" \
+                --http-method=POST \
+                --headers="X-Cloudscheduler=true" \
+                --location="$GCP_REGION" \
+                --project="$GCP_PROJECT" \
+                --description="Weekly safety net crawl of active Chromebooks for Cloud Identity anchoring" 2>/dev/null || echo "Weekly cron already configured."
+                
+            echo -e "${GREEN}✔ Real-Time Event-Driven Seeding configured successfully!${NC}"
             ;;
           *)
             echo -e "${RED}Invalid scheduling option. Skipping seeding configuration.${NC}"
@@ -125,7 +161,7 @@ case $OPTION in
     fi
     
     echo -e "\n${BLUE}[3/5] Enabling required Google Cloud APIs...${NC}"
-    gcloud services enable run.googleapis.com secretmanager.googleapis.com cloudidentity.googleapis.com cloudbuild.googleapis.com cloudscheduler.googleapis.com
+    gcloud services enable run.googleapis.com secretmanager.googleapis.com cloudidentity.googleapis.com cloudbuild.googleapis.com cloudscheduler.googleapis.com pubsub.googleapis.com
     
     echo -e "\n${BLUE}[4/5] Initializing Secret Manager for dynamic admin configuration...${NC}"
     SECRET_NAME="device_trust_gateway_config"

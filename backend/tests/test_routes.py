@@ -1,4 +1,6 @@
 import pytest
+import base64
+import json
 from fastapi.testclient import TestClient
 from backend.main import app
 from backend.routes.chaining import PAIRING_CODE_CACHE
@@ -11,12 +13,10 @@ def test_health_check():
     assert response.json() == {"status": "OK"}
 
 def test_admin_config_access_denied():
-    # Non-admin user header
     response = client.get("/api/admin/config", headers={"X-User-Email": "student@example.com"})
     assert response.status_code == 403
 
 def test_admin_config_success():
-    # Admin user header
     response = client.get("/api/admin/config", headers={"X-User-Email": "admin@example.com"})
     assert response.status_code == 200
     data = response.json()
@@ -27,7 +27,6 @@ def test_chaining_generate_access_denied():
     assert response.status_code == 403
 
 def test_chaining_generate_and_verify_success():
-    # User authorized for chaining
     response = client.post("/api/chaining/generate", headers={"X-User-Email": "trust-chaining-allowed@example.com"})
     assert response.status_code == 200
     data = response.json()
@@ -36,7 +35,6 @@ def test_chaining_generate_and_verify_success():
     
     assert code in PAIRING_CODE_CACHE
 
-    # Verify pairing code
     verify_resp = client.post(
         "/api/chaining/verify", 
         headers={"X-User-Email": "trust-chaining-allowed@example.com"},
@@ -44,10 +42,9 @@ def test_chaining_generate_and_verify_success():
     )
     assert verify_resp.status_code == 200
     assert verify_resp.json()["status"] == "SUCCESS"
-    assert code not in PAIRING_CODE_CACHE # Cache invalidated
+    assert code not in PAIRING_CODE_CACHE
 
 def test_network_approval_success():
-    # Pass X-Forwarded-For matching trusted IP range '127.0.0.1/32'
     response = client.post(
         "/api/network/approve",
         headers={"X-Forwarded-For": "127.0.0.1", "X-User-Email": "student@example.com"},
@@ -57,7 +54,6 @@ def test_network_approval_success():
     assert response.json()["status"] == "SUCCESS"
 
 def test_network_approval_forbidden():
-    # Pass untrusted IP
     response = client.post(
         "/api/network/approve",
         headers={"X-Forwarded-For": "192.168.1.100", "X-User-Email": "student@example.com"},
@@ -66,12 +62,56 @@ def test_network_approval_forbidden():
     assert response.status_code == 403
 
 def test_cron_cleanup_forbidden():
-    # Missing cron headers
     response = client.post("/api/cron/cleanup")
     assert response.status_code == 403
 
 def test_cron_cleanup_success():
-    # Valid mock cron header
     response = client.post("/api/cron/cleanup", headers={"X-Mock-Cron": "true"})
     assert response.status_code == 200
     assert response.json()["status"] == "SUCCESS"
+
+def test_webhook_enrollment_success():
+    # Create mock Reports API payload
+    mock_payload = {
+        "events": [
+            {
+                "name": "ENTERPRISE_ENROLLMENT",
+                "parameters": [{"name": "SERIAL_NUMBER", "value": "CHROME-9999"}]
+            }
+        ]
+    }
+    encoded_data = base64.b64encode(json.dumps(mock_payload).encode("utf-8")).decode("utf-8")
+    
+    push_body = {
+        "message": {"data": encoded_data},
+        "subscription": "projects/my-proj/subscriptions/chrome-enroll-sub"
+    }
+    
+    response = client.post("/api/webhook/chrome-enrollment", json=push_body)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "SUCCESS"
+    assert data["processed_count"] == 1
+    assert "CHROME-9999" in data["anchored_serials"]
+
+def test_webhook_ignore_irrelevant_event():
+    mock_payload = {
+        "events": [
+            {
+                "name": "USER_LOGIN",
+                "parameters": [{"name": "user", "value": "student@example.com"}]
+            }
+        ]
+    }
+    encoded_data = base64.b64encode(json.dumps(mock_payload).encode("utf-8")).decode("utf-8")
+    
+    push_body = {
+        "message": {"data": encoded_data},
+        "subscription": "projects/my-proj/subscriptions/chrome-enroll-sub"
+    }
+    
+    response = client.post("/api/webhook/chrome-enrollment", json=push_body)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "SUCCESS"
+    assert data["processed_count"] == 0
