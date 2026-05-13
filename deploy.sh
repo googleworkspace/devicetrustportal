@@ -18,7 +18,10 @@ setup_domain_wide_delegation() {
     echo -e "configured with Domain-Wide Delegation (DWD) and a designated Super Administrator email to impersonate."
     echo ""
     
-    read -p "Enter your Google Cloud Project ID: " GCP_PROJECT
+    if [ -z "$GCP_PROJECT" ]; then
+        read -p "Enter your Google Cloud Project ID: " GCP_PROJECT
+    fi
+    
     SA_NAME="device-trust-gateway-sa"
     SA_EMAIL="${SA_NAME}@${GCP_PROJECT}.iam.gserviceaccount.com"
     
@@ -87,7 +90,6 @@ configure_inventory_seeding() {
         
         case $SEED_OPTION in
           1)
-            # Establish DWD credentials before live execution
             setup_domain_wide_delegation
             
             echo -e "\n${BLUE}Launching live inventory seeding script...${NC}"
@@ -103,7 +105,9 @@ configure_inventory_seeding() {
             ;;
           2)
             echo -e "\n${BLUE}Configuring Daily GCP Cloud Scheduler Job...${NC}"
-            read -p "Enter your Google Cloud Project ID: " GCP_PROJECT
+            if [ -z "$GCP_PROJECT" ]; then
+                read -p "Enter your Google Cloud Project ID: " GCP_PROJECT
+            fi
             read -p "Enter target Cloud Scheduler region [us-central1]: " GCP_REGION
             GCP_REGION=${GCP_REGION:-us-central1}
             
@@ -120,7 +124,9 @@ configure_inventory_seeding() {
             ;;
           3)
             echo -e "\n${BLUE}Configuring Weekly GCP Cloud Scheduler Job...${NC}"
-            read -p "Enter your Google Cloud Project ID: " GCP_PROJECT
+            if [ -z "$GCP_PROJECT" ]; then
+                read -p "Enter your Google Cloud Project ID: " GCP_PROJECT
+            fi
             read -p "Enter target Cloud Scheduler region [us-central1]: " GCP_REGION
             GCP_REGION=${GCP_REGION:-us-central1}
             
@@ -137,7 +143,9 @@ configure_inventory_seeding() {
             ;;
           4)
             echo -e "\n${BLUE}Configuring Event-Driven Pub/Sub Push Webhook & Weekly Cron Safety Net...${NC}"
-            read -p "Enter your Google Cloud Project ID: " GCP_PROJECT
+            if [ -z "$GCP_PROJECT" ]; then
+                read -p "Enter your Google Cloud Project ID: " GCP_PROJECT
+            fi
             read -p "Enter target GCP region [us-central1]: " GCP_REGION
             GCP_REGION=${GCP_REGION:-us-central1}
             
@@ -221,7 +229,7 @@ case $OPTION in
     fi
     
     echo -e "\n${BLUE}[3/5] Enabling required Google Cloud APIs...${NC}"
-    gcloud services enable run.googleapis.com secretmanager.googleapis.com cloudidentity.googleapis.com cloudbuild.googleapis.com cloudscheduler.googleapis.com pubsub.googleapis.com --quiet
+    gcloud services enable run.googleapis.com secretmanager.googleapis.com cloudidentity.googleapis.com cloudbuild.googleapis.com cloudscheduler.googleapis.com pubsub.googleapis.com admin.googleapis.com --quiet
     
     echo -e "\n${BLUE}[4/5] Initializing Secret Manager for dynamic admin configuration...${NC}"
     SECRET_NAME="device_trust_gateway_config"
