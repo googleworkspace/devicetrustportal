@@ -23,6 +23,8 @@ yarn-error.log*
 .env.development
 .env.test
 .env.production
+dwd_key.json
+*.json.key
 
 # OS & IDE
 .DS_Store

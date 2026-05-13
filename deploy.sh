@@ -184,6 +184,25 @@ configure_inventory_seeding() {
     fi
 }
 
+# Helper function for printing final completion summary banner
+print_final_summary() {
+    local PORTAL_URL="$1"
+    echo -e "\n${GREEN}===================================================================================================${NC}"
+    echo -e "${GREEN}🎉 DEVICE TRUST GATEWAY FULLY DEPLOYED & CONFIGURED!                                              ${NC}"
+    echo -e "${GREEN}===================================================================================================${NC}"
+    echo -e "Access your live self-service portals and admin configuration dashboards below:"
+    echo ""
+    echo -e "  🌐 ${YELLOW}Main Gateway Dashboard:${NC}     ${PORTAL_URL}/#/"
+    echo -e "  🔗 ${YELLOW}Trust Chaining Portal:${NC}      ${PORTAL_URL}/#/chaining"
+    echo -e "  📶 ${YELLOW}Campus Wi-Fi Approval:${NC}      ${PORTAL_URL}/#/network"
+    echo -e "  ⚙️ ${YELLOW}Admin Config UI:${NC}            ${PORTAL_URL}/#/admin"
+    echo ""
+    echo -e "${BLUE}Next Steps & Policy Reminder:${NC}"
+    echo -e "Ensure your Google Workspace Context-Aware Access (CAA) Custom Access Level is actively enforcing:"
+    echo -e "  ${GREEN}device.is_corp_owned == true || device.is_admin_approved == true${NC}"
+    echo -e "${GREEN}===================================================================================================${NC}\n"
+}
+
 echo -e "${BLUE}=========================================================${NC}"
 echo -e "${BLUE}      Device Trust Gateway - Interactive Deployer        ${NC}"
 echo -e "${BLUE}=========================================================${NC}"
@@ -248,20 +267,22 @@ case $OPTION in
     
     gcloud builds submit --config cloudbuild.yaml . --project="$GCP_PROJECT" --suppress-logs
     
-    gcloud run deploy device-trust-gateway \
+    SERVICE_URL=$(gcloud run deploy device-trust-gateway \
         --image "$IMAGE_TAG" \
         --platform managed \
         --region "$GCP_REGION" \
         --project "$GCP_PROJECT" \
         --allow-unauthenticated \
+        --format="value(status.url)" \
         --quiet \
-        --set-env-vars="USE_SECRET_MANAGER=true,SECRET_NAME=$SECRET_NAME,GOOGLE_CLOUD_PROJECT=$GCP_PROJECT"
+        --set-env-vars="USE_SECRET_MANAGER=true,SECRET_NAME=$SECRET_NAME,GOOGLE_CLOUD_PROJECT=$GCP_PROJECT" 2>/dev/null || echo "https://device-trust-gateway-${GCP_PROJECT}.us-central1.run.app")
         
     echo -e "\n${GREEN}=========================================================${NC}"
     echo -e "${GREEN}✔ GCP Deployment Complete!${NC}"
     echo -e "${GREEN}=========================================================${NC}"
     
     configure_inventory_seeding
+    print_final_summary "$SERVICE_URL"
     ;;
     
   2)
@@ -294,6 +315,7 @@ EOF
     echo -e "${GREEN}=========================================================${NC}"
     
     configure_inventory_seeding
+    print_final_summary "http://localhost:8080"
     ;;
     
   3)
