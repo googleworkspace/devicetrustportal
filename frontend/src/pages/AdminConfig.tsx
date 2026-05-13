@@ -7,20 +7,18 @@ export const AdminConfig: React.FC = () => {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
-  // Form fields
   const [customerId, setCustomerId] = useState("");
   const [threshold, setThreshold] = useState(90);
   const [trustedIps, setTrustedIps] = useState("");
   const [chainingGroups, setChainingGroups] = useState("");
   const [chainingOus, setChainingOus] = useState("");
 
-  const userEmail = localStorage.getItem("userEmail") || "admin@example.com";
-  const isAdmin = userEmail.toLowerCase().includes("admin");
+  const userEmail = localStorage.getItem("userEmail") || "";
 
   useEffect(() => {
-    if (!isAdmin) {
+    if (!userEmail) {
       setLoading(false);
-      setError("Access denied: Workspace Administrator privileges required.");
+      setError("Authentication required. Please sign in with Google on the Dashboard.");
       return;
     }
 
@@ -35,13 +33,13 @@ export const AdminConfig: React.FC = () => {
         setChainingOus(data.chaining_allowed_ous.join("\n"));
         setLoading(false);
       } catch (e: any) {
-        setError(`Failed to load configurations: ${e.message}`);
+        setError(`Access Denied: ${e.message || "Workspace Administrator privileges required."}`);
         setLoading(false);
       }
     };
 
     load();
-  }, [isAdmin]);
+  }, [userEmail]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -68,16 +66,16 @@ export const AdminConfig: React.FC = () => {
     return <div style={{ padding: "20px", fontFamily: "sans-serif" }}>Loading admin configurations...</div>;
   }
 
-  if (!isAdmin) {
+  if (error && !config) {
     return (
       <div style={{ padding: "20px", fontFamily: "sans-serif", maxWidth: "600px", margin: "0 auto" }}>
         <a href="#/" style={{ color: "#1a73e8", textDecoration: "none", fontWeight: "bold" }}>&larr; Back to Dashboard</a>
         <h1 style={{ color: "#d93025", marginTop: "20px" }}>Access Denied</h1>
         <p style={{ color: "#555" }}>
-          Your current active role (<b>{userEmail}</b>) does not have Workspace Administrator privileges.
+          {error}
         </p>
         <p style={{ fontSize: "14px", color: "#777" }}>
-          To test this view, return to the Dashboard and update your active email to contain "admin" (e.g., admin@example.com).
+          Active Session: <b>{userEmail || "None"}</b>. Only authorized Google Workspace Super Administrators may manage tenant configurations.
         </p>
       </div>
     );

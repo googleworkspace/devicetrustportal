@@ -3,13 +3,9 @@ import { triggerCronCleanup } from "../services/api";
 import { GoogleLoginButton } from "../components/GoogleLoginButton";
 
 export const Dashboard: React.FC = () => {
-  const [userEmail, setUserEmail] = useState(() => localStorage.getItem("userEmail") || "student@example.com");
+  const [userEmail, setUserEmail] = useState(() => localStorage.getItem("userEmail") || "");
   const [message, setMessage] = useState("");
   const [authToken, setAuthToken] = useState(() => localStorage.getItem("googleIdToken") || "");
-
-  useEffect(() => {
-    localStorage.setItem("userEmail", userEmail);
-  }, [userEmail]);
 
   const handleLoginSuccess = (email: string, token: string) => {
     setUserEmail(email);
@@ -32,23 +28,34 @@ export const Dashboard: React.FC = () => {
         <h1>Device Trust Gateway</h1>
         
         {/* Google Sign-In Authentication */}
-        <div style={{ backgroundColor: "#f8f9fa", padding: "15px", borderRadius: "6px", marginTop: "15px" }}>
-          <h3 style={{ marginTop: 0, marginBottom: "10px", fontSize: "16px" }}>Google Authentication</h3>
-          <p style={{ fontSize: "14px", color: "#555", marginBottom: "15px" }}>
-            Sign in with your Google Workspace account to authorize live device approvals and access admin configurations.
+        <div style={{ backgroundColor: "#f8f9fa", padding: "20px", borderRadius: "8px", marginTop: "15px", border: "1px solid #e9ecef" }}>
+          <h3 style={{ marginTop: 0, marginBottom: "10px", fontSize: "18px", color: "#202124" }}>Google Authentication</h3>
+          <p style={{ fontSize: "14px", color: "#5f6368", marginBottom: "15px" }}>
+            Sign in with your Google Workspace enterprise account to authorize live device approvals and manage configurations.
           </p>
-          <GoogleLoginButton onLoginSuccess={handleLoginSuccess} />
           
-          <div style={{ marginTop: "15px", borderTop: "1px solid #ddd", paddingTop: "10px" }}>
-            <label style={{ fontWeight: "bold", marginRight: "10px", fontSize: "14px" }}>Active Session Role:</label>
-            <input
-              type="email"
-              value={userEmail}
-              onChange={(e) => setUserEmail(e.target.value)}
-              style={{ padding: "5px", width: "250px" }}
-            />
-            <span style={{ marginLeft: "10px", fontSize: "12px", color: "#666" }}>(Editable for local dev simulation)</span>
-          </div>
+          {!userEmail ? (
+            <GoogleLoginButton onLoginSuccess={handleLoginSuccess} />
+          ) : (
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", backgroundColor: "#e6f4ea", padding: "12px 18px", borderRadius: "6px", border: "1px solid #ceead6" }}>
+              <div>
+                <span style={{ fontSize: "12px", color: "#137333", fontWeight: "bold", display: "block", textTransform: "uppercase" }}>Active Production Session</span>
+                <span style={{ fontSize: "16px", color: "#202124", fontWeight: "bold" }}>{userEmail}</span>
+              </div>
+              <button
+                onClick={() => {
+                  localStorage.removeItem("userEmail");
+                  localStorage.removeItem("googleIdToken");
+                  setUserEmail("");
+                  setAuthToken("");
+                  setMessage("Signed out successfully.");
+                }}
+                style={{ padding: "8px 14px", backgroundColor: "#137333", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", fontWeight: "bold", fontSize: "12px" }}
+              >
+                Sign Out
+              </button>
+            </div>
+          )}
         </div>
       </header>
 

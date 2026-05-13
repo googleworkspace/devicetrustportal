@@ -20,19 +20,13 @@ export interface VerifyResponse {
   operation?: any;
 }
 
-// Helper to get headers (including authentic Google ID token Bearer and simulation fallback)
 const getHeaders = () => {
-  const userEmail = localStorage.getItem("userEmail") || "user@example.com";
   const idToken = localStorage.getItem("googleIdToken");
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
-    "X-User-Email": userEmail,
   };
   if (idToken) {
     headers["Authorization"] = `Bearer ${idToken}`;
-  } else {
-    // If testing locally without OAuth, pass email as mock Bearer
-    headers["Authorization"] = `Bearer ${userEmail}`;
   }
   return headers;
 };

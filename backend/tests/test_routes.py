@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
 from backend.main import app
 from backend.routes.chaining import PAIRING_CODE_CACHE
+from backend.routes.admin import get_current_user_email
 
 client = TestClient(app)
 
@@ -31,6 +32,7 @@ def mock_services():
         mock_service.devices().create().execute.return_value = {"name": "devices/dev-99"}
         
         yield
+        app.dependency_overrides.clear()
 
 def test_health_check():
     response = client.get("/health")
@@ -38,21 +40,25 @@ def test_health_check():
     assert response.json() == {"status": "OK"}
 
 def test_admin_config_access_denied():
-    response = client.get("/api/admin/config", headers={"X-User-Email": "student@example.com"})
+    app.dependency_overrides[get_current_user_email] = lambda: "student@example.com"
+    response = client.get("/api/admin/config")
     assert response.status_code == 403
 
 def test_admin_config_success():
-    response = client.get("/api/admin/config", headers={"X-User-Email": "admin@example.com"})
+    app.dependency_overrides[get_current_user_email] = lambda: "admin@example.com"
+    response = client.get("/api/admin/config")
     assert response.status_code == 200
     data = response.json()
     assert data["customer_id"] == "customers/my_customer"
 
 def test_chaining_generate_access_denied():
-    response = client.post("/api/chaining/generate", headers={"X-User-Email": "student@example.com"})
+    app.dependency_overrides[get_current_user_email] = lambda: "student@example.com"
+    response = client.post("/api/chaining/generate")
     assert response.status_code == 403
 
 def test_chaining_generate_and_verify_success():
-    response = client.post("/api/chaining/generate", headers={"X-User-Email": "trust-chaining-allowed@example.com"})
+    app.dependency_overrides[get_current_user_email] = lambda: "trust-chaining-allowed@example.com"
+    response = client.post("/api/chaining/generate")
     assert response.status_code == 200
     data = response.json()
     assert "pairing_code" in data
@@ -62,7 +68,6 @@ def test_chaining_generate_and_verify_success():
 
     verify_resp = client.post(
         "/api/chaining/verify", 
-        headers={"X-User-Email": "trust-chaining-allowed@example.com"},
         json={"pairing_code": code, "raw_device_id": "pixel-phone99"}
     )
     assert verify_resp.status_code == 200
@@ -70,18 +75,20 @@ def test_chaining_generate_and_verify_success():
     assert code not in PAIRING_CODE_CACHE
 
 def test_network_approval_success():
+    app.dependency_overrides[get_current_user_email] = lambda: "student@example.com"
     response = client.post(
         "/api/network/approve",
-        headers={"X-Forwarded-For": "127.0.0.1", "X-User-Email": "student@example.com"},
+        headers={"X-Forwarded-For": "127.0.0.1"},
         json={"raw_device_id": "pixel-phone99"}
     )
     assert response.status_code == 200
     assert response.json()["status"] == "SUCCESS"
 
 def test_network_approval_forbidden():
+    app.dependency_overrides[get_current_user_email] = lambda: "student@example.com"
     response = client.post(
         "/api/network/approve",
-        headers={"X-Forwarded-For": "192.168.1.100", "X-User-Email": "student@example.com"},
+        headers={"X-Forwarded-For": "192.168.1.100"},
         json={"raw_device_id": "pixel-phone99"}
     )
     assert response.status_code == 403

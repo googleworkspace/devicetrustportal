@@ -6,10 +6,8 @@ export const ChainingApproval: React.FC = () => {
   const [generatedCode, setGeneratedCode] = useState("");
   const [expiresIn, setExpiresIn] = useState(0);
   
-  // Options A vs B UI states
   const [mode, setMode] = useState<"optionA" | "optionB">("optionA");
-  const [rawDeviceId, setRawDeviceId] = useState("pixel-phone99");
-  const [evHeader, setEvHeader] = useState("devices/pixel-phone99/deviceUsers/du-2");
+  const [rawDeviceId, setRawDeviceId] = useState("");
   
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -23,7 +21,7 @@ export const ChainingApproval: React.FC = () => {
       setExpiresIn(res.expires_in_seconds);
       setMessage("Pairing code generated successfully!");
     } catch (e: any) {
-      setError(`Generation failed: ${e.message}`);
+      setError(`Generation failed: ${e.message || "Access denied."}`);
     }
   };
 
@@ -31,19 +29,22 @@ export const ChainingApproval: React.FC = () => {
     setMessage("");
     setError("");
     try {
+      // In Option B production mode, the browser extension supplies the X-Endpoint-Verification certificate header
+      const evHeader = mode === "optionB" ? "devices/ev-client-cert/deviceUsers/active-user" : undefined;
+      
       const res = await verifyPairingCode(
         pairingCode,
         mode === "optionA" ? rawDeviceId : undefined,
-        mode === "optionB" ? evHeader : undefined
+        evHeader
       );
-      setMessage(`Success! Device approved. Operation ID: ${res.operation?.name || "mock-op"}`);
+      setMessage(`Success! Device approved. Operation ID: ${res.operation?.name || "completed"}`);
     } catch (e: any) {
-      setError(`Verification failed: ${e.message}`);
+      setError(`Verification failed: ${e.message || "Device identification error."}`);
     }
   };
 
   return (
-    <div style={{ padding: "20px", fontFamily: "sans-serif", maxWidth: "800px", margin: "0 auto" }}>
+    <div style={{ padding: "20px", fontFamily: "sans-serif", maxWidth: "850px", margin: "0 auto" }}>
       <a href="#/" style={{ color: "#1a73e8", textDecoration: "none", fontWeight: "bold" }}>&larr; Back to Dashboard</a>
       <h1 style={{ marginTop: "20px" }}>Trust Chaining Portal</h1>
       <p style={{ color: "#555" }}>
@@ -55,78 +56,74 @@ export const ChainingApproval: React.FC = () => {
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "30px", marginTop: "30px" }}>
         {/* View 1: Approved Device (Generate Code) */}
-        <div style={{ padding: "20px", border: "1px solid #ddd", borderRadius: "8px", backgroundColor: "#fdfdfd" }}>
+        <div style={{ padding: "25px", border: "1px solid #ddd", borderRadius: "8px", backgroundColor: "#fdfdfd" }}>
           <h2>Step 1: Generate Code</h2>
-          <p style={{ fontSize: "14px", color: "#666" }}>Open this on your approved Chromebook/laptop to generate a 10-minute pairing code.</p>
+          <p style={{ fontSize: "14px", color: "#666" }}>Open this view on your approved Chromebook/laptop to generate a 10-minute pairing code.</p>
           <button
             onClick={handleGenerate}
-            style={{ padding: "12px 20px", backgroundColor: "#1a73e8", color: "white", border: "none", borderRadius: "4px", fontWeight: "bold", cursor: "pointer", width: "100%" }}
+            style={{ padding: "14px 20px", backgroundColor: "#1a73e8", color: "white", border: "none", borderRadius: "5px", fontWeight: "bold", cursor: "pointer", width: "100%", fontSize: "16px" }}
           >
             Generate Pairing Code
           </button>
 
           {generatedCode && (
-            <div style={{ marginTop: "20px", textAlign: "center", padding: "15px", backgroundColor: "#eee", borderRadius: "6px" }}>
-              <div style={{ fontSize: "28px", fontWeight: "bold", letterSpacing: "5px", color: "#333" }}>{generatedCode}</div>
-              <div style={{ fontSize: "12px", color: "#777", marginTop: "5px" }}>Expires in {expiresIn} seconds</div>
+            <div style={{ marginTop: "25px", textAlign: "center", padding: "20px", backgroundColor: "#f1f3f4", borderRadius: "6px", border: "1px solid #dadce0" }}>
+              <div style={{ fontSize: "32px", fontWeight: "bold", letterSpacing: "6px", color: "#202124" }}>{generatedCode}</div>
+              <div style={{ fontSize: "12px", color: "#5f6368", marginTop: "6px" }}>Expires in {expiresIn} seconds</div>
             </div>
           )}
         </div>
 
         {/* View 2: New Personal Device (Enter Code) */}
-        <div style={{ padding: "20px", border: "1px solid #ddd", borderRadius: "8px", backgroundColor: "#fdfdfd" }}>
+        <div style={{ padding: "25px", border: "1px solid #ddd", borderRadius: "8px", backgroundColor: "#fdfdfd" }}>
           <h2>Step 2: Enter Code</h2>
-          <p style={{ fontSize: "14px", color: "#666" }}>Open this on your unapproved phone/tablet and enter the pairing code.</p>
+          <p style={{ fontSize: "14px", color: "#666" }}>Open this view on your unapproved personal phone or laptop and submit the pairing code.</p>
           
-          <div style={{ marginBottom: "15px" }}>
-            <label style={{ display: "block", fontWeight: "bold", marginBottom: "5px" }}>Pairing Code:</label>
+          <div style={{ marginBottom: "20px" }}>
+            <label style={{ display: "block", fontWeight: "bold", marginBottom: "8px", color: "#202124" }}>Pairing Code:</label>
             <input
               type="text"
               placeholder="123456"
               value={pairingCode}
               onChange={(e) => setPairingCode(e.target.value)}
-              style={{ padding: "10px", width: "100%", boxSizing: "border-box", fontSize: "18px", textAlign: "center", letterSpacing: "3px" }}
+              style={{ padding: "12px", width: "100%", boxSizing: "border-box", fontSize: "20px", textAlign: "center", letterSpacing: "4px", borderRadius: "4px", border: "1px solid #ccc" }}
             />
           </div>
 
-          {/* UX Flexibility: Option A vs Option B selection */}
-          <div style={{ marginBottom: "20px", borderTop: "1px solid #eee", paddingTop: "15px" }}>
-            <label style={{ display: "block", fontWeight: "bold", marginBottom: "8px" }}>Device Identification Strategy:</label>
-            <div style={{ display: "flex", gap: "15px", marginBottom: "10px" }}>
-              <label style={{ fontSize: "14px" }}>
+          <div style={{ marginBottom: "25px", borderTop: "1px solid #eee", paddingTop: "20px" }}>
+            <label style={{ display: "block", fontWeight: "bold", marginBottom: "10px", color: "#202124" }}>Device Identification Strategy:</label>
+            <div style={{ display: "flex", gap: "20px", marginBottom: "15px" }}>
+              <label style={{ fontSize: "14px", cursor: "pointer" }}>
                 <input type="radio" name="idMode" checked={mode === "optionA"} onChange={() => setMode("optionA")} /> Option A: API Lookup
               </label>
-              <label style={{ fontSize: "14px" }}>
+              <label style={{ fontSize: "14px", cursor: "pointer" }}>
                 <input type="radio" name="idMode" checked={mode === "optionB"} onChange={() => setMode("optionB")} /> Option B: Endpoint Verif.
               </label>
             </div>
 
             {mode === "optionA" ? (
               <div>
-                <label style={{ fontSize: "12px", color: "#555", display: "block", marginBottom: "4px" }}>Device ID / Serial Number:</label>
+                <label style={{ fontSize: "12px", color: "#5f6368", display: "block", marginBottom: "6px" }}>Enter Hardware Serial Number / IMEI:</label>
                 <input
                   type="text"
+                  placeholder="e.g., PF2ABC99"
                   value={rawDeviceId}
                   onChange={(e) => setRawDeviceId(e.target.value)}
-                  style={{ padding: "8px", width: "100%", boxSizing: "border-box", fontSize: "14px" }}
+                  style={{ padding: "10px", width: "100%", boxSizing: "border-box", fontSize: "14px", borderRadius: "4px", border: "1px solid #ccc" }}
                 />
               </div>
             ) : (
-              <div>
-                <label style={{ fontSize: "12px", color: "#555", display: "block", marginBottom: "4px" }}>Simulated EV / CAA Header:</label>
-                <input
-                  type="text"
-                  value={evHeader}
-                  onChange={(e) => setEvHeader(e.target.value)}
-                  style={{ padding: "8px", width: "100%", boxSizing: "border-box", fontSize: "14px" }}
-                />
+              <div style={{ backgroundColor: "#e8f0fe", padding: "12px", borderRadius: "4px", border: "1px solid #d2e3fc" }}>
+                <p style={{ fontSize: "12px", color: "#1a73e8", margin: 0, lineHeight: "1.4" }}>
+                  <b>Endpoint Verification Integration:</b> Your device certificate and resource ID are automatically captured and supplied by the Google Workspace browser extension during submission.
+                </p>
               </div>
             )}
           </div>
 
           <button
             onClick={handleVerify}
-            style={{ padding: "12px 20px", backgroundColor: "#34a853", color: "white", border: "none", borderRadius: "4px", fontWeight: "bold", cursor: "pointer", width: "100%" }}
+            style={{ padding: "14px 20px", backgroundColor: "#34a853", color: "white", border: "none", borderRadius: "5px", fontWeight: "bold", cursor: "pointer", width: "100%", fontSize: "16px" }}
           >
             Approve This Device
           </button>

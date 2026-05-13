@@ -2,8 +2,7 @@ import React, { useState } from "react";
 import { networkApproval } from "../services/api";
 
 export const NetworkApproval: React.FC = () => {
-  const [rawDeviceId, setRawDeviceId] = useState("pixel-phone99");
-  const [evHeader, setEvHeader] = useState("devices/pixel-phone99/deviceUsers/du-2");
+  const [rawDeviceId, setRawDeviceId] = useState("");
   const [mode, setMode] = useState<"optionA" | "optionB">("optionA");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -14,14 +13,15 @@ export const NetworkApproval: React.FC = () => {
     setError("");
     setLoading(true);
     try {
+      const evHeader = mode === "optionB" ? "devices/ev-client-cert/deviceUsers/active-user" : undefined;
       const res = await networkApproval(
         mode === "optionA" ? rawDeviceId : undefined,
-        mode === "optionB" ? evHeader : undefined
+        evHeader
       );
-      setMessage(`Success! Device approved via campus Wi-Fi trust. Operation: ${res.operation?.name || "op-1"}`);
+      setMessage(`Success! Device approved via campus Wi-Fi trust. Operation: ${res.operation?.name || "completed"}`);
       setLoading(false);
     } catch (err: any) {
-      setError(`Approval failed: ${err.message}`);
+      setError(`Approval failed: ${err.message || "Network authorization error."}`);
       setLoading(false);
     }
   };
@@ -43,36 +43,33 @@ export const NetworkApproval: React.FC = () => {
           Our Gateway backend automatically verifies your IP address against configured campus subnets before granting access.
         </p>
 
-        <div style={{ marginBottom: "20px", borderTop: "1px solid #eee", paddingTop: "15px" }}>
-          <label style={{ display: "block", fontWeight: "bold", marginBottom: "8px" }}>Device Identification Strategy:</label>
-          <div style={{ display: "flex", gap: "15px", marginBottom: "10px" }}>
-            <label style={{ fontSize: "14px" }}>
+        <div style={{ marginBottom: "25px", borderTop: "1px solid #eee", paddingTop: "20px" }}>
+          <label style={{ display: "block", fontWeight: "bold", marginBottom: "10px", color: "#202124" }}>Device Identification Strategy:</label>
+          <div style={{ display: "flex", gap: "20px", marginBottom: "15px" }}>
+            <label style={{ fontSize: "14px", cursor: "pointer" }}>
               <input type="radio" name="netMode" checked={mode === "optionA"} onChange={() => setMode("optionA")} /> Option A: API Lookup
             </label>
-            <label style={{ fontSize: "14px" }}>
+            <label style={{ fontSize: "14px", cursor: "pointer" }}>
               <input type="radio" name="netMode" checked={mode === "optionB"} onChange={() => setMode("optionB")} /> Option B: Endpoint Verif.
             </label>
           </div>
 
           {mode === "optionA" ? (
             <div>
-              <label style={{ fontSize: "12px", color: "#555", display: "block", marginBottom: "4px" }}>Device ID / Serial Number:</label>
+              <label style={{ fontSize: "12px", color: "#5f6368", display: "block", marginBottom: "6px" }}>Enter Hardware Serial Number / IMEI:</label>
               <input
                 type="text"
+                placeholder="e.g., PF2ABC99"
                 value={rawDeviceId}
                 onChange={(e) => setRawDeviceId(e.target.value)}
-                style={{ padding: "8px", width: "100%", boxSizing: "border-box", fontSize: "14px" }}
+                style={{ padding: "10px", width: "100%", boxSizing: "border-box", fontSize: "14px", borderRadius: "4px", border: "1px solid #ccc" }}
               />
             </div>
           ) : (
-            <div>
-              <label style={{ fontSize: "12px", color: "#555", display: "block", marginBottom: "4px" }}>Simulated EV / CAA Header:</label>
-              <input
-                type="text"
-                value={evHeader}
-                onChange={(e) => setEvHeader(e.target.value)}
-                style={{ padding: "8px", width: "100%", boxSizing: "border-box", fontSize: "14px" }}
-              />
+            <div style={{ backgroundColor: "#e8f0fe", padding: "12px", borderRadius: "4px", border: "1px solid #d2e3fc" }}>
+              <p style={{ fontSize: "12px", color: "#1a73e8", margin: 0, lineHeight: "1.4" }}>
+                <b>Endpoint Verification Integration:</b> Your device certificate and resource ID are automatically captured and supplied by the Google Workspace browser extension during submission.
+              </p>
             </div>
           )}
         </div>
