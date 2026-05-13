@@ -177,7 +177,7 @@ case $OPTION in
     
     echo -e "\n${BLUE}[5/5] Building container and deploying to Cloud Run...${NC}"
     IMAGE_TAG="gcr.io/$GCP_PROJECT/device-trust-gateway"
-    gcloud builds submit --tag "$IMAGE_TAG" deploy/ --project="$GCP_PROJECT"
+    gcloud builds submit --config cloudbuild.yaml . --project="$GCP_PROJECT"
     
     gcloud run deploy device-trust-gateway \
         --image "$IMAGE_TAG" \
