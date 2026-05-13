@@ -227,21 +227,10 @@ case $OPTION in
     read -p "Enter target Cloud Run region [us-central1]: " GCP_REGION
     GCP_REGION=${GCP_REGION:-us-central1}
     
-    echo -e "\n${YELLOW}===================================================================================================${NC}"
-    echo -e "${YELLOW}🔑 REQUIRED OAUTH 2.0 CLIENT ID SETUP:${NC}"
-    echo -e "To authorize Google Sign-In authentication on your portal frontend:"
-    echo -e "  1. Open Google Cloud Console: https://console.cloud.google.com/apis/credentials?project=${GCP_PROJECT}"
-    echo -e "  2. Click ${YELLOW}'Create Credentials' > 'OAuth client ID'${NC}."
-    echo -e "  3. Select Application Type: ${YELLOW}'Web application'${NC}."
-    echo -e "  4. Add your Cloud Run URL to ${YELLOW}'Authorized JavaScript origins'${NC} (e.g., https://device-trust-gateway-HASH-uc.a.run.app)."
-    echo -e "  5. Copy the resulting Client ID string."
-    echo -e "${YELLOW}===================================================================================================${NC}\n"
-    read -p "Enter your Google OAuth 2.0 Client ID: " GOOGLE_CLIENT_ID
-    
-    echo -e "\n${BLUE}[1/5] Setting active GCP project...${NC}"
+    echo -e "\n${BLUE}[1/7] Setting active GCP project...${NC}"
     gcloud config set project "$GCP_PROJECT" --quiet
     
-    echo -e "\n${BLUE}[2/5] Verifying project billing account status...${NC}"
+    echo -e "\n${BLUE}[2/7] Verifying project billing account status...${NC}"
     BILLING_ENABLED=$(gcloud beta billing projects describe "$GCP_PROJECT" --format="value(billingEnabled)" 2>/dev/null || echo "false")
     
     if [ "$BILLING_ENABLED" != "True" ] && [ "$BILLING_ENABLED" != "true" ]; then
@@ -258,10 +247,10 @@ case $OPTION in
         echo -e "${GREEN}✔ Active billing account verified.${NC}"
     fi
     
-    echo -e "\n${BLUE}[3/5] Enabling required Google Cloud APIs...${NC}"
+    echo -e "\n${BLUE}[3/7] Enabling required Google Cloud APIs...${NC}"
     gcloud services enable run.googleapis.com secretmanager.googleapis.com cloudidentity.googleapis.com cloudbuild.googleapis.com cloudscheduler.googleapis.com pubsub.googleapis.com admin.googleapis.com --quiet
     
-    echo -e "\n${BLUE}[4/5] Initializing Secret Manager for dynamic admin configuration...${NC}"
+    echo -e "\n${BLUE}[4/7] Initializing Secret Manager for dynamic admin configuration...${NC}"
     SECRET_NAME="device_trust_gateway_config"
     if ! gcloud secrets describe "$SECRET_NAME" --project="$GCP_PROJECT" &>/dev/null; then
         echo "Creating new Secret Manager secret: $SECRET_NAME"
@@ -273,10 +262,11 @@ case $OPTION in
         echo -e "${GREEN}Secret '$SECRET_NAME' already exists in project.${NC}"
     fi
     
-    echo -e "\n${BLUE}[5/5] Building container and deploying to Cloud Run (suppressing build logs)...${NC}"
+    echo -e "\n${BLUE}[5/7] Phase 1: Executing baseline container build to establish live Cloud Run URL...${NC}"
     IMAGE_TAG="gcr.io/$GCP_PROJECT/device-trust-gateway"
     
-    gcloud builds submit --config cloudbuild.yaml . --project="$GCP_PROJECT" --substitutions=_GOOGLE_CLIENT_ID="$GOOGLE_CLIENT_ID" --suppress-logs
+    # Pass mock client ID during initial build just to establish service and grab live URL
+    gcloud builds submit --config cloudbuild.yaml . --project="$GCP_PROJECT" --substitutions=_GOOGLE_CLIENT_ID="INITIAL_DEPLOY_PENDING" --suppress-logs
     
     SERVICE_URL=$(gcloud run deploy device-trust-gateway \
         --image "$IMAGE_TAG" \
@@ -288,8 +278,35 @@ case $OPTION in
         --quiet \
         --set-env-vars="USE_SECRET_MANAGER=true,SECRET_NAME=$SECRET_NAME,GOOGLE_CLOUD_PROJECT=$GCP_PROJECT" 2>/dev/null || echo "https://device-trust-gateway-${GCP_PROJECT}.us-central1.run.app")
         
+    echo -e "${GREEN}✔ Baseline service established at: ${SERVICE_URL}${NC}"
+    
+    echo -e "\n${BLUE}[6/7] Phase 2: Interactive Google OAuth 2.0 Client ID Origin Authorization...${NC}"
+    echo -e "\n${YELLOW}===================================================================================================${NC}"
+    echo -e "${YELLOW}🔑 REQUIRED OAUTH 2.0 CLIENT ID SETUP:${NC}"
+    echo -e "Now that your live Cloud Run URL is established, authorize Google Sign-In for your portal frontend:"
+    echo -e "  1. Open Google Cloud Console: https://console.cloud.google.com/apis/credentials?project=${GCP_PROJECT}"
+    echo -e "  2. Click ${YELLOW}'Create Credentials' > 'OAuth client ID'${NC}."
+    echo -e "  3. Select Application Type: ${YELLOW}'Web application'${NC}."
+    echo -e "  4. Under ${YELLOW}'Authorized JavaScript origins'${NC}, copy and paste this exact live URL:"
+    echo -e "     ${GREEN}${SERVICE_URL}${NC}"
+    echo -e "  5. Click ${YELLOW}'Create'${NC} and copy the resulting Client ID string."
+    echo -e "${YELLOW}===================================================================================================${NC}\n"
+    read -p "Enter your authorized Google OAuth 2.0 Client ID: " GOOGLE_CLIENT_ID
+    
+    echo -e "\n${BLUE}[7/7] Phase 3: Rebuilding container with authorized OAuth Client ID and deploying final revision...${NC}"
+    gcloud builds submit --config cloudbuild.yaml . --project="$GCP_PROJECT" --substitutions=_GOOGLE_CLIENT_ID="$GOOGLE_CLIENT_ID" --suppress-logs
+    
+    gcloud run deploy device-trust-gateway \
+        --image "$IMAGE_TAG" \
+        --platform managed \
+        --region "$GCP_REGION" \
+        --project "$GCP_PROJECT" \
+        --allow-unauthenticated \
+        --quiet \
+        --set-env-vars="USE_SECRET_MANAGER=true,SECRET_NAME=$SECRET_NAME,GOOGLE_CLOUD_PROJECT=$GCP_PROJECT"
+        
     echo -e "\n${GREEN}=========================================================${NC}"
-    echo -e "${GREEN}✔ GCP Deployment Complete!${NC}"
+    echo -e "${GREEN}✔ GCP Deployment & OAuth Authorization Complete!${NC}"
     echo -e "${GREEN}=========================================================${NC}"
     
     configure_inventory_seeding

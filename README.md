@@ -62,6 +62,12 @@ Please select your desired deployment target:
   3) Exit
 ```
 
+### Three-Phase Cloud Run Deployment Workflow:
+When deploying to Google Cloud, the script seamlessly solves the OAuth origin "chicken-and-egg" problem:
+1. **Phase 1 (Baseline Service):** Executes an initial container build and Cloud Run deployment to establish your unique live HTTPS service URL (`https://device-trust-gateway-HASH-uc.a.run.app`).
+2. **Phase 2 (Interactive Setup):** Displays explicit instructions prompting you to authorize this newly generated live URL as an Authorized JavaScript Origin in the Google Cloud Console, pausing to collect your resulting Client ID string.
+3. **Phase 3 (Final Revision):** Re-executes Cloud Build forwarding the authorized Client ID, permanently baking it into the compiled Webpack React static bundle and deploying the final revision.
+
 ### Domain-Wide Delegation (DWD) Setup Wizard:
 When configuring live API execution or Chromebook fleet seeding, the script launches an interactive DWD Setup Wizard:
 1. Automatically verifies or creates a dedicated Google Cloud Service Account (`device-trust-gateway-sa`).
