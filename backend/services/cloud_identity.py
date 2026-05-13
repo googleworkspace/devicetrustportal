@@ -11,22 +11,17 @@ class CloudIdentityService:
             "https://www.googleapis.com/auth/cloud-identity.devices",
             "https://www.googleapis.com/auth/cloud-identity"
         ]
-        self.mock_mode = os.getenv("MOCK_MODE", "false").lower() == "true"
-        
-        if self.mock_mode:
+        try:
+            credentials, _ = google.auth.default(scopes=self.scopes)
+            self.service = build("cloudidentity", "v1", credentials=credentials)
+        except Exception as e:
+            print(f"Error initializing Cloud Identity service: {e}")
             self.service = None
-        else:
-            try:
-                credentials, _ = google.auth.default(scopes=self.scopes)
-                self.service = build("cloudidentity", "v1", credentials=credentials)
-            except Exception as e:
-                print(f"Warning: Failed to initialize Cloud Identity service: {e}. Mocking API mode.")
-                self.service = None
 
     def approve_device_user(self, device_user_name: str, customer_id: str) -> Dict[str, Any]:
         """Approves a device user to access organizational data."""
         if not self.service:
-            return {"name": f"operations/mock-approve-{device_user_name}", "done": True, "response": {"status": "APPROVED"}}
+            raise Exception("Cloud Identity service not initialized with valid credentials")
 
         try:
             body = {"customer": customer_id}
@@ -39,7 +34,7 @@ class CloudIdentityService:
     def lookup_device_user(self, user_email: str, raw_device_id: str, customer_id: str) -> Optional[str]:
         """Option A: Lookup fully qualified device user resource name."""
         if not self.service:
-            return f"devices/mock-device-{raw_device_id}/deviceUsers/mock-user-{user_email.replace('@', '-')}"
+            raise Exception("Cloud Identity service not initialized with valid credentials")
 
         try:
             query = f"id=='{raw_device_id}'" if not raw_device_id.startswith("devices/") else ""
@@ -77,7 +72,7 @@ class CloudIdentityService:
     def list_inactive_devices(self, threshold_days: int, customer_id: str) -> List[Dict[str, Any]]:
         """Finds devices whose last sync time exceeds the threshold."""
         if not self.service:
-            return [{"name": "devices/mock-stale-dev/deviceUsers/mock-stale-user", "lastSyncTime": "2025-01-01T00:00:00Z"}]
+            raise Exception("Cloud Identity service not initialized with valid credentials")
 
         try:
             cutoff_date = datetime.datetime.utcnow() - datetime.timedelta(days=threshold_days)
@@ -103,7 +98,7 @@ class CloudIdentityService:
     def revoke_device_user(self, device_user_name: str, customer_id: str) -> Dict[str, Any]:
         """Revokes approved status by deleting or blocking the device user."""
         if not self.service:
-            return {"status": "REVOKED", "name": device_user_name}
+            raise Exception("Cloud Identity service not initialized with valid credentials")
 
         try:
             request = self.service.devices().deviceUsers().delete(name=device_user_name, customer=customer_id)

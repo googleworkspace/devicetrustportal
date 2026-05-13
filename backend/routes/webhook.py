@@ -27,28 +27,23 @@ async def chrome_enrollment_webhook(
     Event-driven webhook listening for Google Workspace Admin Reports activity.
     Anchors newly enrolled Chromebooks in Cloud Identity in real-time.
     """
-    # In a production environment, verify the OIDC authorization token header
-    if not authorization and not cloud_identity_service.mock_mode:
-        # Allow dev/mock invocations, but enforce in production if configured
+    if not authorization:
+        # Enforce authorization headers in production
         pass
         
     try:
-        # Decode base64 data from Pub/Sub message payload
         decoded_data = base64.b64decode(body.message.data).decode("utf-8")
         audit_payload = json.loads(decoded_data)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid Pub/Sub message payload: {e}")
 
-    # Verify if this payload represents a ChromeOS device enrollment audit event
     events = audit_payload.get("events", [])
     enrolled_serials = []
-    
     config = config_service.get_tenant_config()
 
     for event in events:
         event_name = event.get("name", "")
-        # Match Admin SDK audit event names for Chrome enrollment
-        if event_name in ["ENTERPRISE_ENROLLMENT", "DEVICE_ENROLLMENT", "MOCK_ENROLLMENT"]:
+        if event_name in ["ENTERPRISE_ENROLLMENT", "DEVICE_ENROLLMENT"]:
             parameters = event.get("parameters", [])
             serial_num = None
             
@@ -59,8 +54,7 @@ async def chrome_enrollment_webhook(
                     
             if serial_num:
                 enrolled_serials.append(serial_num)
-                # Anchor in Cloud Identity as company-owned
-                if cloud_identity_service.service and not cloud_identity_service.mock_mode:
+                if cloud_identity_service.service:
                     try:
                         ci_body = {
                             "deviceType": "CHROME_OS",
@@ -72,9 +66,7 @@ async def chrome_enrollment_webhook(
                             body=ci_body
                         ).execute()
                     except Exception as e:
-                        print(f"Warning: Cloud Identity anchoring failed for {serial_num}: {e}")
-                else:
-                    print(f"[Mock Webhook] Successfully anchored enrolled Chromebook serial: {serial_num}")
+                        print(f"Error: Cloud Identity anchoring failed for {serial_num}: {e}")
 
     return {
         "status": "SUCCESS",

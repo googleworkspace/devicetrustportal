@@ -21,31 +21,19 @@ SCOPES = [
 class InventorySeeder:
     def __init__(self):
         self.customer_id = os.getenv("TENANT_CUSTOMER_ID", "my_customer")
-        self.mock_mode = os.getenv("MOCK_MODE", "false").lower() == "true"
-        
-        if self.mock_mode:
-            self.admin_service = None
-            self.ci_service = None
-        else:
-            try:
-                credentials, _ = google.auth.default(scopes=SCOPES)
-                self.admin_service = build("admin", "directory_v1", credentials=credentials)
-                self.ci_service = build("cloudidentity", "v1", credentials=credentials)
-            except Exception as e:
-                print(f"Warning: Google API credentials unavailable ({e}). Running in Mock Seeding Mode.")
-                self.admin_service = None
-                self.ci_service = None
-                self.mock_mode = True
+        try:
+            credentials, _ = google.auth.default(scopes=SCOPES)
+            self.admin_service = build("admin", "directory_v1", credentials=credentials)
+            self.ci_service = build("cloudidentity", "v1", credentials=credentials)
+        except Exception as e:
+            print(f"Error: Failed to initialize Google API credentials: {e}")
+            sys.exit(1)
 
     def run(self):
         print("=========================================================")
-        print("      Starting Chromebook Inventory Seeding Run          ")
+        print("      Starting Live Chromebook Inventory Seeding Run     ")
         print("=========================================================")
         
-        if self.mock_mode:
-            self._run_mock_seeding()
-            return
-
         page_token = None
         total_processed = 0
         batch_size = 100
@@ -72,22 +60,16 @@ class InventorySeeder:
                     break
 
             except HttpError as e:
-                # Intercept 403 Insufficient Scopes error (e.g. local ADC without Domain-Wide Delegation)
-                if e.resp.status in [401, 403]:
-                    print(f"\n[Auth Warning] Insufficient authentication scopes detected ({e.resp.status}).")
-                    print("Note: Live Workspace Admin Directory queries require a Service Account configured with Domain-Wide Delegation (DWD).")
-                    print("Falling back to Mock Fleet Seeding simulation...\n")
-                    self._run_mock_seeding()
-                    return
-                elif e.resp.status in [429, 503]:
+                if e.resp.status in [429, 503]:
                     time.sleep(random.uniform(5, 10))
                     continue
                 else:
-                    print(f"API error during pagination: {e}")
-                    break
+                    print(f"\n❌ Live API Error during pagination: {e}")
+                    print("Ensure your Google Cloud Service Account or user credentials possess Domain-Wide Delegation (DWD) for Workspace Admin Directory and Cloud Identity Devices.")
+                    sys.exit(1)
                 
         print("\n=========================================================")
-        print(f"✔ Inventory Seeding Complete! Processed {total_processed} hardware asset(s).")
+        print(f"✔ Live Inventory Seeding Complete! Processed {total_processed} hardware asset(s).")
         print("=========================================================")
 
     def _process_device_batch(self, devices):
@@ -123,19 +105,6 @@ class InventorySeeder:
             if e.resp.status in [429, 503]:
                 time.sleep(random.uniform(2, 5))
                 batch.execute()
-
-    def _run_mock_seeding(self):
-        print("Simulating fleet crawl via Admin SDK Directory API...")
-        time.sleep(1)
-        print("Assembling BatchHttpRequest payloads for Cloud Identity registration...")
-        
-        for i in range(1, 26):
-            time.sleep(0.05)
-            print(f"Successfully processed {i * 100} active Chromebook(s)...")
-            
-        print("\n=========================================================")
-        print("✔ Mock Inventory Seeding Complete! Processed 2,500 hardware asset(s).")
-        print("=========================================================")
 
 if __name__ == "__main__":
     seeder = InventorySeeder()

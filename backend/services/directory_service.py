@@ -11,22 +11,17 @@ class DirectoryService:
             "https://www.googleapis.com/auth/admin.directory.group.readonly",
             "https://www.googleapis.com/auth/admin.directory.rolemanagement.readonly"
         ]
-        self.mock_mode = os.getenv("MOCK_MODE", "false").lower() == "true"
-        
-        if self.mock_mode:
+        try:
+            credentials, _ = google.auth.default(scopes=self.scopes)
+            self.service = build("admin", "directory_v1", credentials=credentials)
+        except Exception as e:
+            print(f"Error initializing Admin Directory service: {e}")
             self.service = None
-        else:
-            try:
-                credentials, _ = google.auth.default(scopes=self.scopes)
-                self.service = build("admin", "directory_v1", credentials=credentials)
-            except Exception as e:
-                print(f"Warning: Failed to initialize Admin Directory service: {e}. Mocking Directory mode.")
-                self.service = None
 
     def verify_user_is_admin(self, user_email: str) -> bool:
         """Verifies if the given user has Workspace Super Admin or delegated Admin privileges."""
         if not self.service:
-            return "admin" in user_email.lower()
+            raise Exception("Directory service not initialized with valid credentials")
 
         try:
             user = self.service.users().get(userKey=user_email).execute()
@@ -41,9 +36,7 @@ class DirectoryService:
         Hierarchical rule: Group membership overrides OU membership.
         """
         if not self.service:
-            if any(g in user_email for g in ["chain", "trust", "admin"]):
-                return True
-            return False
+            raise Exception("Directory service not initialized with valid credentials")
 
         try:
             for group_email in allowed_groups:

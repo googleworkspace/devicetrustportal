@@ -17,8 +17,7 @@ class ConfigService:
     def __init__(self):
         self.project_id = os.getenv("GOOGLE_CLOUD_PROJECT")
         self.secret_name = os.getenv("SECRET_NAME", "device_trust_gateway_config")
-        self.mock_mode = os.getenv("MOCK_MODE", "false").lower() == "true"
-        self.use_secret_manager = os.getenv("USE_SECRET_MANAGER", "false").lower() == "true" and not self.mock_mode
+        self.use_secret_manager = os.getenv("USE_SECRET_MANAGER", "false").lower() == "true"
         
         if self.use_secret_manager:
             try:
@@ -48,9 +47,6 @@ class ConfigService:
         )
 
     def update_tenant_config(self, config: TenantConfig) -> bool:
-        if self.mock_mode:
-            return True
-            
         config_dict = config.model_dump()
         config_json = json.dumps(config_dict)
 

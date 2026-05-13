@@ -1,11 +1,36 @@
 import pytest
 import base64
 import json
+from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
 from backend.main import app
 from backend.routes.chaining import PAIRING_CODE_CACHE
 
 client = TestClient(app)
+
+@pytest.fixture(autouse=True)
+def mock_services():
+    with patch("backend.services.directory_service.DirectoryService.verify_user_is_admin") as mock_admin, \
+         patch("backend.services.directory_service.DirectoryService.get_user_chaining_policy") as mock_chain, \
+         patch("backend.services.cloud_identity.CloudIdentityService.lookup_device_user") as mock_lookup, \
+         patch("backend.services.cloud_identity.CloudIdentityService.parse_endpoint_verification_header") as mock_ev, \
+         patch("backend.services.cloud_identity.CloudIdentityService.approve_device_user") as mock_app, \
+         patch("backend.services.cloud_identity.CloudIdentityService.list_inactive_devices") as mock_inact, \
+         patch("backend.services.cloud_identity.CloudIdentityService.revoke_device_user") as mock_rev, \
+         patch("backend.services.cloud_identity.cloud_identity_service.service") as mock_service:
+        
+        mock_admin.side_effect = lambda *args, **kwargs: "admin" in (kwargs.get("user_email") or args[0])
+        mock_chain.side_effect = lambda *args, **kwargs: "allowed" in (kwargs.get("user_email") or args[0])
+        
+        mock_ev.return_value = "devices/dev-1/deviceUsers/du-1"
+        mock_lookup.return_value = "devices/dev-1/deviceUsers/du-1"
+        mock_app.return_value = {"done": True, "response": {"status": "APPROVED"}}
+        mock_inact.return_value = [{"name": "devices/dev-1/deviceUsers/du-1"}]
+        mock_rev.return_value = {"status": "REVOKED"}
+        
+        mock_service.devices().create().execute.return_value = {"name": "devices/dev-99"}
+        
+        yield
 
 def test_health_check():
     response = client.get("/health")
@@ -71,7 +96,6 @@ def test_cron_cleanup_success():
     assert response.json()["status"] == "SUCCESS"
 
 def test_webhook_enrollment_success():
-    # Create mock Reports API payload
     mock_payload = {
         "events": [
             {
