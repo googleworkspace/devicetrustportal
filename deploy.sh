@@ -32,7 +32,6 @@ configure_inventory_seeding() {
             elif [ -d "venv" ]; then
                 source venv/bin/activate
             else
-                # Fallback to global python or create temp venv
                 python3 -m venv backend/venv && source backend/venv/bin/activate
                 pip install --quiet -r backend/requirements.txt --index-url https://pypi.org/simple
             fi
@@ -105,13 +104,30 @@ case $OPTION in
     read -p "Enter target Cloud Run region [us-central1]: " GCP_REGION
     GCP_REGION=${GCP_REGION:-us-central1}
     
-    echo -e "\n${BLUE}[1/4] Setting active GCP project...${NC}"
+    echo -e "\n${BLUE}[1/5] Setting active GCP project...${NC}"
     gcloud config set project "$GCP_PROJECT"
     
-    echo -e "\n${BLUE}[2/4] Enabling required Google Cloud APIs...${NC}"
+    echo -e "\n${BLUE}[2/5] Verifying project billing account status...${NC}"
+    BILLING_ENABLED=$(gcloud beta billing projects describe "$GCP_PROJECT" --format="value(billingEnabled)" 2>/dev/null || echo "false")
+    
+    if [ "$BILLING_ENABLED" != "True" ] && [ "$BILLING_ENABLED" != "true" ]; then
+        echo -e "\n${RED}===================================================================================================${NC}"
+        echo -e "${RED}❌ ERROR: Active billing account not found for project '$GCP_PROJECT'.${NC}"
+        echo -e "${RED}Google Cloud Run, Cloud Build, and Secret Manager require an active billing account to be linked.${NC}"
+        echo -e "${YELLOW}Instructions:${NC}"
+        echo -e "  1. Open the Google Cloud Console: https://console.cloud.google.com/billing"
+        echo -e "  2. Link an active billing account to project '$GCP_PROJECT'."
+        echo -e "  3. Re-run this deployment script."
+        echo -e "${RED}===================================================================================================${NC}\n"
+        exit 1
+    else
+        echo -e "${GREEN}✔ Active billing account verified.${NC}"
+    fi
+    
+    echo -e "\n${BLUE}[3/5] Enabling required Google Cloud APIs...${NC}"
     gcloud services enable run.googleapis.com secretmanager.googleapis.com cloudidentity.googleapis.com cloudbuild.googleapis.com cloudscheduler.googleapis.com
     
-    echo -e "\n${BLUE}[3/4] Initializing Secret Manager for dynamic admin configuration...${NC}"
+    echo -e "\n${BLUE}[4/5] Initializing Secret Manager for dynamic admin configuration...${NC}"
     SECRET_NAME="device_trust_gateway_config"
     if ! gcloud secrets describe "$SECRET_NAME" --project="$GCP_PROJECT" &>/dev/null; then
         echo "Creating new Secret Manager secret: $SECRET_NAME"
@@ -123,7 +139,7 @@ case $OPTION in
         echo -e "${GREEN}Secret '$SECRET_NAME' already exists in project.${NC}"
     fi
     
-    echo -e "\n${BLUE}[4/4] Building container and deploying to Cloud Run...${NC}"
+    echo -e "\n${BLUE}[5/5] Building container and deploying to Cloud Run...${NC}"
     IMAGE_TAG="gcr.io/$GCP_PROJECT/device-trust-gateway"
     gcloud builds submit --tag "$IMAGE_TAG" deploy/ --project="$GCP_PROJECT"
     
@@ -139,7 +155,6 @@ case $OPTION in
     echo -e "${GREEN}✔ GCP Deployment Complete!${NC}"
     echo -e "${GREEN}=========================================================${NC}"
     
-    # Trigger seamless inventory seeding configuration
     configure_inventory_seeding
     ;;
     
@@ -172,7 +187,6 @@ EOF
     echo -e "${GREEN}✔ On-Premise Deployment Complete! Backend running on port 8080.${NC}"
     echo -e "${GREEN}=========================================================${NC}"
     
-    # Trigger seamless inventory seeding configuration
     configure_inventory_seeding
     ;;
     

@@ -6,7 +6,7 @@ The **Device Trust Gateway** is a secure bridge application designed for organiz
 
 ## 📋 Table of Contents
 1. [Architecture & Zero-Trust Overview](#-architecture--zero-trust-overview)
-2. [Prerequisites](#-prerequisites)
+2. [Prerequisites & Billing Check](#-prerequisites--billing-check)
 3. [⚡ Automated Interactive Deployer (Recommended)](#-automated-interactive-deployer-recommended)
 4. [Chromebook Fleet Seeding Tool](#-chromebook-fleet-seeding-tool)
 5. [Manual Setup: Local Development](#-manual-setup-local-development)
@@ -33,12 +33,15 @@ For a comprehensive whitepaper detailing how Context-Aware Access Custom Access 
 
 ---
 
-## 🛠 Prerequisites
+## 🛠 Prerequisites & Billing Check
 
-- **Google Cloud Project** with billing enabled.
+- **Google Cloud Project** with an **Active Billing Account** linked. *(Google Cloud Run, Cloud Build, Cloud Scheduler, and Secret Manager require billing to be enabled before APIs can be activated).*
 - **Google Workspace / Cloud Identity** tenant with Context-Aware Access (CAA) enabled.
 - **Service Account Credentials** with Domain-Wide Delegation (DWD) or appropriate OAuth scopes (`https://www.googleapis.com/auth/cloud-identity.devices`, `https://www.googleapis.com/auth/admin.directory.device.chromeos.readonly`).
 - **Node.js (v18+)** and **Python (3.11+)** installed for local development.
+
+> [!IMPORTANT]
+> **Pre-Deployment Billing Verification:** The automated `./deploy.sh` script actively inspects your GCP project's billing status before initiating setup. If billing is missing, it will provide direct links to the Google Cloud Billing Console (`https://console.cloud.google.com/billing`) so you can link an account and proceed without encountering API precondition failures.
 
 ---
 
