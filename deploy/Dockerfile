@@ -1,6 +1,11 @@
 # Stage 1: Build React Static Frontend
 FROM node:18-alpine AS frontend-builder
 WORKDIR /app
+
+# Accept OAuth Client ID build arg and expose to Webpack
+ARG REACT_APP_GOOGLE_CLIENT_ID
+ENV REACT_APP_GOOGLE_CLIENT_ID=$REACT_APP_GOOGLE_CLIENT_ID
+
 COPY frontend/package*.json ./
 RUN npm install --legacy-peer-deps
 COPY frontend/ ./

@@ -1,5 +1,5 @@
 steps:
 - name: 'gcr.io/cloud-builders/docker'
-  args: ['build', '-t', 'gcr.io/$PROJECT_ID/device-trust-gateway', '-f', 'deploy/Dockerfile', '.']
+  args: ['build', '--build-arg', 'REACT_APP_GOOGLE_CLIENT_ID=$_GOOGLE_CLIENT_ID', '-t', 'gcr.io/$PROJECT_ID/device-trust-gateway', '-f', 'deploy/Dockerfile', '.']
 images:
 - 'gcr.io/$PROJECT_ID/device-trust-gateway'
