@@ -51,7 +51,7 @@ configure_inventory_seeding() {
                 --headers="X-Cloudscheduler=true" \
                 --location="$GCP_REGION" \
                 --project="$GCP_PROJECT" \
-                --description="Daily crawl of active Chromebooks for Cloud Identity anchoring"
+                --description="Daily crawl of active Chromebooks for Cloud Identity anchoring" --quiet 2>/dev/null || echo "Scheduler job already configured."
                 
             echo -e "${GREEN}✔ Daily Cloud Scheduler Job configured successfully! (Runs at 2:00 AM daily)${NC}"
             ;;
@@ -68,7 +68,7 @@ configure_inventory_seeding() {
                 --headers="X-Cloudscheduler=true" \
                 --location="$GCP_REGION" \
                 --project="$GCP_PROJECT" \
-                --description="Weekly crawl of active Chromebooks for Cloud Identity anchoring"
+                --description="Weekly crawl of active Chromebooks for Cloud Identity anchoring" --quiet 2>/dev/null || echo "Scheduler job already configured."
                 
             echo -e "${GREEN}✔ Weekly Cloud Scheduler Job configured successfully! (Runs at 3:00 AM every Sunday)${NC}"
             ;;
@@ -78,12 +78,10 @@ configure_inventory_seeding() {
             read -p "Enter target GCP region [us-central1]: " GCP_REGION
             GCP_REGION=${GCP_REGION:-us-central1}
             
-            # 1. Create Pub/Sub Topic
             TOPIC_NAME="chrome-enrollment-events"
             echo "Verifying Pub/Sub topic '$TOPIC_NAME'..."
-            gcloud pubsub topics create "$TOPIC_NAME" --project="$GCP_PROJECT" 2>/dev/null || echo "Topic already exists."
+            gcloud pubsub topics create "$TOPIC_NAME" --project="$GCP_PROJECT" --quiet 2>/dev/null || echo "Topic already exists."
             
-            # 2. Create Push Subscription
             SUB_NAME="chrome-enrollment-webhook-sub"
             WEBHOOK_URI="https://device-trust-gateway-HASH-uc.a.run.app/api/webhook/chrome-enrollment"
             
@@ -92,9 +90,8 @@ configure_inventory_seeding() {
                 --topic="$TOPIC_NAME" \
                 --push-endpoint="$WEBHOOK_URI" \
                 --ack-deadline=60 \
-                --project="$GCP_PROJECT" 2>/dev/null || echo "Subscription already configured."
+                --project="$GCP_PROJECT" --quiet 2>/dev/null || echo "Subscription already configured."
                 
-            # 3. Create Weekly Safety Net Cron
             echo "Configuring Weekly Cloud Scheduler safety net..."
             gcloud scheduler jobs create http seed-chromebook-inventory-weekly \
                 --schedule="0 3 * * 0" \
@@ -103,7 +100,7 @@ configure_inventory_seeding() {
                 --headers="X-Cloudscheduler=true" \
                 --location="$GCP_REGION" \
                 --project="$GCP_PROJECT" \
-                --description="Weekly safety net crawl of active Chromebooks for Cloud Identity anchoring" 2>/dev/null || echo "Weekly cron already configured."
+                --description="Weekly safety net crawl of active Chromebooks for Cloud Identity anchoring" --quiet 2>/dev/null || echo "Weekly cron already configured."
                 
             echo -e "${GREEN}✔ Real-Time Event-Driven Seeding configured successfully!${NC}"
             ;;
@@ -141,7 +138,7 @@ case $OPTION in
     GCP_REGION=${GCP_REGION:-us-central1}
     
     echo -e "\n${BLUE}[1/5] Setting active GCP project...${NC}"
-    gcloud config set project "$GCP_PROJECT"
+    gcloud config set project "$GCP_PROJECT" --quiet
     
     echo -e "\n${BLUE}[2/5] Verifying project billing account status...${NC}"
     BILLING_ENABLED=$(gcloud beta billing projects describe "$GCP_PROJECT" --format="value(billingEnabled)" 2>/dev/null || echo "false")
@@ -161,23 +158,25 @@ case $OPTION in
     fi
     
     echo -e "\n${BLUE}[3/5] Enabling required Google Cloud APIs...${NC}"
-    gcloud services enable run.googleapis.com secretmanager.googleapis.com cloudidentity.googleapis.com cloudbuild.googleapis.com cloudscheduler.googleapis.com pubsub.googleapis.com
+    gcloud services enable run.googleapis.com secretmanager.googleapis.com cloudidentity.googleapis.com cloudbuild.googleapis.com cloudscheduler.googleapis.com pubsub.googleapis.com --quiet
     
     echo -e "\n${BLUE}[4/5] Initializing Secret Manager for dynamic admin configuration...${NC}"
     SECRET_NAME="device_trust_gateway_config"
     if ! gcloud secrets describe "$SECRET_NAME" --project="$GCP_PROJECT" &>/dev/null; then
         echo "Creating new Secret Manager secret: $SECRET_NAME"
-        gcloud secrets create "$SECRET_NAME" --replication-policy="automatic" --project="$GCP_PROJECT"
+        gcloud secrets create "$SECRET_NAME" --replication-policy="automatic" --project="$GCP_PROJECT" --quiet
         
         DEFAULT_CONFIG='{"customer_id": "customers/my_customer", "inactivity_threshold_days": 90, "trusted_ip_ranges": ["127.0.0.1/32", "10.0.0.0/8"], "chaining_allowed_groups": ["trust-chaining-allowed@example.com"], "chaining_allowed_ous": ["/Staff", "/Faculty"]}'
-        echo -n "$DEFAULT_CONFIG" | gcloud secrets versions add "$SECRET_NAME" --data-file=- --project="$GCP_PROJECT"
+        echo -n "$DEFAULT_CONFIG" | gcloud secrets versions add "$SECRET_NAME" --data-file=- --project="$GCP_PROJECT" --quiet
     else
         echo -e "${GREEN}Secret '$SECRET_NAME' already exists in project.${NC}"
     fi
     
-    echo -e "\n${BLUE}[5/5] Building container and deploying to Cloud Run...${NC}"
+    echo -e "\n${BLUE}[5/5] Building container and deploying to Cloud Run (suppressing build logs)...${NC}"
     IMAGE_TAG="gcr.io/$GCP_PROJECT/device-trust-gateway"
-    gcloud builds submit --config cloudbuild.yaml . --project="$GCP_PROJECT"
+    
+    # Suppress massive Cloud Build streaming output for clean terminal UX
+    gcloud builds submit --config cloudbuild.yaml . --project="$GCP_PROJECT" --suppress-logs
     
     gcloud run deploy device-trust-gateway \
         --image "$IMAGE_TAG" \
@@ -185,6 +184,7 @@ case $OPTION in
         --region "$GCP_REGION" \
         --project "$GCP_PROJECT" \
         --allow-unauthenticated \
+        --quiet \
         --set-env-vars="USE_SECRET_MANAGER=true,SECRET_NAME=$SECRET_NAME,GOOGLE_CLOUD_PROJECT=$GCP_PROJECT"
         
     echo -e "\n${GREEN}=========================================================${NC}"
