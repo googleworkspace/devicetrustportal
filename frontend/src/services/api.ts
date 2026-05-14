@@ -41,7 +41,6 @@ const getHeaders = () => {
   return headers;
 };
 
-// Helper fetch wrapper intercepting 401 Unauthorized to handle stale/expired sessions
 const fetchWithAuth = async (url: string, options: RequestInit = {}): Promise<Response> => {
   const response = await fetch(url, options);
   if (response.status === 401) {
@@ -121,17 +120,6 @@ export const networkApproval = async (
       raw_device_id: rawDeviceId,
       ev_header: evHeader,
     }),
-  });
-  return response.json();
-};
-
-export const triggerCronCleanup = async (): Promise<{ status: string; revoked_count: number }> => {
-  const response = await fetchWithAuth(`${API_BASE_URL}/api/cron/cleanup`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Mock-Cron": "true",
-    },
   });
   return response.json();
 };

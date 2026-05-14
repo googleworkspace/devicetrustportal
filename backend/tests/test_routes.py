@@ -30,7 +30,7 @@ def mock_services():
         mock_rev.return_value = {"status": "REVOKED"}
         
         mock_service.devices().create().execute.return_value = {"name": "devices/dev-99"}
-        mock_service.devices().list().execute.return_value = {"devices": [{"name": "devices/dev-1", "deviceType": "CHROME_OS"}]}
+        mock_service.devices().list().execute.return_value = {"devices": [{"name": "devices/dev-1", "deviceType": "CHROME_OS", "model": "Chromebook", "osVersion": "Chrome 120", "serialNumber": "1234"}]}
         mock_service.devices().deviceUsers().list().execute.return_value = {
             "deviceUsers": [{"name": "devices/dev-1/deviceUsers/du-1", "userEmail": "student@example.com", "approvalState": "APPROVED"}]
         }
@@ -102,7 +102,7 @@ def test_cron_cleanup_forbidden():
     assert response.status_code == 403
 
 def test_cron_cleanup_success():
-    response = client.post("/api/cron/cleanup", headers={"X-Mock-Cron": "true"})
+    response = client.post("/api/cron/cleanup", headers={"X-Cloudscheduler": "true"})
     assert response.status_code == 200
     assert response.json()["status"] == "SUCCESS"
 

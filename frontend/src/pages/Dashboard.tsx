@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { triggerCronCleanup, getMyDevices, approveDevice, revokeDevice, checkIsAdmin, DeviceUserItem } from "../services/api";
+import { getMyDevices, approveDevice, revokeDevice, checkIsAdmin, DeviceUserItem } from "../services/api";
 import { GoogleLoginButton } from "../components/GoogleLoginButton";
 
 export const Dashboard: React.FC = () => {
@@ -43,15 +43,6 @@ export const Dashboard: React.FC = () => {
     setUserEmail(email);
     setAuthToken(token);
     setMessage(`Successfully authenticated with Google Sign-In as ${email}`);
-  };
-
-  const handleCron = async () => {
-    try {
-      const res = await triggerCronCleanup();
-      setMessage(`Cleanup successful: Revoked ${res.revoked_count} stale device(s).`);
-    } catch (e: any) {
-      setMessage(`Error: ${e.message}`);
-    }
   };
 
   const handleApprove = async (name: string) => {
@@ -213,7 +204,6 @@ export const Dashboard: React.FC = () => {
           Campus Wi-Fi Approval
         </a>
         
-        {/* Admin Config UI dynamically gated by Workspace Super Admin privileges */}
         {isAdmin && (
           <a
             href="#/admin"
@@ -222,19 +212,6 @@ export const Dashboard: React.FC = () => {
             Admin Configurations
           </a>
         )}
-      </section>
-
-      <section style={{ borderTop: "1px solid #ccc", paddingTop: "20px" }}>
-        <h3>System Lifecycle Management</h3>
-        <p style={{ color: "#555", fontSize: "14px" }}>
-          Simulate the Cloud Scheduler cron job that evaluates active BYOD devices against inactivity thresholds.
-        </p>
-        <button
-          onClick={handleCron}
-          style={{ padding: "10px 20px", backgroundColor: "#555", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}
-        >
-          Trigger Inactivity Cleanup Cron
-        </button>
       </section>
     </div>
   );
