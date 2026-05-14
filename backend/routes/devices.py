@@ -15,9 +15,8 @@ class DeviceUserItem(BaseModel):
 
 @router.get("/my-devices", response_model=List[DeviceUserItem])
 def get_my_approved_devices(user_email: str = Depends(get_current_user_email)):
-    """Fetches the authentic list of approved devices assigned to the requesting user."""
+    """Fetches the authentic list of devices assigned to the requesting user across all Cloud Identity pages."""
     if not cloud_identity_service.service:
-        # If running locally without credentials or in mock mode, return mock device list
         return [
             DeviceUserItem(
                 device_user_name="devices/mock-cb123/deviceUsers/du-1",
@@ -35,32 +34,53 @@ def get_my_approved_devices(user_email: str = Depends(get_current_user_email)):
 
     config = config_service.get_tenant_config()
     my_devices = []
+    target_email = user_email.lower().strip()
 
     try:
-        # List all devices in the tenant (or search by user if supported)
-        request = cloud_identity_service.service.devices().list(customer=config.customer_id)
-        response = request.execute()
-        devices = response.get("devices", [])
+        # 1. Paginate through all devices in the tenant
+        next_page_token = None
+        while True:
+            request = cloud_identity_service.service.devices().list(
+                customer=config.customer_id,
+                pageToken=next_page_token
+            )
+            response = request.execute()
+            devices = response.get("devices", [])
 
-        for d in devices:
-            device_name = d["name"]
-            device_type = d.get("deviceType", "UNKNOWN_TYPE")
-            
-            # List device users for this device
-            du_req = cloud_identity_service.service.devices().deviceUsers().list(parent=device_name, customer=config.customer_id)
-            du_resp = du_req.execute()
-            
-            for du in du_resp.get("deviceUsers", []):
-                if du.get("userEmail") == user_email and du.get("approvalState") == "APPROVED":
-                    my_devices.append(
-                        DeviceUserItem(
-                            device_user_name=du["name"],
-                            device_type=device_type,
-                            approval_state=du.get("approvalState", "APPROVED"),
-                            last_sync_time=d.get("lastSyncTime", "N/A")
-                        )
+            for d in devices:
+                device_name = d["name"]
+                device_type = d.get("deviceType", "UNKNOWN_TYPE")
+                
+                # 2. Paginate through all device users for this hardware
+                du_page_token = None
+                while True:
+                    du_req = cloud_identity_service.service.devices().deviceUsers().list(
+                        parent=device_name,
+                        customer=config.customer_id,
+                        pageToken=du_page_token
                     )
+                    du_resp = du_req.execute()
                     
+                    for du in du_resp.get("deviceUsers", []):
+                        du_email = du.get("userEmail", "").lower().strip()
+                        if du_email == target_email:
+                            my_devices.append(
+                                DeviceUserItem(
+                                    device_user_name=du["name"],
+                                    device_type=device_type,
+                                    approval_state=du.get("approvalState", "UNKNOWN_STATE"),
+                                    last_sync_time=d.get("lastSyncTime", "N/A")
+                                )
+                            )
+                            
+                    du_page_token = du_resp.get("nextPageToken")
+                    if not du_page_token:
+                        break
+                        
+            next_page_token = response.get("nextPageToken")
+            if not next_page_token:
+                break
+                
         return my_devices
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch user devices from Cloud Identity: {e}")
