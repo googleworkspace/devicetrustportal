@@ -14,6 +14,7 @@ class DeviceUserItem(BaseModel):
     os_version: str
     serial_number: str
     approval_state: str
+    owner_type: str
     last_sync_time: str
 
 class DeviceActionRequest(BaseModel):
@@ -21,7 +22,7 @@ class DeviceActionRequest(BaseModel):
 
 @router.get("/my-devices", response_model=List[DeviceUserItem])
 def get_my_approved_devices(user_email: str = Depends(get_current_user_email)):
-    """Fetches the authentic list of devices assigned to the requesting user using server-side email filtering."""
+    """Fetches the authentic list of devices assigned to the requesting user, identifying company-owned trust anchors."""
     if not cloud_identity_service.service:
         print(f"INFO [devices.py]: Running without Cloud Identity service credentials. Returning mock assets for '{user_email}'.")
         return [
@@ -32,6 +33,7 @@ def get_my_approved_devices(user_email: str = Depends(get_current_user_email)):
                 os_version="ChromeOS 120.0",
                 serial_number="PF2ABC99",
                 approval_state="APPROVED",
+                owner_type="COMPANY",
                 last_sync_time="2026-05-14T10:00:00Z"
             ),
             DeviceUserItem(
@@ -41,6 +43,7 @@ def get_my_approved_devices(user_email: str = Depends(get_current_user_email)):
                 os_version="Android 14.0",
                 serial_number="35991234567890",
                 approval_state="PENDING_APPROVAL",
+                owner_type="BYOD",
                 last_sync_time="2026-05-14T10:05:00Z"
             )
         ]
@@ -49,7 +52,6 @@ def get_my_approved_devices(user_email: str = Depends(get_current_user_email)):
     my_devices = []
     target_email = user_email.lower().strip()
 
-    # Utilize highly efficient server-side query filtering
     query_filter = f"email:{target_email}"
     print(f"INFO [devices.py]: Executing Cloud Identity devices.list(filter='{query_filter}') for customer '{config.customer_id}'...")
 
@@ -74,9 +76,11 @@ def get_my_approved_devices(user_email: str = Depends(get_current_user_email)):
                 device_type = d.get("deviceType", "UNKNOWN_TYPE")
                 model = d.get("model", "Unknown Model")
                 os_version = d.get("osVersion", d.get("os", "Unknown OS"))
-                serial_number = d.get("serialNumber") or d.get("imei") or d.get("meid") or "N/A"
+                owner_type = d.get("ownerType", "BYOD")
                 
-                # Query deviceUsers to retrieve exact managementState / approval binding
+                # Robustly extract serial number across ChromeOS and Mobile hardware definitions
+                serial_number = d.get("serialNumber") or d.get("deviceSerialNumber") or d.get("imei") or d.get("meid") or "N/A"
+                
                 du_page_token = None
                 while True:
                     du_req = cloud_identity_service.service.devices().deviceUsers().list(
@@ -98,6 +102,7 @@ def get_my_approved_devices(user_email: str = Depends(get_current_user_email)):
                                     os_version=os_version,
                                     serial_number=serial_number,
                                     approval_state=state,
+                                    owner_type=owner_type,
                                     last_sync_time=d.get("lastSyncTime", "N/A")
                                 )
                             )
@@ -110,7 +115,7 @@ def get_my_approved_devices(user_email: str = Depends(get_current_user_email)):
             if not next_page_token:
                 break
                 
-        print(f"INFO [devices.py]: Filtered crawl complete. Matched {total_devices_matched} total hardware assets across {page_count} pages. Returning {len(my_devices)} matching device bindings.")
+        print(f"INFO [devices.py]: Matched {total_devices_matched} total hardware assets across {page_count} pages. Returning {len(my_devices)} matching device bindings.")
         return my_devices
     except Exception as e:
         print(f"ERROR [devices.py]: Cloud Identity API filtered crawl failed: {e}")
@@ -140,10 +145,19 @@ def revoke_device(request: DeviceActionRequest, user_email: str = Depends(get_cu
 
     config = config_service.get_tenant_config()
     try:
+        # Safety check: verify if parent device is company owned
+        parent_device = request.device_user_name.split("/deviceUsers/")[0]
+        dev_req = cloud_identity_service.service.devices().get(name=parent_device, customer=config.customer_id)
+        dev_resp = dev_req.execute()
+        if dev_resp.get("ownerType") == "COMPANY":
+            raise HTTPException(status_code=403, detail="Access Denied: Company-owned trust anchors cannot be revoked.")
+
         cloud_identity_service.revoke_device_user(
             device_user_name=request.device_user_name,
             customer_id=config.customer_id
         )
         return {"status": "SUCCESS", "message": "Device revoked successfully."}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

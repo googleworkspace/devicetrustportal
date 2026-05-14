@@ -27,6 +27,7 @@ export interface DeviceUserItem {
   os_version: string;
   serial_number: string;
   approval_state: string;
+  owner_type: string;
   last_sync_time: string;
 }
 

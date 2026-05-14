@@ -50,7 +50,6 @@ export const Dashboard: React.FC = () => {
     try {
       await approveDevice(name);
       setMessage("Device approved successfully.");
-      // Instant local state update without re-fetching or triggering spinning loader
       setDevices((prev) =>
         prev.map((d) => (d.device_user_name === name ? { ...d, approval_state: "APPROVED" } : d))
       );
@@ -59,12 +58,15 @@ export const Dashboard: React.FC = () => {
     }
   };
 
-  const handleRevoke = async (name: string) => {
+  const handleRevoke = async (name: string, ownerType: string) => {
+    if (ownerType === "COMPANY") {
+      setMessage("Access Denied: Company-owned trust anchors cannot be revoked.");
+      return;
+    }
     setMessage("");
     try {
       await revokeDevice(name);
       setMessage("Device revoked successfully.");
-      // Instant local state update without re-fetching or triggering spinning loader
       setDevices((prev) =>
         prev.map((d) => (d.device_user_name === name ? { ...d, approval_state: "UNMANAGED" } : d))
       );
@@ -169,7 +171,12 @@ export const Dashboard: React.FC = () => {
             <tbody>
               {devices.map((d, i) => (
                 <tr key={i} style={{ borderBottom: "1px solid #eee" }}>
-                  <td style={{ padding: "14px 15px", color: "#202124", fontWeight: "bold", fontSize: "14px" }}>{d.model}</td>
+                  <td style={{ padding: "14px 15px", color: "#202124" }}>
+                    <div style={{ fontWeight: "bold", fontSize: "14px" }}>{d.model}</div>
+                    <div style={{ fontSize: "11px", color: d.owner_type === "COMPANY" ? "#1a73e8" : "#5f6368", fontWeight: d.owner_type === "COMPANY" ? "bold" : "normal", marginTop: "2px", textTransform: "uppercase" }}>
+                      {d.owner_type === "COMPANY" ? "🏢 Company Owned Asset" : "👤 Personal BYOD"}
+                    </div>
+                  </td>
                   <td style={{ padding: "14px 15px", color: "#5f6368", fontSize: "14px" }}>{d.os_version} ({d.device_type})</td>
                   <td style={{ padding: "14px 15px", fontFamily: "monospace", fontSize: "13px", color: "#3c4043" }}>
                     <div>{d.serial_number !== "N/A" ? `Serial/IMEI: ${d.serial_number}` : "Virtual Asset / EV Cert"}</div>
@@ -181,9 +188,13 @@ export const Dashboard: React.FC = () => {
                   </td>
                   <td style={{ padding: "14px 15px", color: "#5f6368", fontSize: "13px" }}>{d.last_sync_time}</td>
                   <td style={{ padding: "14px 15px", textAlign: "center" }}>
-                    {d.approval_state === "APPROVED" ? (
+                    {d.owner_type === "COMPANY" ? (
+                      <span style={{ padding: "6px 12px", backgroundColor: "#e8f0fe", color: "#1a73e8", borderRadius: "4px", fontSize: "12px", fontWeight: "bold", display: "inline-block", border: "1px solid #d2e3fc" }}>
+                        🔒 Immutable Anchor
+                      </span>
+                    ) : d.approval_state === "APPROVED" ? (
                       <button
-                        onClick={() => handleRevoke(d.device_user_name)}
+                        onClick={() => handleRevoke(d.device_user_name, d.owner_type)}
                         style={{ padding: "6px 12px", backgroundColor: "#d93025", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", fontSize: "12px", fontWeight: "bold" }}
                       >
                         ✕ Revoke
