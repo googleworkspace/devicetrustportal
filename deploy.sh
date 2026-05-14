@@ -239,10 +239,8 @@ print_final_summary() {
     echo -e "${GREEN}===================================================================================================${NC}"
     echo -e "Access your live self-service portals and admin configuration dashboards below:"
     echo ""
-    echo -e "  🌐 ${YELLOW}Main Gateway Dashboard:${NC}     ${PORTAL_URL}/#/"
-    echo -e "  🔗 ${YELLOW}Trust Chaining Portal:${NC}      ${PORTAL_URL}/#/chaining"
-    echo -e "  📶 ${YELLOW}Campus Wi-Fi Approval:${NC}      ${PORTAL_URL}/#/network"
-    echo -e "  ⚙️ ${YELLOW}Admin Config UI:${NC}            ${PORTAL_URL}/#/admin"
+    echo -e "  🌐 ${YELLOW}Main Gateway Portal:${NC}       ${PORTAL_URL}/#/"
+    echo -e "  ⚙️ ${YELLOW}Admin Configuration UI:${NC}    ${PORTAL_URL}/#/admin"
     echo ""
     echo -e "${BLUE}Next Steps & Policy Reminder:${NC}"
     echo -e "Ensure your Google Workspace Context-Aware Access (CAA) Custom Access Level is actively enforcing:"
@@ -371,7 +369,6 @@ case $OPTION in
     echo -e "${GREEN}✔ GCP Deployment & OAuth Authorization Complete!${NC}"
     echo -e "${GREEN}=========================================================${NC}"
     
-    # Execute mass BYOD revocation FIRST, and company inventory seeding SECOND to guarantee approved company anchors
     execute_mass_revocation_prompt
     configure_inventory_seeding
     print_final_summary "$SERVICE_URL"
@@ -406,7 +403,6 @@ EOF
     echo -e "${GREEN}✔ On-Premise Deployment Complete! Backend running on port 8080.${NC}"
     echo -e "${GREEN}=========================================================${NC}"
     
-    # Execute mass BYOD revocation FIRST, and company inventory seeding SECOND to guarantee approved company anchors
     execute_mass_revocation_prompt
     configure_inventory_seeding
     print_final_summary "http://localhost:8080"
