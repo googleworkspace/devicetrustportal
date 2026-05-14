@@ -1,4 +1,5 @@
 from typing import Optional
+from pydantic import BaseModel
 from fastapi import APIRouter, Header, HTTPException, Depends
 from google.oauth2 import id_token
 from google.auth.transport import requests
@@ -6,6 +7,9 @@ from backend.services.config_service import config_service, TenantConfig
 from backend.services.directory_service import directory_service
 
 router = APIRouter(prefix="/api/admin", tags=["Admin"])
+
+class AdminStatusResponse(BaseModel):
+    is_admin: bool
 
 def get_current_user_email(
     authorization: Optional[str] = Header(None),
@@ -30,6 +34,12 @@ def get_current_user_email(
         return x_goog_authenticated_user_email
 
     raise HTTPException(status_code=401, detail="Authentication required: Invalid or missing Google ID token.")
+
+@router.get("/status", response_model=AdminStatusResponse)
+def check_admin_status(user_email: str = Depends(get_current_user_email)):
+    """Returns whether the requesting user holds Workspace Administrator privileges."""
+    is_admin = directory_service.verify_user_is_admin(user_email)
+    return AdminStatusResponse(is_admin=is_admin)
 
 @router.get("/config", response_model=TenantConfig)
 def get_config(user_email: str = Depends(get_current_user_email)):

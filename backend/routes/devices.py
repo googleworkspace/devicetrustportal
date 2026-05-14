@@ -1,4 +1,4 @@
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 from fastapi import APIRouter, HTTPException, Depends
 from backend.services.config_service import config_service
@@ -10,25 +10,37 @@ router = APIRouter(prefix="/api/devices", tags=["Devices"])
 class DeviceUserItem(BaseModel):
     device_user_name: str
     device_type: str
+    model: str
+    os_version: str
+    serial_number: str
     approval_state: str
     last_sync_time: str
 
+class DeviceActionRequest(BaseModel):
+    device_user_name: str
+
 @router.get("/my-devices", response_model=List[DeviceUserItem])
 def get_my_approved_devices(user_email: str = Depends(get_current_user_email)):
-    """Fetches the authentic list of devices assigned to the requesting user across all Cloud Identity pages, logging execution."""
+    """Fetches the authentic, human-readable list of devices assigned to the requesting user across all Cloud Identity pages."""
     if not cloud_identity_service.service:
         print(f"INFO [devices.py]: Running without Cloud Identity service credentials. Returning mock assets for '{user_email}'.")
         return [
             DeviceUserItem(
                 device_user_name="devices/mock-cb123/deviceUsers/du-1",
-                device_type="CHROME_OS (Trust Anchor)",
+                device_type="CHROME_OS",
+                model="Enterprise Chromebook Pixel",
+                os_version="ChromeOS 120.0",
+                serial_number="PF2ABC99",
                 approval_state="APPROVED",
                 last_sync_time="2026-05-14T10:00:00Z"
             ),
             DeviceUserItem(
                 device_user_name="devices/mock-pixel99/deviceUsers/du-2",
-                device_type="ANDROID Smartphone",
-                approval_state="APPROVED",
+                device_type="ANDROID",
+                model="Google Pixel 7 Pro",
+                os_version="Android 14.0",
+                serial_number="35991234567890",
+                approval_state="PENDING_APPROVAL",
                 last_sync_time="2026-05-14T10:05:00Z"
             )
         ]
@@ -40,14 +52,12 @@ def get_my_approved_devices(user_email: str = Depends(get_current_user_email)):
     print(f"INFO [devices.py]: Initiating Cloud Identity devices.list crawl for customer '{config.customer_id}' targeting user '{target_email}'...")
 
     try:
-        # 1. Paginate through all devices in the tenant
         next_page_token = None
         page_count = 0
         total_devices_crawled = 0
         
         while True:
             page_count += 1
-            print(f"INFO [devices.py]: Executing service.devices().list(pageToken={next_page_token}) [Page {page_count}]...")
             request = cloud_identity_service.service.devices().list(
                 customer=config.customer_id,
                 pageToken=next_page_token
@@ -56,13 +66,13 @@ def get_my_approved_devices(user_email: str = Depends(get_current_user_email)):
             devices = response.get("devices", [])
             total_devices_crawled += len(devices)
 
-            print(f"INFO [devices.py]: Discovered {len(devices)} hardware assets on Page {page_count}. Inspecting deviceUsers bindings...")
-
             for d in devices:
                 device_name = d["name"]
                 device_type = d.get("deviceType", "UNKNOWN_TYPE")
+                model = d.get("model", "Unknown Model")
+                os_version = d.get("osVersion", "Unknown OS")
+                serial_number = d.get("serialNumber", "N/A")
                 
-                # 2. Paginate through all device users for this hardware
                 du_page_token = None
                 while True:
                     du_req = cloud_identity_service.service.devices().deviceUsers().list(
@@ -76,11 +86,13 @@ def get_my_approved_devices(user_email: str = Depends(get_current_user_email)):
                         du_email = du.get("userEmail", "").lower().strip()
                         if du_email == target_email:
                             state = du.get("approvalState", "UNKNOWN_STATE")
-                            print(f"SUCCESS [devices.py]: Found matching binding '{du['name']}' for '{target_email}' (Type: {device_type}, State: {state})")
                             my_devices.append(
                                 DeviceUserItem(
                                     device_user_name=du["name"],
                                     device_type=device_type,
+                                    model=model,
+                                    os_version=os_version,
+                                    serial_number=serial_number,
                                     approval_state=state,
                                     last_sync_time=d.get("lastSyncTime", "N/A")
                                 )
@@ -94,8 +106,40 @@ def get_my_approved_devices(user_email: str = Depends(get_current_user_email)):
             if not next_page_token:
                 break
                 
-        print(f"INFO [devices.py]: Crawl complete. Crawled {total_devices_crawled} total hardware assets across {page_count} pages. Returning {len(my_devices)} matching devices.")
+        print(f"INFO [devices.py]: Crawled {total_devices_crawled} total hardware assets across {page_count} pages. Returning {len(my_devices)} matching devices.")
         return my_devices
     except Exception as e:
         print(f"ERROR [devices.py]: Cloud Identity API crawl failed: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to fetch user devices from Cloud Identity: {e}")
+
+@router.post("/approve")
+def approve_device(request: DeviceActionRequest, user_email: str = Depends(get_current_user_email)):
+    """Executes inline approval for a target device user binding."""
+    if not cloud_identity_service.service:
+        return {"status": "SUCCESS", "message": "Simulated device approval complete."}
+
+    config = config_service.get_tenant_config()
+    try:
+        operation = cloud_identity_service.approve_device_user(
+            device_user_name=request.device_user_name,
+            customer_id=config.customer_id
+        )
+        return {"status": "SUCCESS", "operation": operation}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/revoke")
+def revoke_device(request: DeviceActionRequest, user_email: str = Depends(get_current_user_email)):
+    """Executes inline revocation/unapproval for a target device user binding."""
+    if not cloud_identity_service.service:
+        return {"status": "SUCCESS", "message": "Simulated device revocation complete."}
+
+    config = config_service.get_tenant_config()
+    try:
+        cloud_identity_service.revoke_device_user(
+            device_user_name=request.device_user_name,
+            customer_id=config.customer_id
+        )
+        return {"status": "SUCCESS", "message": "Device revoked successfully."}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

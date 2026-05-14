@@ -23,6 +23,9 @@ export interface VerifyResponse {
 export interface DeviceUserItem {
   device_user_name: string;
   device_type: string;
+  model: string;
+  os_version: string;
+  serial_number: string;
   approval_state: string;
   last_sync_time: string;
 }
@@ -52,6 +55,18 @@ const fetchWithAuth = async (url: string, options: RequestInit = {}): Promise<Re
     throw new Error(await response.text());
   }
   return response;
+};
+
+export const checkIsAdmin = async (): Promise<boolean> => {
+  try {
+    const response = await fetchWithAuth(`${API_BASE_URL}/api/admin/status`, {
+      headers: getHeaders(),
+    });
+    const data = await response.json();
+    return data.is_admin;
+  } catch (e) {
+    return false;
+  }
 };
 
 export const getAdminConfig = async (): Promise<TenantConfig> => {
@@ -124,6 +139,24 @@ export const triggerCronCleanup = async (): Promise<{ status: string; revoked_co
 export const getMyDevices = async (): Promise<DeviceUserItem[]> => {
   const response = await fetchWithAuth(`${API_BASE_URL}/api/devices/my-devices`, {
     headers: getHeaders(),
+  });
+  return response.json();
+};
+
+export const approveDevice = async (deviceUserName: string): Promise<{ status: string }> => {
+  const response = await fetchWithAuth(`${API_BASE_URL}/api/devices/approve`, {
+    method: "POST",
+    headers: getHeaders(),
+    body: JSON.stringify({ device_user_name: deviceUserName }),
+  });
+  return response.json();
+};
+
+export const revokeDevice = async (deviceUserName: string): Promise<{ status: string }> => {
+  const response = await fetchWithAuth(`${API_BASE_URL}/api/devices/revoke`, {
+    method: "POST",
+    headers: getHeaders(),
+    body: JSON.stringify({ device_user_name: deviceUserName }),
   });
   return response.json();
 };

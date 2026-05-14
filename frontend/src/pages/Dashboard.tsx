@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { triggerCronCleanup, getMyDevices, DeviceUserItem } from "../services/api";
+import { triggerCronCleanup, getMyDevices, approveDevice, revokeDevice, checkIsAdmin, DeviceUserItem } from "../services/api";
 import { GoogleLoginButton } from "../components/GoogleLoginButton";
 
 export const Dashboard: React.FC = () => {
@@ -7,12 +7,12 @@ export const Dashboard: React.FC = () => {
   const [message, setMessage] = useState("");
   const [authToken, setAuthToken] = useState(() => localStorage.getItem("googleIdToken") || "");
   
-  // Real production devices state
   const [devices, setDevices] = useState<DeviceUserItem[]>([]);
   const [loadingDevices, setLoadingDevices] = useState(false);
   const [deviceError, setDeviceError] = useState("");
+  const [isAdmin, setIsAdmin] = useState(false);
 
-  useEffect(() => {
+  const loadDevices = () => {
     if (userEmail) {
       setLoadingDevices(true);
       setDeviceError("");
@@ -27,6 +27,15 @@ export const Dashboard: React.FC = () => {
         });
     } else {
       setDevices([]);
+    }
+  };
+
+  useEffect(() => {
+    loadDevices();
+    if (userEmail) {
+      checkIsAdmin().then(setIsAdmin);
+    } else {
+      setIsAdmin(false);
     }
   }, [userEmail, authToken]);
 
@@ -45,8 +54,30 @@ export const Dashboard: React.FC = () => {
     }
   };
 
+  const handleApprove = async (name: string) => {
+    setMessage("");
+    try {
+      await approveDevice(name);
+      setMessage("Device approved successfully.");
+      loadDevices();
+    } catch (e: any) {
+      setMessage(`Failed to approve device: ${e.message}`);
+    }
+  };
+
+  const handleRevoke = async (name: string) => {
+    setMessage("");
+    try {
+      await revokeDevice(name);
+      setMessage("Device revoked successfully.");
+      loadDevices();
+    } catch (e: any) {
+      setMessage(`Failed to revoke device: ${e.message}`);
+    }
+  };
+
   return (
-    <div style={{ padding: "20px", fontFamily: "sans-serif", maxWidth: "800px", margin: "0 auto" }}>
+    <div style={{ padding: "20px", fontFamily: "sans-serif", maxWidth: "950px", margin: "0 auto" }}>
       <header style={{ borderBottom: "1px solid #ccc", paddingBottom: "15px", marginBottom: "20px" }}>
         <h1>Device Trust Gateway</h1>
         
@@ -72,6 +103,7 @@ export const Dashboard: React.FC = () => {
                   setUserEmail("");
                   setAuthToken("");
                   setDevices([]);
+                  setIsAdmin(false);
                   setMessage("Signed out successfully.");
                 }}
                 style={{ padding: "8px 14px", backgroundColor: "#137333", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", fontWeight: "bold", fontSize: "12px" }}
@@ -90,39 +122,76 @@ export const Dashboard: React.FC = () => {
       )}
 
       <section style={{ marginBottom: "30px" }}>
-        <h2>My Approved Devices</h2>
+        <h2>My Hardware Assets</h2>
         
         {!userEmail ? (
           <div style={{ padding: "15px", backgroundColor: "#fff3cd", color: "#856404", border: "1px solid #ffeeba", borderRadius: "4px" }}>
             Please sign in with Google above to view your registered enterprise hardware assets.
           </div>
         ) : loadingDevices ? (
-          <div style={{ padding: "15px", color: "#555", fontStyle: "italic" }}>Loading approved devices from Cloud Identity...</div>
+          <div style={{ padding: "40px 20px", backgroundColor: "#f8f9fa", border: "1px solid #e9ecef", borderRadius: "8px", textAlign: "center", marginTop: "10px" }}>
+            <style>
+              {`@keyframes spin { to { transform: rotate(360deg); } }`}
+            </style>
+            <div style={{ display: "inline-block", width: "40px", height: "40px", border: "4px solid rgba(26, 115, 232, 0.2)", borderRadius: "50%", borderTopColor: "#1a73e8", animation: "spin 1s ease-in-out infinite", marginBottom: "15px" }} />
+            <div style={{ fontWeight: "bold", color: "#202124", fontSize: "16px", marginBottom: "6px" }}>Loading enterprise hardware assets...</div>
+            <div style={{ color: "#5f6368", fontSize: "13px" }}>Actively crawling Cloud Identity catalogs across all tenant pages for <b>{userEmail}</b>.</div>
+          </div>
         ) : deviceError ? (
           <div style={{ padding: "15px", backgroundColor: "#f8d7da", color: "#721c24", border: "1px solid #f5c6cb", borderRadius: "4px" }}>
             {deviceError}
           </div>
         ) : devices.length === 0 ? (
-          <div style={{ padding: "20px", backgroundColor: "#f8f9fa", color: "#6c757d", border: "1px solid #dee2e6", borderRadius: "4px", textAlign: "center" }}>
-            No approved personal devices found for <b>{userEmail}</b>. Use the registration portals below to authorize your hardware.
+          <div style={{ padding: "25px", backgroundColor: "#f8f9fa", color: "#6c757d", border: "1px solid #dee2e6", borderRadius: "6px", textAlign: "center" }}>
+            <div style={{ fontSize: "16px", fontWeight: "bold", marginBottom: "8px", color: "#3c4043" }}>No Registered Hardware Assets Discovered</div>
+            <div style={{ fontSize: "14px" }}>We successfully crawled your tenant's Cloud Identity catalog but found no approved devices matching <b>{userEmail}</b>.</div>
+            <div style={{ fontSize: "13px", marginTop: "10px", color: "#1a73e8" }}>Use the registration portals below to authorize your personal phone or laptop!</div>
           </div>
         ) : (
-          <table style={{ width: "100%", borderCollapse: "collapse", marginTop: "10px" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", marginTop: "10px", backgroundColor: "#fff", boxShadow: "0 1px 3px rgba(0,0,0,0.1)", borderRadius: "6px", overflow: "hidden" }}>
             <thead>
-              <tr style={{ backgroundColor: "#f5f5f5", borderBottom: "2px solid #ddd" }}>
-                <th style={{ padding: "10px", textAlign: "left" }}>Device Resource Name</th>
-                <th style={{ padding: "10px", textAlign: "left" }}>Type</th>
-                <th style={{ padding: "10px", textAlign: "left" }}>Approval State</th>
-                <th style={{ padding: "10px", textAlign: "left" }}>Last Sync</th>
+              <tr style={{ backgroundColor: "#f1f3f4", borderBottom: "2px solid #dadce0" }}>
+                <th style={{ padding: "12px 15px", textAlign: "left", color: "#202124", fontSize: "14px" }}>Hardware Model & OS</th>
+                <th style={{ padding: "12px 15px", textAlign: "left", color: "#202124", fontSize: "14px" }}>Identifier</th>
+                <th style={{ padding: "12px 15px", textAlign: "left", color: "#202124", fontSize: "14px" }}>Approval State</th>
+                <th style={{ padding: "12px 15px", textAlign: "left", color: "#202124", fontSize: "14px" }}>Last Sync</th>
+                <th style={{ padding: "12px 15px", textAlign: "center", color: "#202124", fontSize: "14px" }}>Action</th>
               </tr>
             </thead>
             <tbody>
               {devices.map((d, i) => (
                 <tr key={i} style={{ borderBottom: "1px solid #eee" }}>
-                  <td style={{ padding: "10px", fontFamily: "monospace", fontSize: "13px" }}>{d.device_user_name}</td>
-                  <td style={{ padding: "10px", fontSize: "14px" }}>{d.device_type}</td>
-                  <td style={{ padding: "10px", color: "green", fontWeight: "bold", fontSize: "14px" }}>{d.approval_state}</td>
-                  <td style={{ padding: "10px", color: "#666", fontSize: "13px" }}>{d.last_sync_time}</td>
+                  <td style={{ padding: "14px 15px", color: "#202124" }}>
+                    <div style={{ fontWeight: "bold", fontSize: "14px" }}>{d.model}</div>
+                    <div style={{ fontSize: "12px", color: "#5f6368", marginTop: "2px" }}>{d.os_version} ({d.device_type})</div>
+                  </td>
+                  <td style={{ padding: "14px 15px", fontFamily: "monospace", fontSize: "13px", color: "#3c4043" }}>
+                    <div>{d.serial_number !== "N/A" ? `Serial: ${d.serial_number}` : "ID: N/A"}</div>
+                    <div style={{ fontSize: "10px", color: "#9aa0a6", marginTop: "2px" }}>{d.device_user_name}</div>
+                  </td>
+                  <td style={{ padding: "14px 15px" }}>
+                    <span style={{ padding: "4px 8px", backgroundColor: d.approval_state === "APPROVED" ? "#e6f4ea" : "#fef7e0", color: d.approval_state === "APPROVED" ? "#137333" : "#b06000", borderRadius: "4px", fontWeight: "bold", fontSize: "12px", textTransform: "uppercase", border: `1px solid ${d.approval_state === "APPROVED" ? "#ceead6" : "#feefc3"}` }}>
+                      {d.approval_state}
+                    </span>
+                  </td>
+                  <td style={{ padding: "14px 15px", color: "#5f6368", fontSize: "13px" }}>{d.last_sync_time}</td>
+                  <td style={{ padding: "14px 15px", textAlign: "center" }}>
+                    {d.approval_state === "APPROVED" ? (
+                      <button
+                        onClick={() => handleRevoke(d.device_user_name)}
+                        style={{ padding: "6px 12px", backgroundColor: "#d93025", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", fontSize: "12px", fontWeight: "bold" }}
+                      >
+                        ✕ Revoke
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => handleApprove(d.device_user_name)}
+                        style={{ padding: "6px 12px", backgroundColor: "#137333", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", fontSize: "12px", fontWeight: "bold" }}
+                      >
+                        ✓ Approve
+                      </button>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -143,12 +212,16 @@ export const Dashboard: React.FC = () => {
         >
           Campus Wi-Fi Approval
         </a>
-        <a
-          href="#/admin"
-          style={{ padding: "15px 25px", backgroundColor: "#ea4335", color: "white", textDecoration: "none", borderRadius: "5px", fontWeight: "bold" }}
-        >
-          Admin Configurations
-        </a>
+        
+        {/* Admin Config UI dynamically gated by Workspace Super Admin privileges */}
+        {isAdmin && (
+          <a
+            href="#/admin"
+            style={{ padding: "15px 25px", backgroundColor: "#ea4335", color: "white", textDecoration: "none", borderRadius: "5px", fontWeight: "bold" }}
+          >
+            Admin Configurations
+          </a>
+        )}
       </section>
 
       <section style={{ borderTop: "1px solid #ccc", paddingTop: "20px" }}>
