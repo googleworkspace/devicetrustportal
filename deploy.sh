@@ -56,6 +56,13 @@ setup_domain_wide_delegation() {
         echo -e "${GREEN}✔ Secret '$KEY_SECRET_NAME' already securely stored.${NC}"
     fi
     
+    # Explicitly grant Secret Manager Accessor permissions to our dedicated DWD service account
+    echo "Granting Secret Accessor IAM binding to '$SA_EMAIL'..."
+    gcloud secrets add-iam-policy-binding "$KEY_SECRET_NAME" \
+        --member="serviceAccount:$SA_EMAIL" \
+        --role="roles/secretmanager.secretAccessor" \
+        --project="$GCP_PROJECT" --quiet 2>/dev/null || echo "IAM binding already configured."
+        
     echo -e "\n${BLUE}[4/5] Retrieving Service Account Client ID...${NC}"
     CLIENT_ID=$(gcloud iam service-accounts describe "$SA_EMAIL" --project="$GCP_PROJECT" --format="value(oauth2ClientId)" 2>/dev/null || gcloud iam service-accounts describe "$SA_EMAIL" --project="$GCP_PROJECT" --format="value(uniqueId)")
     
@@ -78,6 +85,7 @@ setup_domain_wide_delegation() {
     
     export GOOGLE_APPLICATION_CREDENTIALS="$(pwd)/$KEY_FILE"
     export WORKSPACE_ADMIN_EMAIL="$ADMIN_EMAIL"
+    export DWD_SA_EMAIL="$SA_EMAIL"
     
     echo -e "\n${GREEN}✔ DWD Setup Complete! Credentials exported for live API execution.${NC}"
 }
@@ -290,6 +298,7 @@ case $OPTION in
         --region "$GCP_REGION" \
         --project "$GCP_PROJECT" \
         --allow-unauthenticated \
+        --service-account="$DWD_SA_EMAIL" \
         --format="value(status.url)" \
         --quiet \
         --set-secrets="/secrets/dwd_key.json=device_trust_gateway_dwd_key:latest" \
@@ -319,6 +328,7 @@ case $OPTION in
         --region "$GCP_REGION" \
         --project "$GCP_PROJECT" \
         --allow-unauthenticated \
+        --service-account="$DWD_SA_EMAIL" \
         --quiet \
         --set-secrets="/secrets/dwd_key.json=device_trust_gateway_dwd_key:latest" \
         --set-env-vars="USE_SECRET_MANAGER=true,SECRET_NAME=$SECRET_NAME,GOOGLE_CLOUD_PROJECT=$GCP_PROJECT,WORKSPACE_ADMIN_EMAIL=$WORKSPACE_ADMIN_EMAIL,GOOGLE_APPLICATION_CREDENTIALS=/secrets/dwd_key.json"
