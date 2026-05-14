@@ -1,6 +1,6 @@
 # Device Trust Gateway & Approval Portal
 
-The **Device Trust Gateway** is a secure bridge application designed for organizations (specifically Google Workspace and Cloud Identity customers) to enforce strict "Approved Devices Only" access policies via Context-Aware Access (CAA), while providing a seamless, low-friction self-service workflow for end-users to approve their personal BYOD devices.
+The **Device Trust Gateway** is a secure bridge application designed for organizations (specifically Google Workspace and Cloud Identity customers) to enforce strict "Approved Devices Only" access policies via Context-Aware Access (CAA), while providing a seamless, low-friction self-service workflow for end-users to vet and approve their personal BYOD devices.
 
 ---
 
@@ -8,13 +8,14 @@ The **Device Trust Gateway** is a secure bridge application designed for organiz
 1. [Architecture & Zero-Trust Overview](#-architecture--zero-trust-overview)
 2. [Prerequisites & Billing Check](#-prerequisites--billing-check)
 3. [⚡ Automated Interactive Deployer (Recommended)](#-automated-interactive-deployer-recommended)
-4. [Chromebook Fleet Seeding Tool](#-chromebook-fleet-seeding-tool)
-5. [Manual Setup: Local Development](#-manual-setup-local-development)
-6. [Manual Setup: Docker (On-Premise)](#-manual-setup-docker-on-premise)
-7. [Manual Setup: Google Cloud (GCP Cloud Run)](#-manual-setup-google-cloud-gcp-cloud-run)
-8. [Configuration & Admin UI](#-configuration--admin-ui)
-9. [Firewall, Network Allowlist & Anti-Spoofing](#-firewall-network-allowlist--anti-spoofing)
-10. [🔒 Identity-Aware Proxy (IAP) Edge Gating](#-identity-aware-proxy-iap-edge-gating)
+4. [🔒 Endpoint Verification & BYOD Approval Lifecycle](#-endpoint-verification--byod-approval-lifecycle)
+5. [Chromebook Fleet Seeding Tool](#-chromebook-fleet-seeding-tool)
+6. [Manual Setup: Local Development](#-manual-setup-local-development)
+7. [Manual Setup: Docker (On-Premise)](#-manual-setup-docker-on-premise)
+8. [Manual Setup: Google Cloud (GCP Cloud Run)](#-manual-setup-google-cloud-gcp-cloud-run)
+9. [Configuration & Admin UI](#-configuration--admin-ui)
+10. [Firewall, Network Allowlist & Anti-Spoofing](#-firewall-network-allowlist--anti-spoofing)
+11. [🔒 Identity-Aware Proxy (IAP) Edge Gating](#-identity-aware-proxy-iap-edge-gating)
 
 ---
 
@@ -28,8 +29,7 @@ For a comprehensive whitepaper detailing how Context-Aware Access Custom Access 
 ### Key Architectural Principles:
 * **Unmanaged BYOD Hardware:** Personal devices do **not** require intrusive Mobile Device Management (MDM) enrollment or profiles. Users install the lightweight Endpoint Verification browser extension, registering the device as "Unmanaged" while still allowing our backend to approve them (`devices.deviceUsers.approve`), satisfying CAA policy rules while preserving user privacy.
 * **Trust Anchor:** Automatically trusts company-owned inventory (e.g. ChromeOS zero-touch devices).
-* **Trust Chaining Portal:** Users generate a temporary pairing code on an approved device (like a school Chromebook) and enter it on their unapproved phone to register it.
-* **Network-Gated Portal:** One-click device approval when connected to campus Wi-Fi / trusted IP ranges.
+* **Minimalist Single Portal:** Consolidates all device reporting, administrative configurations, and lifecycle approvals into a unified, highly responsive centerpiece layout.
 * **Automated Lifecycle Management:** A secure cron endpoint (`/api/cron/cleanup`) automatically revokes access for inactive BYOD devices older than X days.
 
 ---
@@ -79,6 +79,64 @@ When configuring live API execution or Chromebook fleet seeding, the script laun
 
 ---
 
+## 🔒 Endpoint Verification & BYOD Approval Lifecycle
+
+To successfully deploy Context-Aware Access (CAA) policies that mandate device approval without enforcing intrusive Mobile Device Management (MDM) enrollment on employee personal hardware, organizations rely on the interplay between **Google Endpoint Verification** and the **Device Trust Gateway**.
+
+```
++-----------------------------------------------------------------------------------+
+|                           Personal BYOD Laptop / Phone                            |
+|                (Employee installs Endpoint Verification extension)                |
++-----------------------------------------+-----------------------------------------+
+                                          |
+                                          |  1. Registers hardware in Cloud Identity
+                                          v
++-----------------------------------------------------------------------------------+
+|                          Google Cloud Identity Catalog                            |
+|                                                                                   |
+|     [ INITIAL STATE: managementState == PENDING_APPROVAL / UNMANAGED ]            |
++-----------------------------------------+-----------------------------------------+
+                                          |
+                                          |  2. Employee attempts Workspace login
+                                          v
++-----------------------------------------------------------------------------------+
+|                   Google Workspace Context-Aware Access (CAA)                     |
+|                                                                                   |
+|     [ RULE: device.is_corp_owned == true || device.is_admin_approved == true ]    |
+|     [ RESULT: Blocks unapproved BYOD laptop with 403 Access Denied screen ]       |
++-----------------------------------------+-----------------------------------------+
+                                          |
+                                          |  3. Blocked employee visits Gateway
+                                          v
++-----------------------------------------------------------------------------------+
+|                       Device Trust Gateway Approval Portal                        |
+|                                                                                   |
+|     [ ACTION: Employee clicks ✓ Approve on their pending hardware row ]           |
+|     [ BACKEND: Executes service.devices().deviceUsers().approve(...) ]            |
++-----------------------------------------+-----------------------------------------+
+                                          |
+                                          |  4. Instantly updates Cloud Identity
+                                          v
++-----------------------------------------------------------------------------------+
+|                          Google Cloud Identity Catalog                            |
+|                                                                                   |
+|     [ UPDATED STATE: managementState == APPROVED ]                                |
+|     [ CAA RESULT: Evaluates is_admin_approved == true. Access Granted! ]          |
++-----------------------------------------------------------------------------------+
+```
+
+### Step-by-Step BYOD Lifecycle Workflow:
+1. **Endpoint Verification Enrollment:** Employees install the lightweight Google Endpoint Verification browser extension (or Google Smart Lock app on mobile). The extension collects hardware identifiers, OS version, and cryptographic certificates, registering the device in Cloud Identity as an unmanaged asset. By default, its device user binding initializes with `managementState` set to `PENDING_APPROVAL` or `UNMANAGED`.
+2. **CAA Guardrail Interception:** The Workspace Administrator activates a Custom Access Level in the Workspace Admin Console (`https://admin.google.com/ac/security/contextaware`) enforcing:
+   ```text
+   device.is_corp_owned == true || device.is_admin_approved == true
+   ```
+   When the employee attempts to open Gmail, Google evaluates their personal laptop. Because it is not company owned (`is_corp_owned == false`) and its Cloud Identity binding is still pending (`is_admin_approved == false`), CAA blocks them instantly at the edge with a `403 Access Denied` screen.
+3. **Gateway Self-Service Approval:** The employee navigates to the Gateway portal (`https://device-trust-gateway-...`), authenticating securely via Google Sign-In. Our backend executes a filtered query (`service.devices().list(filter=f"email:{user_email}")`) and surfaces their pending laptop.
+4. **Instant Policy Resolution:** The employee clicks `[✓ Approve]`. The Gateway backend invokes Cloud Identity (`service.devices().deviceUsers().approve(...)`), immediately shifting the binding's `managementState` to `APPROVED`. The employee reloads Gmail, CAA evaluates `device.is_admin_approved` as `true`, and enterprise access is instantly restored!
+
+---
+
 ## 💻 Chromebook Fleet Seeding Tool
 
 For organizations with tens of thousands or hundreds of thousands of active ChromeOS devices, we provide an automated inventory seeding tool (`seed_company_inventory.py`) and real-time webhook endpoints (`/api/webhook/chrome-enrollment`).
@@ -124,9 +182,7 @@ npm start
 USE_SECRET_MANAGER=false
 TENANT_CUSTOMER_ID=customers/my_customer
 TENANT_INACTIVITY_THRESHOLD=90
-TENANT_TRUSTED_IPS=[]
-TENANT_CHAINING_GROUPS=[]
-TENANT_CHAINING_OUS=[]
+TENANT_PORTAL_ADMINS=[]
 ```
 
 2. Build and start the container:
@@ -161,8 +217,8 @@ gcloud run deploy device-trust-gateway --image gcr.io/YOUR_PROJECT_ID/device-tru
 Once the application is running, Workspace Administrators can dynamically update tenant configurations directly via the UI.
 
 1. Access the portal and navigate to **Admin Configurations** (or visit `#/admin`).
-2. Ensure your active user profile has administrator privileges (in local simulation mode, set your active email to `admin@example.com`).
-3. Update settings such as **Inactivity Threshold (Days)**, **Campus Trusted IP CIDR Blocks**, and **Chaining Allowed Groups/OUs**.
+2. Ensure your active user profile has Workspace Super Admin privileges or is listed in the `portal_admins` delegation list.
+3. Update settings such as **Inactivity Threshold (Days)** and **Authorized Portal Administrators**.
 4. Click **Save Configurations**. Changes will instantly persist to Secret Manager (GCP mode) or your local `.env` file (on-premise mode).
 
 ---
