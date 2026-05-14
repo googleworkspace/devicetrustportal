@@ -1,88 +1,95 @@
-# High-Level Architecture: Context-Aware Access (CAA), Device Approvals & Company-Owned Inventory
+# Context-Aware Access (CAA) & Zero-Trust Architecture
 
-This document provides a high-level architectural overview of how the **Device Trust Gateway** interacts with Google Workspace Context-Aware Access (CAA), Cloud Identity Device Approvals, and Company-Owned hardware inventory to establish a zero-trust access model without compromising end-user privacy or introducing deployment friction.
+The **Device Trust Gateway** is engineered to serve as the secure registration bridge for Google Workspace and Cloud Identity enterprise customers transitioning to a strict Zero-Trust access model. 
 
----
-
-## 🌐 1. The Zero-Trust Access Architecture
-
-In a traditional security perimeter, access is gated purely by network location or valid user credentials. In a modern Zero-Trust architecture, Google Workspace Context-Aware Access (CAA) continuously evaluates dynamic user and device signals before granting access to core applications (Gmail, Drive, Calendar, etc.).
-
-```
-+-------------------------------------------------------------------------------+
-|                        Context-Aware Access (CAA) Engine                      |
-|                                                                               |
-|   [ Access Level Policy: (device.is_corp_owned OR device.is_admin_approved) ] |
-+---------------------------------------+---------------------------------------+
-                                        |
-                    +-------------------+-------------------+
-                    | (Evaluates Client Signals)            |
-                    v                                       v
-    +-------------------------------+       +-------------------------------+
-    |  Company-Owned Trust Anchor   |       |    BYOD Personal Hardware     |
-    |  (ChromeOS Zero-Touch Fleet)  |       |  (Unmanaged + Endpoint Verif.)|
-    +-------------------------------+       +-------------------------------+
-                    |                                       |
-                    | (Pre-Approved)                        | (Requires Approval)
-                    v                                       v
-    +-------------------------------+       +-------------------------------+
-    |    Immediate Resource Access  |       |  Device Trust Gateway Portal  |
-    +-------------------------------+       +-------------------------------+
-```
+By leveraging **Google Workspace Context-Aware Access (CAA)** and **Google Cloud Identity-Aware Proxy (IAP)**, organizations can establish a military-grade security perimeter that protects both core enterprise resources (Gmail, Drive, SSO apps) and the Gateway portal itself.
 
 ---
 
-## 🛡️ 2. Component Breakdown & Interplay
+## 🏛️ 1. The Core Whitepaper Blueprint: Context-Aware Access (CAA)
 
-### A. Context-Aware Access (CAA) Access Levels
-CAA acts as the policy enforcement engine. Administrators configure Custom Access Levels in the Google Cloud Console that define required device attributes. For our portal, the target access level policy expression is:
-```cel
+Google Workspace Context-Aware Access allows administrators to gate application access based on identity, device security posture, IP address, and geographic location.
+
+### The Enterprise Challenge
+Many organizations want to restrict access to "Approved Devices Only" to prevent data exfiltration from unmanaged, compromised hardware. However, enforcing intrusive Mobile Device Management (MDM) profiles on employee-owned personal hardware (BYOD) creates massive friction, privacy concerns, and support overhead.
+
+### The Gateway Solution
+Our Gateway decouples device approval from MDM enrollment. Employees install the lightweight, privacy-preserving **Endpoint Verification** browser extension. The device reports its certificate and security posture to Cloud Identity as "Unmanaged". 
+When the employee successfully authorizes their device on our Gateway, our backend executes a secure API call (`service.devices().deviceUsers().approve`), setting the binding's `managementState` to `APPROVED`.
+
+```
++-----------------------------------------------------------------------------------+
+|                     Google Workspace Context-Aware Access (CAA)                   |
+|                                                                                   |
+|   [ RULE: device.is_corp_owned == true || device.is_admin_approved == true ]      |
++-----------------------------------------+-----------------------------------------+
+                                          |
+                     +--------------------+--------------------+
+                     |                                         |
+                     v                                         v
++-----------------------------------------+ +-----------------------------------------+
+|       Company-Owned Trust Anchor        | |         Personal BYOD Asset             |
+|                                         | |                                         |
+|  (e.g., Enterprise-Enrolled Chromebook) | |  (Endpoint Verification Extension)      |
+|  ownerType: COMPANY                     | |  managementState: APPROVED              |
++-----------------------------------------+ +-----------------------------------------+
+```
+
+### Gating Workspace Applications (The CAA Policy Rule)
+To enforce this across your tenant, navigate to **Google Workspace Admin Console > Security > Access and data control > Context-Aware Access** (`https://admin.google.com/ac/security/contextaware`) and create a Custom Access Level using this exact Common Expression Language (CEL) rule:
+
+```text
 device.is_corp_owned == true || device.is_admin_approved == true
 ```
-*This rule dictates that to access Google Workspace, the requesting session must originate from either a company-owned hardware asset OR an unmanaged personal device that has received explicit administrator approval.*
-
-### B. Company-Owned Inventory (The Trust Anchor)
-Company-owned devices represent the baseline of trust anchors.
-- **ChromeOS Devices:** Automatically added to company inventory upon enterprise enrollment (or via zero-touch enrollment).
-- **Automated Seeding:** For organizations with large existing fleets, our backend automation script (`seed_company_inventory.py`) paginates through the Google Workspace Admin SDK to batch register and anchor available hardware directly in Cloud Identity.
-
-### C. Device Approvals (`devices.deviceUsers.approve`)
-For personal BYOD hardware (smartphones, home desktops, personal laptops), blocking access entirely creates extreme friction, while allowing unverified access exposes the organization to compromised credential attacks. 
-Our Gateway backend utilizes the Google Cloud Identity REST API to execute `devices.deviceUsers.approve`. This elevates the device's approval state to `APPROVED`, satisfying the CAA `device.is_admin_approved == true` signal.
+* **`device.is_corp_owned == true`:** Automatically permits access from corporate hardware trust anchors (e.g., zero-touch Chromebooks, company-owned Macs).
+* **`device.is_admin_approved == true`:** Automatically permits access from personal BYOD hardware that has been vetted and approved via our Gateway portal!
 
 ---
 
-## 📱 3. Unmanaged vs. Managed Hardware: The BYOD Privacy Advantage
+## 🔒 2. Gating the Gateway Portal at the Edge (Google Cloud IAP)
 
-A critical advantage of this architecture is that **personal BYOD devices do NOT require Mobile Device Management (MDM) enrollment or restrictive profiles.**
+While CAA protects your Workspace applications, how do you protect the Gateway portal itself from being accessed by unauthorized external attackers? 
+You can restrict access to the Gateway UI so that it can **only** be reached from company-owned hardware or trusted corporate IP ranges by placing Cloud Run behind **Identity-Aware Proxy (IAP)**.
 
 ```
-+---------------------------------------------------------------------------+
-|                           Cloud Identity Management Tiers                 |
-+------------------------------------+--------------------------------------+
-|      Full MDM Enrollment           |    Endpoint Verification (Unmanaged) |
-|  (Company Hardware / Advanced MDM) |     (Personal BYOD Laptops & Phones) |
-+------------------------------------+--------------------------------------+
-| - Intrusive device control         | - Lightweight browser extension      |
-| - Remote wipe capability           | - Collects device cert & basic OS info|
-| - Enforces password policies       | - Zero control over personal apps    |
-| - High friction for personal hardware| - Low friction, privacy-preserving   |
-+------------------------------------+--------------------------------------+
++-----------------------------------------------------------------------------------+
+|                           External Public Internet                                |
+|                    (Attacker attempts access from coffee shop)                    |
++-----------------------------------------+-----------------------------------------+
+                                          |
+                                          v
++-----------------------------------------------------------------------------------+
+|                   Google Cloud External HTTP(S) Load Balancer                     |
++-----------------------------------------+-----------------------------------------+
+                                          |
+                                          v
++-----------------------------------------------------------------------------------+
+|                     Identity-Aware Proxy (IAP) Edge Gating                        |
+|                                                                                   |
+|  [ ACCESS LEVEL: ip_subnetworks: ["10.0.0.0/8"] OR device.is_corp_owned ]         |
+|  [ RESULT: Blocks external attacker with 403 Access Denied at edge ]              |
++-----------------------------------------+-----------------------------------------+
+                                          |
+                                          v
++-----------------------------------------------------------------------------------+
+|                      Cloud Run Container (Gateway Backend)                        |
++-----------------------------------------------------------------------------------+
 ```
 
-### How Unmanaged Approval Works:
-1. **Registration:** The user installs the lightweight **Endpoint Verification** Chrome extension (or Google Workspace mobile app).
-2. **Signal Collection:** Endpoint Verification securely generates a device certificate and reports basic identifying metadata (OS version, device ID) to Cloud Identity. The device is classified as **Unmanaged**.
-3. **Gateway Elevation:** The user logs into our Device Trust Gateway portal. Upon verifying a pairing code or campus network connection, the backend executes `devices.deviceUsers.approve`.
-4. **Access Granted:** The unmanaged personal device retains total user privacy (no MDM control) while successfully satisfying the enterprise CAA access level.
+### Step-by-Step IAP Configuration Blueprint:
+1. **Remove Public Access:** Ensure your Cloud Run service does not allow unauthenticated access (`gcloud run services remove-iam-policy-binding device-trust-gateway --member="allUsers" --role="roles/run.invoker"`).
+2. **Deploy External Load Balancer:** Configure a GCP External HTTP(S) Load Balancer with a Serverless Network Endpoint Group (NEG) pointing to your Cloud Run service.
+3. **Enable IAP:** In the GCP Console (**Security > Identity-Aware Proxy**), enable IAP on your Load Balancer backend service.
+4. **Configure Access Context Manager:** Open **Security > Access Context Manager** and create an Access Level that establishes your mandatory edge guardrails:
+   - **IP Subnets:** Add your corporate CIDR ranges (e.g., `10.0.0.0/8`, `192.168.1.0/24`).
+   - **Device Posture:** Require `Company Owned` device posture.
+5. **Bind Access Level to IAP:** In the IAP console, bind this Access Level to your Gateway resource. If an unmanaged device outside your corporate network attempts to hit your portal URL, IAP instantly blocks them at the edge with a `403 Access Denied` screen!
 
 ---
 
-## 📋 4. Step-by-Step Setup Guide for Workspace Admins
+## 🔄 3. System Lifecycle Management
 
-To enable this workflow in your Google Workspace / Cloud Identity tenant:
+To maintain an immaculate Zero-Trust posture, approved BYOD hardware should not retain permanent access indefinitely.
 
-1. **Enable Endpoint Verification:** In the Google Workspace Admin console, navigate to *Devices > Mobile & endpoints > Settings > Universal settings > Endpoint Verification* and check "Enable Endpoint Verification".
-2. **Enable Approved Device Management:** Navigate to *Devices > Mobile & endpoints > Settings > Universal settings > Security* and ensure **Device Approvals** is set to "Requires Admin Approval" (so devices do not bypass gating automatically).
-3. **Create Custom Access Level:** Open the Google Cloud Console, navigate to *Security > Access Context Manager*, and create an access level using the Custom CEL expression: `device.is_corp_owned == true || device.is_admin_approved == true`.
-4. **Assign CAA Policy:** In the Workspace Admin console, navigate to *Security > Access and data control > Context-Aware Access*, select your target applications (e.g. Google Drive, Gmail), and assign the newly created Access Level.
+Our Gateway backend exposes a secure automated lifecycle endpoint (`/api/cron/cleanup`). When invoked by a background **Google Cloud Scheduler** cron job, the backend crawls Cloud Identity for all BYOD hardware whose `lastSyncTime` exceeds your configured inactivity threshold (e.g., 90 days). 
+The backend automatically executes `service.devices().deviceUsers().delete(...)` to revoke their approval. The next time that stale device attempts to access Gmail, Context-Aware Access instantly blocks them, requiring them to re-register through the Gateway!

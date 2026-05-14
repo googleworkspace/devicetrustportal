@@ -14,6 +14,7 @@ The **Device Trust Gateway** is a secure bridge application designed for organiz
 7. [Manual Setup: Google Cloud (GCP Cloud Run)](#-manual-setup-google-cloud-gcp-cloud-run)
 8. [Configuration & Admin UI](#-configuration--admin-ui)
 9. [Firewall, Network Allowlist & Anti-Spoofing](#-firewall-network-allowlist--anti-spoofing)
+10. [🔒 Identity-Aware Proxy (IAP) Edge Gating](#-identity-aware-proxy-iap-edge-gating)
 
 ---
 
@@ -21,7 +22,7 @@ The **Device Trust Gateway** is a secure bridge application designed for organiz
 
 The Gateway leverages Google Workspace Context-Aware Access (CAA) to establish a zero-trust access perimeter. 
 
-For a comprehensive whitepaper detailing how Context-Aware Access Custom Access Levels, Company-Owned inventory anchors, and Cloud Identity device approvals interact across the tenant, please read our dedicated enterprise guide:
+For a comprehensive whitepaper detailing how Context-Aware Access Custom Access Levels, Company-Owned inventory anchors, Cloud Identity device approvals, and Identity-Aware Proxy (IAP) edge gating interact across the tenant, please read our dedicated enterprise guide:
 👉 **[docs/caa_architecture_overview.md](docs/caa_architecture_overview.md)**
 
 ### Key Architectural Principles:
@@ -123,9 +124,9 @@ npm start
 USE_SECRET_MANAGER=false
 TENANT_CUSTOMER_ID=customers/my_customer
 TENANT_INACTIVITY_THRESHOLD=90
-TENANT_TRUSTED_IPS=["127.0.0.1/32", "10.0.0.0/8"]
-TENANT_CHAINING_GROUPS=["trust-chaining-allowed@example.com"]
-TENANT_CHAINING_OUS=["/Staff", "/Faculty"]
+TENANT_TRUSTED_IPS=[]
+TENANT_CHAINING_GROUPS=[]
+TENANT_CHAINING_OUS=[]
 ```
 
 2. Build and start the container:
@@ -177,3 +178,12 @@ For the complete, detailed specification covering exact ports, protocols, revers
 * **🛡️ Upstream Proxy Stripping:** Enterprise reverse proxies (Nginx, F5, Cloudflare) must actively strip forged `X-Forwarded-For` headers arriving from external internet interfaces, overwriting them with authentic TCP socket client IPs.
 * **🔒 Uvicorn Trust Gating (`--forwarded-allow-ips`):** Configure Uvicorn to only accept forwarded IP headers if they arrive directly from the known internal IP address of your reverse proxy host.
 * **🔑 Session Binding:** Network IP trust alone cannot grant device approval. Requesting clients must also present a valid, authenticated Google Workspace OIDC Bearer token session for the target user.
+
+---
+
+## 🔒 Identity-Aware Proxy (IAP) Edge Gating
+
+To ensure the Gateway portal itself can **only** be reached from company-owned hardware or trusted corporate IP ranges, organizations can place Cloud Run behind an External HTTP(S) Load Balancer and enable **Identity-Aware Proxy (IAP)**.
+
+For the complete, step-by-step IAP architecture and Access Context Manager configuration blueprint, please refer to our dedicated zero-trust guide:
+👉 **[docs/caa_architecture_overview.md](docs/caa_architecture_overview.md)**
