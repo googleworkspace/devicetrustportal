@@ -44,16 +44,19 @@ class DirectoryService:
             raise Exception("Directory service not initialized with valid credentials")
 
         try:
+            # 1. Evaluate Group Membership
             for group_email in allowed_groups:
                 try:
                     member = self.service.members().get(groupKey=group_email, memberKey=user_email).execute()
                     if member and member.get("status") == "ACTIVE":
                         return True
                 except HttpError as e:
-                    if e.resp.status == 404:
+                    # Gracefully ignore 404 (group not found) and 403 (foreign domain/permission denied)
+                    if e.resp.status in [404, 403]:
                         continue
-                    print(f"Error checking group membership for {group_email}: {e}")
+                    print(f"Warning: Error checking group membership for {group_email}: {e}")
 
+            # 2. Evaluate Organizational Unit (OU) Placement
             user = self.service.users().get(userKey=user_email).execute()
             user_org_unit = user.get("orgUnitPath", "/")
 

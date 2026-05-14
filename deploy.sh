@@ -270,21 +270,23 @@ case $OPTION in
     echo -e "\n${BLUE}[3/7] Enabling required Google Cloud APIs...${NC}"
     gcloud services enable run.googleapis.com secretmanager.googleapis.com cloudidentity.googleapis.com cloudbuild.googleapis.com cloudscheduler.googleapis.com pubsub.googleapis.com admin.googleapis.com --quiet
     
+    # Ensure DWD credentials and Admin Email are established before initializing config
+    if [ -z "$WORKSPACE_ADMIN_EMAIL" ]; then
+        setup_domain_wide_delegation
+    fi
+    
     echo -e "\n${BLUE}[4/7] Initializing Secret Manager for dynamic admin configuration...${NC}"
     SECRET_NAME="device_trust_gateway_config"
     if ! gcloud secrets describe "$SECRET_NAME" --project="$GCP_PROJECT" &>/dev/null; then
         echo "Creating new Secret Manager secret: $SECRET_NAME"
         gcloud secrets create "$SECRET_NAME" --replication-policy="automatic" --project="$GCP_PROJECT" --quiet
         
-        DEFAULT_CONFIG='{"customer_id": "customers/my_customer", "inactivity_threshold_days": 90, "trusted_ip_ranges": ["127.0.0.1/32", "10.0.0.0/8"], "chaining_allowed_groups": ["trust-chaining-allowed@example.com"], "chaining_allowed_ous": ["/Staff", "/Faculty"]}'
+        # Dynamically derive tenant domain from admin email to prevent foreign group 403 errors and allow root OU chaining
+        ADMIN_DOMAIN="${WORKSPACE_ADMIN_EMAIL#*@}"
+        DEFAULT_CONFIG='{"customer_id": "customers/my_customer", "inactivity_threshold_days": 90, "trusted_ip_ranges": ["127.0.0.1/32", "10.0.0.0/8"], "chaining_allowed_groups": ["trust-chaining-allowed@'"$ADMIN_DOMAIN"'"], "chaining_allowed_ous": ["/", "/Staff", "/Faculty"]}'
         echo -n "$DEFAULT_CONFIG" | gcloud secrets versions add "$SECRET_NAME" --data-file=- --project="$GCP_PROJECT" --quiet
     else
         echo -e "${GREEN}Secret '$SECRET_NAME' already exists in project.${NC}"
-    fi
-    
-    # Ensure DWD credentials and Admin Email are established before initial deployment
-    if [ -z "$WORKSPACE_ADMIN_EMAIL" ]; then
-        setup_domain_wide_delegation
     fi
     
     # Explicitly grant Secret Manager Accessor permissions to our dedicated DWD service account for Admin Config Secret
@@ -364,7 +366,7 @@ TENANT_CUSTOMER_ID=customers/my_customer
 TENANT_INACTIVITY_THRESHOLD=90
 TENANT_TRUSTED_IPS=["127.0.0.1/32", "10.0.0.0/8"]
 TENANT_CHAINING_GROUPS=["trust-chaining-allowed@example.com"]
-TENANT_CHAINING_OUS=["/Staff", "/Faculty"]
+TENANT_CHAINING_OUS=["/", "/Staff", "/Faculty"]
 EOF
     else
         echo -e "${GREEN}Existing .env file detected.${NC}"
