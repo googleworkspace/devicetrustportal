@@ -64,13 +64,11 @@ export const Dashboard: React.FC = () => {
     }
   };
 
-  // Initiate revocation modal (Single or Bulk)
   const initiateRevoke = (names: string[]) => {
     setRevokeTarget(names);
     setShowRevokeModal(true);
   };
 
-  // Execute confirmed revocation
   const handleConfirmRevoke = async () => {
     setIsRevoking(true);
     setMessage("");
@@ -139,7 +137,7 @@ export const Dashboard: React.FC = () => {
       <div style={{ backgroundColor: "#f8f9fa", padding: "20px", borderRadius: "8px", marginBottom: "25px", border: "1px solid #e9ecef" }}>
         <h3 style={{ marginTop: 0, marginBottom: "10px", fontSize: "18px", color: "#202124" }}>Google Authentication</h3>
         <p style={{ fontSize: "14px", color: "#5f6368", marginBottom: "15px" }}>
-          Sign in with your Google Workspace enterprise account to authorize live device approvals and manage configurations.
+          Sign in with your Google Workspace account to authorize live device approvals and manage configurations.
         </p>
         
         {!userEmail ? (
@@ -147,7 +145,7 @@ export const Dashboard: React.FC = () => {
         ) : (
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", backgroundColor: "#e6f4ea", padding: "12px 18px", borderRadius: "6px", border: "1px solid #ceead6", flexWrap: "wrap", gap: "10px" }}>
             <div>
-              <span style={{ fontSize: "12px", color: "#137333", fontWeight: "bold", display: "block", textTransform: "uppercase" }}>Active Production Session</span>
+              <span style={{ fontSize: "12px", color: "#137333", fontWeight: "bold", display: "block", textTransform: "uppercase" }}>Active Session</span>
               <span style={{ fontSize: "16px", color: "#202124", fontWeight: "bold" }}>{userEmail}</span>
             </div>
             <button
