@@ -90,6 +90,33 @@ setup_domain_wide_delegation() {
     echo -e "\n${GREEN}✔ DWD Setup Complete! Credentials exported for live API execution.${NC}"
 }
 
+# Helper function for executing mass BYOD revocation sweep
+execute_mass_revocation_prompt() {
+    echo -e "\n${YELLOW}--- Mass BYOD Approval Revocation (Pristine Zero-Trust Baseline) ---${NC}"
+    echo "Would you like to execute a mass revocation sweep across Cloud Identity, unapproving all personal BYOD devices to establish a pristine Zero-Trust baseline?"
+    echo "Note: This operation preserves company-owned hardware and ChromeOS assets but revokes all personal device approvals across your entire tenant catalog."
+    read -p "Execute Mass Revocation Sweep? (y/n): " DO_MASS_REVOKE
+    
+    if [[ "$DO_MASS_REVOKE" =~ ^[Yy]$ ]]; then
+        if [ -z "$WORKSPACE_ADMIN_EMAIL" ]; then
+            setup_domain_wide_delegation
+        fi
+        
+        echo -e "\n${BLUE}Launching live mass revocation script...${NC}"
+        if [ -d "backend/venv" ]; then
+            source backend/venv/bin/activate
+        elif [ -d "venv" ]; then
+            source venv/bin/activate
+        else
+            python3 -m venv backend/venv && source backend/venv/bin/activate
+            pip install --quiet -r backend/requirements.txt --index-url https://pypi.org/simple
+        fi
+        python3 backend/scripts/mass_revoke_byod_approvals.py
+    else
+        echo -e "${BLUE}Skipping mass revocation sweep.${NC}"
+    fi
+}
+
 # Helper function for Chromebook fleet inventory seeding
 configure_inventory_seeding() {
     echo -e "\n${YELLOW}--- Chromebook Fleet Inventory Seeding Configuration ---${NC}"
@@ -201,33 +228,6 @@ configure_inventory_seeding() {
         esac
     else
         echo -e "${BLUE}Skipping inventory seeding configuration.${NC}"
-    fi
-}
-
-# Helper function for executing mass BYOD revocation sweep
-execute_mass_revocation_prompt() {
-    echo -e "\n${YELLOW}--- Mass BYOD Approval Revocation (Pristine Zero-Trust Baseline) ---${NC}"
-    echo "Would you like to execute a mass revocation sweep across Cloud Identity, unapproving all personal BYOD devices to establish a pristine Zero-Trust baseline?"
-    echo "Note: This operation preserves company-owned hardware but revokes all personal device approvals across your entire tenant catalog."
-    read -p "Execute Mass Revocation Sweep? (y/n): " DO_MASS_REVOKE
-    
-    if [[ "$DO_MASS_REVOKE" =~ ^[Yy]$ ]]; then
-        if [ -z "$WORKSPACE_ADMIN_EMAIL" ]; then
-            setup_domain_wide_delegation
-        fi
-        
-        echo -e "\n${BLUE}Launching live mass revocation script...${NC}"
-        if [ -d "backend/venv" ]; then
-            source backend/venv/bin/activate
-        elif [ -d "venv" ]; then
-            source venv/bin/activate
-        else
-            python3 -m venv backend/venv && source backend/venv/bin/activate
-            pip install --quiet -r backend/requirements.txt --index-url https://pypi.org/simple
-        fi
-        python3 backend/scripts/mass_revoke_byod_approvals.py
-    else
-        echo -e "${BLUE}Skipping mass revocation sweep.${NC}"
     fi
 }
 
@@ -371,8 +371,9 @@ case $OPTION in
     echo -e "${GREEN}✔ GCP Deployment & OAuth Authorization Complete!${NC}"
     echo -e "${GREEN}=========================================================${NC}"
     
-    configure_inventory_seeding
+    # Execute mass BYOD revocation FIRST, and company inventory seeding SECOND to guarantee approved company anchors
     execute_mass_revocation_prompt
+    configure_inventory_seeding
     print_final_summary "$SERVICE_URL"
     ;;
     
@@ -405,8 +406,9 @@ EOF
     echo -e "${GREEN}✔ On-Premise Deployment Complete! Backend running on port 8080.${NC}"
     echo -e "${GREEN}=========================================================${NC}"
     
-    configure_inventory_seeding
+    # Execute mass BYOD revocation FIRST, and company inventory seeding SECOND to guarantee approved company anchors
     execute_mass_revocation_prompt
+    configure_inventory_seeding
     print_final_summary "http://localhost:8080"
     ;;
     

@@ -12,11 +12,11 @@ import google.auth
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
-from googleapiclient.http import BatchHttpRequest
 
 SCOPES = [
     "https://www.googleapis.com/auth/admin.directory.device.chromeos.readonly",
-    "https://www.googleapis.com/auth/cloud-identity.devices"
+    "https://www.googleapis.com/auth/cloud-identity.devices",
+    "https://www.googleapis.com/auth/cloud-identity"
 ]
 
 class InventorySeeder:
@@ -48,7 +48,7 @@ class InventorySeeder:
         
         page_token = None
         total_processed = 0
-        batch_size = 100
+        batch_size = 50
 
         while True:
             try:
@@ -77,8 +77,6 @@ class InventorySeeder:
                     continue
                 else:
                     print(f"\n❌ Live API Error during pagination: {e}")
-                    print("\n[Authorization Diagnostic] This error indicates insufficient Google Workspace Admin Directory privileges.")
-                    print("Please ensure that your Service Account has been granted Domain-Wide Delegation (DWD) in the Google Workspace Admin Console, and that WORKSPACE_ADMIN_EMAIL is set to a valid Super Administrator email address.")
                     sys.exit(1)
                 
         print("\n=========================================================")
@@ -89,9 +87,13 @@ class InventorySeeder:
         def batch_callback(request_id, response, exception):
             if exception:
                 if isinstance(exception, HttpError) and exception.resp.status == 409:
-                    pass
+                    # Device already exists, attempt to approve its bindings
+                    self._approve_existing_device_users(request_id)
                 else:
                     print(f"Error processing device {request_id}: {exception}")
+            elif response and "name" in response:
+                # Newly created device, attempt to approve its bindings
+                self._approve_existing_device_users(response["name"])
 
         batch = self.ci_service.new_batch_http_request(callback=batch_callback)
         
@@ -103,7 +105,8 @@ class InventorySeeder:
             body = {
                 "deviceType": "CHROME_OS",
                 "serialNumber": serial,
-                "assetTag": device.get("annotatedAssetId", serial)
+                "assetTag": device.get("annotatedAssetId", serial),
+                "ownerType": "COMPANY"
             }
             
             ci_req = self.ci_service.devices().create(
@@ -118,6 +121,34 @@ class InventorySeeder:
             if e.resp.status in [429, 503]:
                 time.sleep(random.uniform(2, 5))
                 batch.execute()
+
+    def _approve_existing_device_users(self, identifier: str):
+        """Searches for existing device users on the target hardware and actively approves them."""
+        try:
+            device_name = identifier
+            if not identifier.startswith("devices/"):
+                query = f"serialNumber=='{identifier}'"
+                req = self.ci_service.devices().list(customer=f"customers/{self.customer_id}", filter=query)
+                resp = req.execute()
+                devs = resp.get("devices", [])
+                if not devs:
+                    return
+                device_name = devs[0]["name"]
+
+            # List device users
+            du_req = self.ci_service.devices().deviceUsers().list(parent=device_name, customer=f"customers/{self.customer_id}")
+            du_resp = du_req.execute()
+
+            for du in du_resp.get("deviceUsers", []):
+                state = du.get("managementState") or du.get("approvalState", "UNKNOWN_STATE")
+                if state != "APPROVED":
+                    body = {"customer": f"customers/{self.customer_id}"}
+                    app_req = self.ci_service.devices().deviceUsers().approve(name=du["name"], body=body)
+                    app_req.execute()
+                    print(f"SUCCESS: Approved company-owned binding '{du['name']}' for '{du.get('userEmail')}'")
+
+        except Exception as e:
+            print(f"Warning: Failed to approve bindings for '{identifier}': {e}")
 
 if __name__ == "__main__":
     seeder = InventorySeeder()

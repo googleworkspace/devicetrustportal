@@ -62,10 +62,11 @@ def execute_mass_byod_revocation():
             for d in devices:
                 device_name = d["name"]
                 owner_type = d.get("ownerType", "BYOD")
+                device_type = d.get("deviceType", "UNKNOWN_TYPE")
                 model = d.get("model", "Unknown Model")
 
-                # Safety Check: Preserve Company-Owned Trust Anchors
-                if owner_type == "COMPANY":
+                # Safety Check: Preserve Company-Owned Trust Anchors and ChromeOS Hardware Assets
+                if owner_type == "COMPANY" or device_type == "CHROME_OS":
                     total_skipped_company += 1
                     continue
 
@@ -113,7 +114,7 @@ def execute_mass_byod_revocation():
         except HttpError as e:
             print(f"ERROR: Cloud Identity API pagination error on Page {page_count}: {e}")
             total_errors += 1
-            time.sleep(5)  # Exponential backoff pause before retrying/breaking
+            time.sleep(5)
             break
         except Exception as e:
             print(f"ERROR: Unexpected pagination error on Page {page_count}: {e}")
@@ -126,7 +127,7 @@ def execute_mass_byod_revocation():
     print("===================================================================================================")
     print(f"⏱️ Elapsed Time:             {elapsed:.2f} seconds")
     print(f"📦 Total Devices Inspected:  {total_devices_inspected}")
-    print(f"🏢 Company Anchors Skipped:  {total_skipped_company}")
+    print(f"🏢 Trust Anchors Skipped:    {total_skipped_company}")
     print(f"✕ Personal BYODs Revoked:    {total_revoked}")
     print(f"⚠️ Total API Errors:         {total_errors}")
     print("===================================================================================================\n")
