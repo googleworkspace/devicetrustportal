@@ -12,6 +12,12 @@ export const Dashboard: React.FC = () => {
   const [deviceError, setDeviceError] = useState("");
   const [isAdmin, setIsAdmin] = useState(false);
 
+  // Bulk Selection & Revocation Modal State
+  const [selectedDevices, setSelectedDevices] = useState<string[]>([]);
+  const [revokeTarget, setRevokeTarget] = useState<string[]>([]);
+  const [showRevokeModal, setShowRevokeModal] = useState(false);
+  const [isRevoking, setIsRevoking] = useState(false);
+
   const loadDevices = useCallback(() => {
     if (userEmail) {
       setLoadingDevices(true);
@@ -58,29 +64,67 @@ export const Dashboard: React.FC = () => {
     }
   };
 
-  const handleRevoke = async (name: string, ownerType: string) => {
-    if (ownerType === "COMPANY") {
-      setMessage("Access Denied: Company-owned trust anchors cannot be revoked.");
-      return;
-    }
+  // Initiate revocation modal (Single or Bulk)
+  const initiateRevoke = (names: string[]) => {
+    setRevokeTarget(names);
+    setShowRevokeModal(true);
+  };
+
+  // Execute confirmed revocation
+  const handleConfirmRevoke = async () => {
+    setIsRevoking(true);
     setMessage("");
-    try {
-      await revokeDevice(name);
-      setMessage("Device revoked successfully.");
-      setDevices((prev) =>
-        prev.map((d) => (d.device_user_name === name ? { ...d, approval_state: "UNMANAGED" } : d))
-      );
-    } catch (e: any) {
-      setMessage(`Failed to revoke device: ${e.message}`);
+    let successCount = 0;
+    let failCount = 0;
+
+    for (const name of revokeTarget) {
+      try {
+        await revokeDevice(name);
+        successCount++;
+        setDevices((prev) =>
+          prev.map((d) => (d.device_user_name === name ? { ...d, approval_state: "UNMANAGED" } : d))
+        );
+      } catch (e) {
+        failCount++;
+      }
+    }
+
+    setIsRevoking(false);
+    setShowRevokeModal(false);
+    setSelectedDevices([]);
+    setRevokeTarget([]);
+
+    if (failCount === 0) {
+      setMessage(`Successfully revoked approval for ${successCount} device(s).`);
+    } else {
+      setMessage(`Revoked ${successCount} device(s). Failed to revoke ${failCount} device(s).`);
+    }
+  };
+
+  const handleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.checked) {
+      const revokable = devices
+        .filter((d) => d.owner_type !== "COMPANY" && d.approval_state === "APPROVED")
+        .map((d) => d.device_user_name);
+      setSelectedDevices(revokable);
+    } else {
+      setSelectedDevices([]);
+    }
+  };
+
+  const handleSelectSingle = (name: string) => {
+    if (selectedDevices.includes(name)) {
+      setSelectedDevices((prev) => prev.filter((n) => n !== name));
+    } else {
+      setSelectedDevices((prev) => [...prev, name]);
     }
   };
 
   return (
-    <div style={{ padding: "20px", fontFamily: "sans-serif", maxWidth: "950px", margin: "0 auto" }}>
+    <div style={{ padding: "20px", fontFamily: "sans-serif", maxWidth: "950px", margin: "0 auto", position: "relative" }}>
       <header style={{ borderBottom: "1px solid #ccc", paddingBottom: "15px", marginBottom: "20px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "15px" }}>
         <h1 style={{ margin: 0 }}>Device Trust Gateway</h1>
         
-        {/* Admin Config UI dynamically gated by Workspace Super Admin privileges at top header */}
         {isAdmin && (
           <a
             href="#/admin"
@@ -91,7 +135,7 @@ export const Dashboard: React.FC = () => {
         )}
       </header>
 
-      {/* Google Sign-In Authentication Container */}
+      {/* Google Sign-In Container */}
       <div style={{ backgroundColor: "#f8f9fa", padding: "20px", borderRadius: "8px", marginBottom: "25px", border: "1px solid #e9ecef" }}>
         <h3 style={{ marginTop: 0, marginBottom: "10px", fontSize: "18px", color: "#202124" }}>Google Authentication</h3>
         <p style={{ fontSize: "14px", color: "#5f6368", marginBottom: "15px" }}>
@@ -131,7 +175,17 @@ export const Dashboard: React.FC = () => {
       )}
 
       <section style={{ marginBottom: "30px" }}>
-        <h2>My Hardware Assets</h2>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "15px", flexWrap: "wrap", gap: "10px" }}>
+          <h2 style={{ margin: 0 }}>My Hardware Assets</h2>
+          {selectedDevices.length > 0 && (
+            <button
+              onClick={() => initiateRevoke(selectedDevices)}
+              style={{ padding: "8px 16px", backgroundColor: "#d93025", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", fontSize: "14px", fontWeight: "bold" }}
+            >
+              ✕ Bulk Revoke Selected ({selectedDevices.length})
+            </button>
+          )}
+        </div>
         
         {!userEmail ? (
           <div style={{ padding: "15px", backgroundColor: "#fff3cd", color: "#856404", border: "1px solid #ffeeba", borderRadius: "4px" }}>
@@ -160,6 +214,16 @@ export const Dashboard: React.FC = () => {
           <table style={{ width: "100%", borderCollapse: "collapse", marginTop: "10px", backgroundColor: "#fff", boxShadow: "0 1px 3px rgba(0,0,0,0.1)", borderRadius: "6px", overflow: "hidden" }}>
             <thead>
               <tr style={{ backgroundColor: "#f1f3f4", borderBottom: "2px solid #dadce0" }}>
+                <th style={{ padding: "12px 15px", width: "30px", textAlign: "center" }}>
+                  <input
+                    type="checkbox"
+                    onChange={handleSelectAll}
+                    checked={
+                      devices.filter((d) => d.owner_type !== "COMPANY" && d.approval_state === "APPROVED").length > 0 &&
+                      selectedDevices.length === devices.filter((d) => d.owner_type !== "COMPANY" && d.approval_state === "APPROVED").length
+                    }
+                  />
+                </th>
                 <th style={{ padding: "12px 15px", textAlign: "left", color: "#202124", fontSize: "14px" }}>Hardware Model</th>
                 <th style={{ padding: "12px 15px", textAlign: "left", color: "#202124", fontSize: "14px" }}>Operating System</th>
                 <th style={{ padding: "12px 15px", textAlign: "left", color: "#202124", fontSize: "14px" }}>Identifier</th>
@@ -169,51 +233,105 @@ export const Dashboard: React.FC = () => {
               </tr>
             </thead>
             <tbody>
-              {devices.map((d, i) => (
-                <tr key={i} style={{ borderBottom: "1px solid #eee" }}>
-                  <td style={{ padding: "14px 15px", color: "#202124" }}>
-                    <div style={{ fontWeight: "bold", fontSize: "14px" }}>{d.model}</div>
-                    <div style={{ fontSize: "11px", color: d.owner_type === "COMPANY" ? "#1a73e8" : "#5f6368", fontWeight: d.owner_type === "COMPANY" ? "bold" : "normal", marginTop: "2px", textTransform: "uppercase" }}>
-                      {d.owner_type === "COMPANY" ? "🏢 Company Owned Asset" : "👤 Personal BYOD"}
-                    </div>
-                  </td>
-                  <td style={{ padding: "14px 15px", color: "#5f6368", fontSize: "14px" }}>{d.os_version} ({d.device_type})</td>
-                  <td style={{ padding: "14px 15px", fontFamily: "monospace", fontSize: "13px", color: "#3c4043" }}>
-                    <div>{d.serial_number !== "N/A" ? `Serial/IMEI: ${d.serial_number}` : "Virtual Asset / EV Cert"}</div>
-                  </td>
-                  <td style={{ padding: "14px 15px" }}>
-                    <span style={{ padding: "4px 8px", backgroundColor: d.approval_state === "APPROVED" ? "#e6f4ea" : "#fef7e0", color: d.approval_state === "APPROVED" ? "#137333" : "#b06000", borderRadius: "4px", fontWeight: "bold", fontSize: "12px", textTransform: "uppercase", border: `1px solid ${d.approval_state === "APPROVED" ? "#ceead6" : "#feefc3"}` }}>
-                      {d.approval_state}
-                    </span>
-                  </td>
-                  <td style={{ padding: "14px 15px", color: "#5f6368", fontSize: "13px" }}>{d.last_sync_time}</td>
-                  <td style={{ padding: "14px 15px", textAlign: "center" }}>
-                    {d.owner_type === "COMPANY" ? (
-                      <span style={{ padding: "6px 12px", backgroundColor: "#e8f0fe", color: "#1a73e8", borderRadius: "4px", fontSize: "12px", fontWeight: "bold", display: "inline-block", border: "1px solid #d2e3fc" }}>
-                        🔒 Immutable Anchor
+              {devices.map((d, i) => {
+                const isRevokable = d.owner_type !== "COMPANY" && d.approval_state === "APPROVED";
+                return (
+                  <tr key={i} style={{ borderBottom: "1px solid #eee", backgroundColor: selectedDevices.includes(d.device_user_name) ? "#fce8e6" : "inherit" }}>
+                    <td style={{ padding: "14px 15px", textAlign: "center" }}>
+                      <input
+                        type="checkbox"
+                        checked={selectedDevices.includes(d.device_user_name)}
+                        onChange={() => handleSelectSingle(d.device_user_name)}
+                        disabled={!isRevokable}
+                      />
+                    </td>
+                    <td style={{ padding: "14px 15px", color: "#202124" }}>
+                      <div style={{ fontWeight: "bold", fontSize: "14px" }}>{d.model}</div>
+                      <div style={{ fontSize: "11px", color: d.owner_type === "COMPANY" ? "#1a73e8" : "#5f6368", fontWeight: d.owner_type === "COMPANY" ? "bold" : "normal", marginTop: "2px", textTransform: "uppercase" }}>
+                        {d.owner_type === "COMPANY" ? "🏢 Company Owned Asset" : "👤 Personal BYOD"}
+                      </div>
+                    </td>
+                    <td style={{ padding: "14px 15px", color: "#5f6368", fontSize: "14px" }}>{d.os_version} ({d.device_type})</td>
+                    <td style={{ padding: "14px 15px", fontFamily: "monospace", fontSize: "13px", color: "#3c4043" }}>
+                      <div>{d.serial_number !== "N/A" ? `Serial/IMEI: ${d.serial_number}` : "Virtual Asset / EV Cert"}</div>
+                    </td>
+                    <td style={{ padding: "14px 15px" }}>
+                      <span style={{ padding: "4px 8px", backgroundColor: d.approval_state === "APPROVED" ? "#e6f4ea" : "#fef7e0", color: d.approval_state === "APPROVED" ? "#137333" : "#b06000", borderRadius: "4px", fontWeight: "bold", fontSize: "12px", textTransform: "uppercase", border: `1px solid ${d.approval_state === "APPROVED" ? "#ceead6" : "#feefc3"}` }}>
+                        {d.approval_state}
                       </span>
-                    ) : d.approval_state === "APPROVED" ? (
-                      <button
-                        onClick={() => handleRevoke(d.device_user_name, d.owner_type)}
-                        style={{ padding: "6px 12px", backgroundColor: "#d93025", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", fontSize: "12px", fontWeight: "bold" }}
-                      >
-                        ✕ Revoke
-                      </button>
-                    ) : (
-                      <button
-                        onClick={() => handleApprove(d.device_user_name)}
-                        style={{ padding: "6px 12px", backgroundColor: "#137333", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", fontSize: "12px", fontWeight: "bold" }}
-                      >
-                        ✓ Approve
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
+                    </td>
+                    <td style={{ padding: "14px 15px", color: "#5f6368", fontSize: "13px" }}>{d.last_sync_time}</td>
+                    <td style={{ padding: "14px 15px", textAlign: "center" }}>
+                      {d.owner_type === "COMPANY" ? (
+                        <span style={{ padding: "6px 12px", backgroundColor: "#e8f0fe", color: "#1a73e8", borderRadius: "4px", fontSize: "12px", fontWeight: "bold", display: "inline-block", border: "1px solid #d2e3fc" }}>
+                          🔒 Immutable Anchor
+                        </span>
+                      ) : d.approval_state === "APPROVED" ? (
+                        <button
+                          onClick={() => initiateRevoke([d.device_user_name])}
+                          style={{ padding: "6px 12px", backgroundColor: "#d93025", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", fontSize: "12px", fontWeight: "bold" }}
+                        >
+                          ✕ Revoke
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => handleApprove(d.device_user_name)}
+                          style={{ padding: "6px 12px", backgroundColor: "#137333", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", fontSize: "12px", fontWeight: "bold" }}
+                        >
+                          ✓ Approve
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         )}
       </section>
+
+      {/* Revocation Confirmation Modal Overlay */}
+      {showRevokeModal && (
+        <div style={{ position: "fixed", top: 0, left: 0, width: "100vw", height: "100vh", backgroundColor: "rgba(0,0,0,0.5)", display: "flex", justifyContent: "center", alignItems: "center", zIndex: 9999 }}>
+          <div style={{ backgroundColor: "#fff", padding: "30px", borderRadius: "8px", maxWidth: "500px", width: "90%", boxShadow: "0 4px 15px rgba(0,0,0,0.2)" }}>
+            <div style={{ fontSize: "20px", fontWeight: "bold", color: "#d93025", marginBottom: "15px", display: "flex", alignItems: "center", gap: "10px" }}>
+              ⚠️ Confirm Access Revocation
+            </div>
+            <p style={{ color: "#202124", fontSize: "15px", lineHeight: "1.5", marginBottom: "15px" }}>
+              Are you absolutely sure you want to revoke approval for the following <b>{revokeTarget.length}</b> device(s)?
+            </p>
+            <div style={{ maxHeight: "150px", overflowY: "auto", backgroundColor: "#f1f3f4", padding: "12px", borderRadius: "6px", marginBottom: "20px", fontSize: "13px", fontFamily: "monospace", color: "#3c4043" }}>
+              {revokeTarget.map((t, idx) => {
+                const matchingDev = devices.find((d) => d.device_user_name === t);
+                return (
+                  <div key={idx} style={{ marginBottom: "6px" }}>
+                    • {matchingDev ? `${matchingDev.model} (Serial: ${matchingDev.serial_number})` : t}
+                  </div>
+                );
+              })}
+            </div>
+            <p style={{ color: "#5f6368", fontSize: "13px", marginBottom: "25px" }}>
+              This action will instantly unapprove the device binding in Cloud Identity. Enterprise resources gated by Context-Aware Access policies will be immediately blocked.
+            </p>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: "15px" }}>
+              <button
+                onClick={() => setShowRevokeModal(false)}
+                disabled={isRevoking}
+                style={{ padding: "10px 18px", backgroundColor: "#f1f3f4", color: "#3c4043", border: "none", borderRadius: "4px", cursor: "pointer", fontWeight: "bold", fontSize: "14px" }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmRevoke}
+                disabled={isRevoking}
+                style={{ padding: "10px 18px", backgroundColor: "#d93025", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", fontWeight: "bold", fontSize: "14px" }}
+              >
+                {isRevoking ? "Revoking Access..." : "Yes, Revoke Access"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
