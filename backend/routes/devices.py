@@ -21,7 +21,7 @@ class DeviceActionRequest(BaseModel):
 
 @router.get("/my-devices", response_model=List[DeviceUserItem])
 def get_my_approved_devices(user_email: str = Depends(get_current_user_email)):
-    """Fetches the authentic, human-readable list of devices assigned to the requesting user across all Cloud Identity pages."""
+    """Fetches the authentic list of devices assigned to the requesting user using server-side email filtering."""
     if not cloud_identity_service.service:
         print(f"INFO [devices.py]: Running without Cloud Identity service credentials. Returning mock assets for '{user_email}'.")
         return [
@@ -49,30 +49,34 @@ def get_my_approved_devices(user_email: str = Depends(get_current_user_email)):
     my_devices = []
     target_email = user_email.lower().strip()
 
-    print(f"INFO [devices.py]: Initiating Cloud Identity devices.list crawl for customer '{config.customer_id}' targeting user '{target_email}'...")
+    # Utilize highly efficient server-side query filtering
+    query_filter = f"email:{target_email}"
+    print(f"INFO [devices.py]: Executing Cloud Identity devices.list(filter='{query_filter}') for customer '{config.customer_id}'...")
 
     try:
         next_page_token = None
         page_count = 0
-        total_devices_crawled = 0
+        total_devices_matched = 0
         
         while True:
             page_count += 1
             request = cloud_identity_service.service.devices().list(
                 customer=config.customer_id,
+                filter=query_filter,
                 pageToken=next_page_token
             )
             response = request.execute()
             devices = response.get("devices", [])
-            total_devices_crawled += len(devices)
+            total_devices_matched += len(devices)
 
             for d in devices:
                 device_name = d["name"]
                 device_type = d.get("deviceType", "UNKNOWN_TYPE")
                 model = d.get("model", "Unknown Model")
-                os_version = d.get("osVersion", "Unknown OS")
-                serial_number = d.get("serialNumber", "N/A")
+                os_version = d.get("osVersion", d.get("os", "Unknown OS"))
+                serial_number = d.get("serialNumber") or d.get("imei") or d.get("meid") or "N/A"
                 
+                # Query deviceUsers to retrieve exact managementState / approval binding
                 du_page_token = None
                 while True:
                     du_req = cloud_identity_service.service.devices().deviceUsers().list(
@@ -85,7 +89,7 @@ def get_my_approved_devices(user_email: str = Depends(get_current_user_email)):
                     for du in du_resp.get("deviceUsers", []):
                         du_email = du.get("userEmail", "").lower().strip()
                         if du_email == target_email:
-                            state = du.get("approvalState", "UNKNOWN_STATE")
+                            state = du.get("managementState") or du.get("approvalState", "UNKNOWN_STATE")
                             my_devices.append(
                                 DeviceUserItem(
                                     device_user_name=du["name"],
@@ -106,10 +110,10 @@ def get_my_approved_devices(user_email: str = Depends(get_current_user_email)):
             if not next_page_token:
                 break
                 
-        print(f"INFO [devices.py]: Crawled {total_devices_crawled} total hardware assets across {page_count} pages. Returning {len(my_devices)} matching devices.")
+        print(f"INFO [devices.py]: Filtered crawl complete. Matched {total_devices_matched} total hardware assets across {page_count} pages. Returning {len(my_devices)} matching device bindings.")
         return my_devices
     except Exception as e:
-        print(f"ERROR [devices.py]: Cloud Identity API crawl failed: {e}")
+        print(f"ERROR [devices.py]: Cloud Identity API filtered crawl failed: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to fetch user devices from Cloud Identity: {e}")
 
 @router.post("/approve")

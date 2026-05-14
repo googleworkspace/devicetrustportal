@@ -142,7 +142,8 @@ export const Dashboard: React.FC = () => {
           <table style={{ width: "100%", borderCollapse: "collapse", marginTop: "10px", backgroundColor: "#fff", boxShadow: "0 1px 3px rgba(0,0,0,0.1)", borderRadius: "6px", overflow: "hidden" }}>
             <thead>
               <tr style={{ backgroundColor: "#f1f3f4", borderBottom: "2px solid #dadce0" }}>
-                <th style={{ padding: "12px 15px", textAlign: "left", color: "#202124", fontSize: "14px" }}>Hardware Model & OS</th>
+                <th style={{ padding: "12px 15px", textAlign: "left", color: "#202124", fontSize: "14px" }}>Hardware Model</th>
+                <th style={{ padding: "12px 15px", textAlign: "left", color: "#202124", fontSize: "14px" }}>Operating System</th>
                 <th style={{ padding: "12px 15px", textAlign: "left", color: "#202124", fontSize: "14px" }}>Identifier</th>
                 <th style={{ padding: "12px 15px", textAlign: "left", color: "#202124", fontSize: "14px" }}>Approval State</th>
                 <th style={{ padding: "12px 15px", textAlign: "left", color: "#202124", fontSize: "14px" }}>Last Sync</th>
@@ -152,13 +153,10 @@ export const Dashboard: React.FC = () => {
             <tbody>
               {devices.map((d, i) => (
                 <tr key={i} style={{ borderBottom: "1px solid #eee" }}>
-                  <td style={{ padding: "14px 15px", color: "#202124" }}>
-                    <div style={{ fontWeight: "bold", fontSize: "14px" }}>{d.model}</div>
-                    <div style={{ fontSize: "12px", color: "#5f6368", marginTop: "2px" }}>{d.os_version} ({d.device_type})</div>
-                  </td>
+                  <td style={{ padding: "14px 15px", color: "#202124", fontWeight: "bold", fontSize: "14px" }}>{d.model}</td>
+                  <td style={{ padding: "14px 15px", color: "#5f6368", fontSize: "14px" }}>{d.os_version} ({d.device_type})</td>
                   <td style={{ padding: "14px 15px", fontFamily: "monospace", fontSize: "13px", color: "#3c4043" }}>
-                    <div>{d.serial_number !== "N/A" ? `Serial: ${d.serial_number}` : "ID: N/A"}</div>
-                    <div style={{ fontSize: "10px", color: "#9aa0a6", marginTop: "2px" }}>{d.device_user_name}</div>
+                    <div>{d.serial_number !== "N/A" ? `Serial/IMEI: ${d.serial_number}` : "Virtual Asset / EV Cert"}</div>
                   </td>
                   <td style={{ padding: "14px 15px" }}>
                     <span style={{ padding: "4px 8px", backgroundColor: d.approval_state === "APPROVED" ? "#e6f4ea" : "#fef7e0", color: d.approval_state === "APPROVED" ? "#137333" : "#b06000", borderRadius: "4px", fontWeight: "bold", fontSize: "12px", textTransform: "uppercase", border: `1px solid ${d.approval_state === "APPROVED" ? "#ceead6" : "#feefc3"}` }}>
