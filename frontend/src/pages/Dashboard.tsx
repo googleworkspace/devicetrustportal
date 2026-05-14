@@ -50,7 +50,10 @@ export const Dashboard: React.FC = () => {
     try {
       await approveDevice(name);
       setMessage("Device approved successfully.");
-      loadDevices();
+      // Instant local state update without re-fetching or triggering spinning loader
+      setDevices((prev) =>
+        prev.map((d) => (d.device_user_name === name ? { ...d, approval_state: "APPROVED" } : d))
+      );
     } catch (e: any) {
       setMessage(`Failed to approve device: ${e.message}`);
     }
@@ -61,7 +64,10 @@ export const Dashboard: React.FC = () => {
     try {
       await revokeDevice(name);
       setMessage("Device revoked successfully.");
-      loadDevices();
+      // Instant local state update without re-fetching or triggering spinning loader
+      setDevices((prev) =>
+        prev.map((d) => (d.device_user_name === name ? { ...d, approval_state: "UNMANAGED" } : d))
+      );
     } catch (e: any) {
       setMessage(`Failed to revoke device: ${e.message}`);
     }
@@ -69,42 +75,52 @@ export const Dashboard: React.FC = () => {
 
   return (
     <div style={{ padding: "20px", fontFamily: "sans-serif", maxWidth: "950px", margin: "0 auto" }}>
-      <header style={{ borderBottom: "1px solid #ccc", paddingBottom: "15px", marginBottom: "20px" }}>
-        <h1>Device Trust Gateway</h1>
+      <header style={{ borderBottom: "1px solid #ccc", paddingBottom: "15px", marginBottom: "20px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "15px" }}>
+        <h1 style={{ margin: 0 }}>Device Trust Gateway</h1>
         
-        {/* Google Sign-In Authentication */}
-        <div style={{ backgroundColor: "#f8f9fa", padding: "20px", borderRadius: "8px", marginTop: "15px", border: "1px solid #e9ecef" }}>
-          <h3 style={{ marginTop: 0, marginBottom: "10px", fontSize: "18px", color: "#202124" }}>Google Authentication</h3>
-          <p style={{ fontSize: "14px", color: "#5f6368", marginBottom: "15px" }}>
-            Sign in with your Google Workspace enterprise account to authorize live device approvals and manage configurations.
-          </p>
-          
-          {!userEmail ? (
-            <GoogleLoginButton onLoginSuccess={handleLoginSuccess} />
-          ) : (
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", backgroundColor: "#e6f4ea", padding: "12px 18px", borderRadius: "6px", border: "1px solid #ceead6" }}>
-              <div>
-                <span style={{ fontSize: "12px", color: "#137333", fontWeight: "bold", display: "block", textTransform: "uppercase" }}>Active Production Session</span>
-                <span style={{ fontSize: "16px", color: "#202124", fontWeight: "bold" }}>{userEmail}</span>
-              </div>
-              <button
-                onClick={() => {
-                  localStorage.removeItem("userEmail");
-                  localStorage.removeItem("googleIdToken");
-                  setUserEmail("");
-                  setAuthToken("");
-                  setDevices([]);
-                  setIsAdmin(false);
-                  setMessage("Signed out successfully.");
-                }}
-                style={{ padding: "8px 14px", backgroundColor: "#137333", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", fontWeight: "bold", fontSize: "12px" }}
-              >
-                Sign Out
-              </button>
-            </div>
-          )}
-        </div>
+        {/* Admin Config UI dynamically gated by Workspace Super Admin privileges at top header */}
+        {isAdmin && (
+          <a
+            href="#/admin"
+            style={{ padding: "10px 18px", backgroundColor: "#ea4335", color: "white", textDecoration: "none", borderRadius: "5px", fontWeight: "bold", fontSize: "14px", display: "inline-block" }}
+          >
+            ⚙️ Admin Configurations
+          </a>
+        )}
       </header>
+
+      {/* Google Sign-In Authentication Container */}
+      <div style={{ backgroundColor: "#f8f9fa", padding: "20px", borderRadius: "8px", marginBottom: "25px", border: "1px solid #e9ecef" }}>
+        <h3 style={{ marginTop: 0, marginBottom: "10px", fontSize: "18px", color: "#202124" }}>Google Authentication</h3>
+        <p style={{ fontSize: "14px", color: "#5f6368", marginBottom: "15px" }}>
+          Sign in with your Google Workspace enterprise account to authorize live device approvals and manage configurations.
+        </p>
+        
+        {!userEmail ? (
+          <GoogleLoginButton onLoginSuccess={handleLoginSuccess} />
+        ) : (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", backgroundColor: "#e6f4ea", padding: "12px 18px", borderRadius: "6px", border: "1px solid #ceead6", flexWrap: "wrap", gap: "10px" }}>
+            <div>
+              <span style={{ fontSize: "12px", color: "#137333", fontWeight: "bold", display: "block", textTransform: "uppercase" }}>Active Production Session</span>
+              <span style={{ fontSize: "16px", color: "#202124", fontWeight: "bold" }}>{userEmail}</span>
+            </div>
+            <button
+              onClick={() => {
+                localStorage.removeItem("userEmail");
+                localStorage.removeItem("googleIdToken");
+                setUserEmail("");
+                setAuthToken("");
+                setDevices([]);
+                setIsAdmin(false);
+                setMessage("Signed out successfully.");
+              }}
+              style={{ padding: "8px 14px", backgroundColor: "#137333", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", fontWeight: "bold", fontSize: "12px" }}
+            >
+              Sign Out
+            </button>
+          </div>
+        )}
+      </div>
 
       {message && (
         <div style={{ padding: "12px", backgroundColor: "#e6f7ff", border: "1px solid #91d5ff", marginBottom: "20px", borderRadius: "4px" }}>
@@ -136,7 +152,7 @@ export const Dashboard: React.FC = () => {
           <div style={{ padding: "25px", backgroundColor: "#f8f9fa", color: "#6c757d", border: "1px solid #dee2e6", borderRadius: "6px", textAlign: "center" }}>
             <div style={{ fontSize: "16px", fontWeight: "bold", marginBottom: "8px", color: "#3c4043" }}>No Registered Hardware Assets Discovered</div>
             <div style={{ fontSize: "14px" }}>We successfully checked your inventory but found no approved devices matching <b>{userEmail}</b>.</div>
-            <div style={{ fontSize: "13px", marginTop: "10px", color: "#1a73e8" }}>Use the registration portals below to authorize your personal phone or laptop!</div>
+            <div style={{ fontSize: "13px", marginTop: "10px", color: "#1a73e8" }}>Ensure your Endpoint Verification extension is actively reporting your device!</div>
           </div>
         ) : (
           <table style={{ width: "100%", borderCollapse: "collapse", marginTop: "10px", backgroundColor: "#fff", boxShadow: "0 1px 3px rgba(0,0,0,0.1)", borderRadius: "6px", overflow: "hidden" }}>
@@ -185,30 +201,6 @@ export const Dashboard: React.FC = () => {
               ))}
             </tbody>
           </table>
-        )}
-      </section>
-
-      <section style={{ display: "flex", gap: "15px", flexWrap: "wrap", marginBottom: "30px" }}>
-        <a
-          href="#/chaining"
-          style={{ padding: "15px 25px", backgroundColor: "#1a73e8", color: "white", textDecoration: "none", borderRadius: "5px", fontWeight: "bold" }}
-        >
-          Trust Chaining Portal
-        </a>
-        <a
-          href="#/network"
-          style={{ padding: "15px 25px", backgroundColor: "#34a853", color: "white", textDecoration: "none", borderRadius: "5px", fontWeight: "bold" }}
-        >
-          Campus Wi-Fi Approval
-        </a>
-        
-        {isAdmin && (
-          <a
-            href="#/admin"
-            style={{ padding: "15px 25px", backgroundColor: "#ea4335", color: "white", textDecoration: "none", borderRadius: "5px", fontWeight: "bold" }}
-          >
-            Admin Configurations
-          </a>
         )}
       </section>
     </div>
