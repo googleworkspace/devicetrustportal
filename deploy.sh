@@ -56,8 +56,8 @@ setup_domain_wide_delegation() {
         echo -e "${GREEN}✔ Secret '$KEY_SECRET_NAME' already securely stored.${NC}"
     fi
     
-    # Explicitly grant Secret Manager Accessor permissions to our dedicated DWD service account
-    echo "Granting Secret Accessor IAM binding to '$SA_EMAIL'..."
+    # Explicitly grant Secret Manager Accessor permissions to our dedicated DWD service account for DWD Key
+    echo "Granting Secret Accessor IAM binding to '$SA_EMAIL' for DWD Key..."
     gcloud secrets add-iam-policy-binding "$KEY_SECRET_NAME" \
         --member="serviceAccount:$SA_EMAIL" \
         --role="roles/secretmanager.secretAccessor" \
@@ -282,10 +282,17 @@ case $OPTION in
         echo -e "${GREEN}Secret '$SECRET_NAME' already exists in project.${NC}"
     fi
     
-    # Ensure DWD credentials and Admin Email are established before deploying container
+    # Ensure DWD credentials and Admin Email are established before initial deployment
     if [ -z "$WORKSPACE_ADMIN_EMAIL" ]; then
         setup_domain_wide_delegation
     fi
+    
+    # Explicitly grant Secret Manager Accessor permissions to our dedicated DWD service account for Admin Config Secret
+    echo "Granting Secret Accessor IAM binding to '$DWD_SA_EMAIL' for Admin Config Secret..."
+    gcloud secrets add-iam-policy-binding "$SECRET_NAME" \
+        --member="serviceAccount:$DWD_SA_EMAIL" \
+        --role="roles/secretmanager.secretAccessor" \
+        --project="$GCP_PROJECT" --quiet 2>/dev/null || echo "IAM binding already configured."
     
     echo -e "\n${BLUE}[5/7] Phase 1: Executing baseline container build to establish live Cloud Run URL...${NC}"
     IMAGE_TAG="gcr.io/$GCP_PROJECT/device-trust-gateway"
