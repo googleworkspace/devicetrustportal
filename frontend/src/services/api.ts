@@ -149,3 +149,12 @@ export const revokeDevice = async (deviceUserName: string): Promise<{ status: st
   });
   return response.json();
 };
+
+export const revokeDeviceBulk = async (deviceUserNames: string[]): Promise<{ status: string; revoked_count: number }> => {
+  const response = await fetchWithAuth(`${API_BASE_URL}/api/devices/revoke-bulk`, {
+    method: "POST",
+    headers: getHeaders(),
+    body: JSON.stringify({ device_user_names: deviceUserNames }),
+  });
+  return response.json();
+};

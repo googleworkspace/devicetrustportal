@@ -20,9 +20,12 @@ class DeviceUserItem(BaseModel):
 class DeviceActionRequest(BaseModel):
     device_user_name: str
 
+class BulkRevokeRequest(BaseModel):
+    device_user_names: List[str]
+
 @router.get("/my-devices", response_model=List[DeviceUserItem])
 def get_my_approved_devices(user_email: str = Depends(get_current_user_email)):
-    """Fetches the authentic list of devices assigned to the requesting user, identifying company-owned trust anchors."""
+    """Fetches the authentic list of devices assigned to the requesting user using server-side email filtering."""
     if not cloud_identity_service.service:
         print(f"INFO [devices.py]: Running without Cloud Identity service credentials. Returning mock assets for '{user_email}'.")
         return [
@@ -77,8 +80,6 @@ def get_my_approved_devices(user_email: str = Depends(get_current_user_email)):
                 model = d.get("model", "Unknown Model")
                 os_version = d.get("osVersion", d.get("os", "Unknown OS"))
                 owner_type = d.get("ownerType", "BYOD")
-                
-                # Robustly extract serial number across ChromeOS and Mobile hardware definitions
                 serial_number = d.get("serialNumber") or d.get("deviceSerialNumber") or d.get("imei") or d.get("meid") or "N/A"
                 
                 du_page_token = None
@@ -123,7 +124,6 @@ def get_my_approved_devices(user_email: str = Depends(get_current_user_email)):
 
 @router.post("/approve")
 def approve_device(request: DeviceActionRequest, user_email: str = Depends(get_current_user_email)):
-    """Executes inline approval for a target device user binding."""
     if not cloud_identity_service.service:
         return {"status": "SUCCESS", "message": "Simulated device approval complete."}
 
@@ -139,13 +139,11 @@ def approve_device(request: DeviceActionRequest, user_email: str = Depends(get_c
 
 @router.post("/revoke")
 def revoke_device(request: DeviceActionRequest, user_email: str = Depends(get_current_user_email)):
-    """Executes inline revocation/unapproval for a target device user binding."""
     if not cloud_identity_service.service:
         return {"status": "SUCCESS", "message": "Simulated device revocation complete."}
 
     config = config_service.get_tenant_config()
     try:
-        # Safety check: verify if parent device is company owned
         parent_device = request.device_user_name.split("/deviceUsers/")[0]
         dev_req = cloud_identity_service.service.devices().get(name=parent_device, customer=config.customer_id)
         dev_resp = dev_req.execute()
@@ -159,5 +157,33 @@ def revoke_device(request: DeviceActionRequest, user_email: str = Depends(get_cu
         return {"status": "SUCCESS", "message": "Device revoked successfully."}
     except HTTPException:
         raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/revoke-bulk")
+def revoke_device_bulk(request: BulkRevokeRequest, user_email: str = Depends(get_current_user_email)):
+    """Executes bulk unapproval via BatchHttpRequest across multiple device user bindings simultaneously."""
+    if not cloud_identity_service.service:
+        return {"status": "SUCCESS", "revoked_count": len(request.device_user_names)}
+
+    config = config_service.get_tenant_config()
+    try:
+        # Filter out company anchors before batch execution
+        bulk_targets = []
+        for du_name in request.device_user_names:
+            parent_dev = du_name.split("/deviceUsers/")[0]
+            dev_req = cloud_identity_service.service.devices().get(name=parent_dev, customer=config.customer_id)
+            dev_resp = dev_req.execute()
+            if dev_resp.get("ownerType") != "COMPANY":
+                bulk_targets.append(du_name)
+
+        if not bulk_targets:
+            return {"status": "SUCCESS", "revoked_count": 0, "message": "No eligible BYOD devices to revoke."}
+
+        res = cloud_identity_service.revoke_device_users_bulk(
+            device_user_names=bulk_targets,
+            customer_id=config.customer_id
+        )
+        return res
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

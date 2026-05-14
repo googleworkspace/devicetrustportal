@@ -5,6 +5,7 @@ import google.auth
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
+from googleapiclient.http import BatchHttpRequest
 
 class CloudIdentityService:
     def __init__(self):
@@ -111,5 +112,28 @@ class CloudIdentityService:
             return response
         except HttpError as e:
             raise Exception(f"Cloud Identity API error during revocation: {e}")
+
+    def revoke_device_users_bulk(self, device_user_names: List[str], customer_id: str) -> Dict[str, Any]:
+        if not self.service:
+            raise Exception("Cloud Identity service not initialized with valid credentials")
+
+        print(f"INFO [cloud_identity.py]: Executing BatchHttpRequest for {len(device_user_names)} device revocation(s)...")
+        batch = self.service.new_batch_http_request()
+        
+        errors = []
+        def callback(request_id, response, exception):
+            if exception:
+                errors.append(exception)
+
+        for du_name in device_user_names:
+            # Add individual delete call to multipart batch
+            req = self.service.devices().deviceUsers().delete(name=du_name, customer=customer_id)
+            batch.add(req, callback=callback)
+
+        batch.execute()
+        if errors:
+            raise Exception(f"Batch revocation encountered {len(errors)} error(s). First error: {errors[0]}")
+            
+        return {"status": "SUCCESS", "revoked_count": len(device_user_names)}
 
 cloud_identity_service = CloudIdentityService()

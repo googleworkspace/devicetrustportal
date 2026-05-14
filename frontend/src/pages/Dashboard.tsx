@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { getMyDevices, approveDevice, revokeDevice, checkIsAdmin, DeviceUserItem } from "../services/api";
+import { getMyDevices, approveDevice, revokeDevice, revokeDeviceBulk, checkIsAdmin, DeviceUserItem } from "../services/api";
 import { GoogleLoginButton } from "../components/GoogleLoginButton";
 
 export const Dashboard: React.FC = () => {
@@ -69,34 +69,30 @@ export const Dashboard: React.FC = () => {
     setShowRevokeModal(true);
   };
 
+  // Execute confirmed revocation (Single or Bulk Batch)
   const handleConfirmRevoke = async () => {
     setIsRevoking(true);
     setMessage("");
-    let successCount = 0;
-    let failCount = 0;
 
-    for (const name of revokeTarget) {
-      try {
-        await revokeDevice(name);
-        successCount++;
-        setDevices((prev) =>
-          prev.map((d) => (d.device_user_name === name ? { ...d, approval_state: "UNMANAGED" } : d))
-        );
-      } catch (e) {
-        failCount++;
+    try {
+      if (revokeTarget.length === 1) {
+        await revokeDevice(revokeTarget[0]);
+      } else {
+        await revokeDeviceBulk(revokeTarget);
       }
+
+      setDevices((prev) =>
+        prev.map((d) => (revokeTarget.includes(d.device_user_name) ? { ...d, approval_state: "UNMANAGED" } : d))
+      );
+      setMessage(`Successfully revoked approval for ${revokeTarget.length} device(s).`);
+    } catch (e: any) {
+      setMessage(`Failed to revoke device(s): ${e.message}`);
     }
 
     setIsRevoking(false);
     setShowRevokeModal(false);
     setSelectedDevices([]);
     setRevokeTarget([]);
-
-    if (failCount === 0) {
-      setMessage(`Successfully revoked approval for ${successCount} device(s).`);
-    } else {
-      setMessage(`Revoked ${successCount} device(s). Failed to revoke ${failCount} device(s).`);
-    }
   };
 
   const handleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {
