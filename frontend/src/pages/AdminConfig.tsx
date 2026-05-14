@@ -7,11 +7,7 @@ export const AdminConfig: React.FC = () => {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
-  const [customerId, setCustomerId] = useState("");
   const [threshold, setThreshold] = useState(90);
-  const [trustedIps, setTrustedIps] = useState("");
-  const [chainingGroups, setChainingGroups] = useState("");
-  const [chainingOus, setChainingOus] = useState("");
 
   const userEmail = localStorage.getItem("userEmail") || "";
 
@@ -26,11 +22,7 @@ export const AdminConfig: React.FC = () => {
       try {
         const data = await getAdminConfig();
         setConfig(data);
-        setCustomerId(data.customer_id);
         setThreshold(data.inactivity_threshold_days);
-        setTrustedIps(data.trusted_ip_ranges.join("\n"));
-        setChainingGroups(data.chaining_allowed_groups.join("\n"));
-        setChainingOus(data.chaining_allowed_ous.join("\n"));
         setLoading(false);
       } catch (e: any) {
         setError(`Access Denied: ${e.message || "Workspace Administrator privileges required."}`);
@@ -47,11 +39,11 @@ export const AdminConfig: React.FC = () => {
     setError("");
 
     const updatedConfig: TenantConfig = {
-      customer_id: customerId,
+      customer_id: "customers/my_customer",
       inactivity_threshold_days: Number(threshold),
-      trusted_ip_ranges: trustedIps.split("\n").map((s) => s.trim()).filter(Boolean),
-      chaining_allowed_groups: chainingGroups.split("\n").map((s) => s.trim()).filter(Boolean),
-      chaining_allowed_ous: chainingOus.split("\n").map((s) => s.trim()).filter(Boolean),
+      trusted_ip_ranges: config?.trusted_ip_ranges || [],
+      chaining_allowed_groups: config?.chaining_allowed_groups || [],
+      chaining_allowed_ous: config?.chaining_allowed_ous || [],
     };
 
     try {
@@ -93,18 +85,7 @@ export const AdminConfig: React.FC = () => {
       {error && <div style={{ padding: "12px", backgroundColor: "#f8d7da", color: "#721c24", borderRadius: "4px", marginBottom: "20px" }}>{error}</div>}
 
       <form onSubmit={handleSubmit} style={{ border: "1px solid #ddd", padding: "25px", borderRadius: "8px", backgroundColor: "#fdfdfd" }}>
-        <div style={{ marginBottom: "20px" }}>
-          <label style={{ display: "block", fontWeight: "bold", marginBottom: "6px" }}>Google Workspace Customer ID:</label>
-          <input
-            type="text"
-            value={customerId}
-            onChange={(e) => setCustomerId(e.target.value)}
-            style={{ padding: "10px", width: "100%", boxSizing: "border-box", fontSize: "16px" }}
-          />
-          <span style={{ fontSize: "12px", color: "#777" }}>Format: customers/my_customer or customers/C0123456</span>
-        </div>
-
-        <div style={{ marginBottom: "20px" }}>
+        <div style={{ marginBottom: "25px" }}>
           <label style={{ display: "block", fontWeight: "bold", marginBottom: "6px" }}>Inactivity Threshold (Days):</label>
           <input
             type="number"
@@ -113,39 +94,6 @@ export const AdminConfig: React.FC = () => {
             style={{ padding: "10px", width: "100%", boxSizing: "border-box", fontSize: "16px" }}
           />
           <span style={{ fontSize: "12px", color: "#777" }}>Automated cron revocation triggers for BYOD devices idle longer than this window.</span>
-        </div>
-
-        <div style={{ marginBottom: "20px" }}>
-          <label style={{ display: "block", fontWeight: "bold", marginBottom: "6px" }}>Campus Trusted IP Ranges (CIDR):</label>
-          <textarea
-            rows={4}
-            value={trustedIps}
-            onChange={(e) => setTrustedIps(e.target.value)}
-            style={{ padding: "10px", width: "100%", boxSizing: "border-box", fontSize: "14px", fontFamily: "monospace" }}
-          />
-          <span style={{ fontSize: "12px", color: "#777" }}>One CIDR block per line (e.g., 10.0.0.0/8). Used for network-gated self-service approvals.</span>
-        </div>
-
-        <div style={{ marginBottom: "20px" }}>
-          <label style={{ display: "block", fontWeight: "bold", marginBottom: "6px" }}>Chaining Allowed Google Groups:</label>
-          <textarea
-            rows={3}
-            value={chainingGroups}
-            onChange={(e) => setChainingGroups(e.target.value)}
-            style={{ padding: "10px", width: "100%", boxSizing: "border-box", fontSize: "14px", fontFamily: "monospace" }}
-          />
-          <span style={{ fontSize: "12px", color: "#777" }}>Group membership overrides OU policies for trust chaining authorization.</span>
-        </div>
-
-        <div style={{ marginBottom: "20px" }}>
-          <label style={{ display: "block", fontWeight: "bold", marginBottom: "6px" }}>Chaining Allowed Organizational Units (OUs):</label>
-          <textarea
-            rows={3}
-            value={chainingOus}
-            onChange={(e) => setChainingOus(e.target.value)}
-            style={{ padding: "10px", width: "100%", boxSizing: "border-box", fontSize: "14px", fontFamily: "monospace" }}
-          />
-          <span style={{ fontSize: "12px", color: "#777" }}>Root paths (e.g., /Staff, /Faculty) authorized for trust chaining if not in an override group.</span>
         </div>
 
         <button

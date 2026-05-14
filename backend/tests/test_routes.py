@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from backend.main import app
 from backend.routes.chaining import PAIRING_CODE_CACHE
 from backend.routes.admin import get_current_user_email
+from backend.services.config_service import TenantConfig
 
 client = TestClient(app)
 
@@ -18,10 +19,19 @@ def mock_services():
          patch("backend.services.cloud_identity.CloudIdentityService.approve_device_user") as mock_app, \
          patch("backend.services.cloud_identity.CloudIdentityService.list_inactive_devices") as mock_inact, \
          patch("backend.services.cloud_identity.CloudIdentityService.revoke_device_user") as mock_rev, \
+         patch("backend.services.config_service.ConfigService.get_tenant_config") as mock_conf, \
          patch("backend.services.cloud_identity.cloud_identity_service.service") as mock_service:
         
         mock_admin.side_effect = lambda *args, **kwargs: "admin" in (kwargs.get("user_email") or args[0])
         mock_chain.side_effect = lambda *args, **kwargs: "allowed" in (kwargs.get("user_email") or args[0])
+        
+        mock_conf.return_value = TenantConfig(
+            customer_id="customers/my_customer",
+            inactivity_threshold_days=90,
+            trusted_ip_ranges=["127.0.0.1/32"],
+            chaining_allowed_groups=["trust-chaining-allowed@example.com"],
+            chaining_allowed_ous=["/Staff"]
+        )
         
         mock_ev.return_value = "devices/dev-1/deviceUsers/du-1"
         mock_lookup.return_value = "devices/dev-1/deviceUsers/du-1"

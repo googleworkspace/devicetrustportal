@@ -9,9 +9,9 @@ load_dotenv()
 class TenantConfig(BaseModel):
     customer_id: str = Field(default="customers/my_customer", description="Google Workspace Customer Resource Name")
     inactivity_threshold_days: int = Field(default=90, description="Days of inactivity before automated revocation")
-    trusted_ip_ranges: List[str] = Field(default=["127.0.0.1/32", "10.0.0.0/8"], description="Trusted IP CIDR ranges for network gating")
-    chaining_allowed_groups: List[str] = Field(default=["trust-chaining-allowed@example.com"], description="Google Groups allowed to perform trust chaining")
-    chaining_allowed_ous: List[str] = Field(default=["/Staff", "/Faculty"], description="Organizational Units allowed to perform trust chaining")
+    trusted_ip_ranges: List[str] = Field(default=[], description="Trusted IP CIDR ranges for network gating")
+    chaining_allowed_groups: List[str] = Field(default=[], description="Google Groups allowed to perform trust chaining")
+    chaining_allowed_ous: List[str] = Field(default=[], description="Organizational Units allowed to perform trust chaining")
 
 class ConfigService:
     def __init__(self):
@@ -41,9 +41,9 @@ class ConfigService:
         return TenantConfig(
             customer_id=os.getenv("TENANT_CUSTOMER_ID", "customers/my_customer"),
             inactivity_threshold_days=int(os.getenv("TENANT_INACTIVITY_THRESHOLD", 90)),
-            trusted_ip_ranges=json.loads(os.getenv("TENANT_TRUSTED_IPS", '["127.0.0.1/32", "10.0.0.0/8"]')),
-            chaining_allowed_groups=json.loads(os.getenv("TENANT_CHAINING_GROUPS", '["trust-chaining-allowed@example.com"]')),
-            chaining_allowed_ous=json.loads(os.getenv("TENANT_CHAINING_OUS", '["/Staff", "/Faculty"]'))
+            trusted_ip_ranges=json.loads(os.getenv("TENANT_TRUSTED_IPS", '[]')),
+            chaining_allowed_groups=json.loads(os.getenv("TENANT_CHAINING_GROUPS", '[]')),
+            chaining_allowed_ous=json.loads(os.getenv("TENANT_CHAINING_OUS", '[]'))
         )
 
     def update_tenant_config(self, config: TenantConfig) -> bool:

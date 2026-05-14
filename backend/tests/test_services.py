@@ -8,7 +8,9 @@ def test_tenant_config_defaults():
     config = config_service.get_tenant_config()
     assert config.customer_id == "customers/my_customer"
     assert config.inactivity_threshold_days == 90
-    assert "127.0.0.1/32" in config.trusted_ip_ranges
+    assert config.trusted_ip_ranges == []
+    assert config.chaining_allowed_groups == []
+    assert config.chaining_allowed_ous == []
 
 @patch("backend.services.directory_service.DirectoryService")
 def test_directory_admin_verification(mock_dir):
