@@ -204,6 +204,33 @@ configure_inventory_seeding() {
     fi
 }
 
+# Helper function for executing mass BYOD revocation sweep
+execute_mass_revocation_prompt() {
+    echo -e "\n${YELLOW}--- Mass BYOD Approval Revocation (Pristine Zero-Trust Baseline) ---${NC}"
+    echo "Would you like to execute a mass revocation sweep across Cloud Identity, unapproving all personal BYOD devices to establish a pristine Zero-Trust baseline?"
+    echo "Note: This operation preserves company-owned hardware but revokes all personal device approvals across your entire tenant catalog."
+    read -p "Execute Mass Revocation Sweep? (y/n): " DO_MASS_REVOKE
+    
+    if [[ "$DO_MASS_REVOKE" =~ ^[Yy]$ ]]; then
+        if [ -z "$WORKSPACE_ADMIN_EMAIL" ]; then
+            setup_domain_wide_delegation
+        fi
+        
+        echo -e "\n${BLUE}Launching live mass revocation script...${NC}"
+        if [ -d "backend/venv" ]; then
+            source backend/venv/bin/activate
+        elif [ -d "venv" ]; then
+            source venv/bin/activate
+        else
+            python3 -m venv backend/venv && source backend/venv/bin/activate
+            pip install --quiet -r backend/requirements.txt --index-url https://pypi.org/simple
+        fi
+        python3 backend/scripts/mass_revoke_byod_approvals.py
+    else
+        echo -e "${BLUE}Skipping mass revocation sweep.${NC}"
+    fi
+}
+
 # Helper function for printing final completion summary banner
 print_final_summary() {
     local PORTAL_URL="$1"
@@ -281,7 +308,6 @@ case $OPTION in
         echo "Creating new Secret Manager secret: $SECRET_NAME"
         gcloud secrets create "$SECRET_NAME" --replication-policy="automatic" --project="$GCP_PROJECT" --quiet
         
-        # Initialize pristine default-deny security baselines (empty access arrays) requiring explicit admin configuration
         DEFAULT_CONFIG='{"customer_id": "customers/my_customer", "inactivity_threshold_days": 90, "trusted_ip_ranges": [], "chaining_allowed_groups": [], "chaining_allowed_ous": []}'
         echo -n "$DEFAULT_CONFIG" | gcloud secrets versions add "$SECRET_NAME" --data-file=- --project="$GCP_PROJECT" --quiet
     else
@@ -346,6 +372,7 @@ case $OPTION in
     echo -e "${GREEN}=========================================================${NC}"
     
     configure_inventory_seeding
+    execute_mass_revocation_prompt
     print_final_summary "$SERVICE_URL"
     ;;
     
@@ -379,6 +406,7 @@ EOF
     echo -e "${GREEN}=========================================================${NC}"
     
     configure_inventory_seeding
+    execute_mass_revocation_prompt
     print_final_summary "http://localhost:8080"
     ;;
     
