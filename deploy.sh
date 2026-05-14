@@ -281,9 +281,8 @@ case $OPTION in
         echo "Creating new Secret Manager secret: $SECRET_NAME"
         gcloud secrets create "$SECRET_NAME" --replication-policy="automatic" --project="$GCP_PROJECT" --quiet
         
-        # Dynamically derive tenant domain from admin email to prevent foreign group 403 errors and allow root OU chaining
-        ADMIN_DOMAIN="${WORKSPACE_ADMIN_EMAIL#*@}"
-        DEFAULT_CONFIG='{"customer_id": "customers/my_customer", "inactivity_threshold_days": 90, "trusted_ip_ranges": ["127.0.0.1/32", "10.0.0.0/8"], "chaining_allowed_groups": ["trust-chaining-allowed@'"$ADMIN_DOMAIN"'"], "chaining_allowed_ous": ["/", "/Staff", "/Faculty"]}'
+        # Initialize pristine default-deny security baselines (empty access arrays) requiring explicit admin configuration
+        DEFAULT_CONFIG='{"customer_id": "customers/my_customer", "inactivity_threshold_days": 90, "trusted_ip_ranges": [], "chaining_allowed_groups": [], "chaining_allowed_ous": []}'
         echo -n "$DEFAULT_CONFIG" | gcloud secrets versions add "$SECRET_NAME" --data-file=- --project="$GCP_PROJECT" --quiet
     else
         echo -e "${GREEN}Secret '$SECRET_NAME' already exists in project.${NC}"
@@ -364,9 +363,9 @@ case $OPTION in
 USE_SECRET_MANAGER=false
 TENANT_CUSTOMER_ID=customers/my_customer
 TENANT_INACTIVITY_THRESHOLD=90
-TENANT_TRUSTED_IPS=["127.0.0.1/32", "10.0.0.0/8"]
-TENANT_CHAINING_GROUPS=["trust-chaining-allowed@example.com"]
-TENANT_CHAINING_OUS=["/", "/Staff", "/Faculty"]
+TENANT_TRUSTED_IPS=[]
+TENANT_CHAINING_GROUPS=[]
+TENANT_CHAINING_OUS=[]
 EOF
     else
         echo -e "${GREEN}Existing .env file detected.${NC}"
