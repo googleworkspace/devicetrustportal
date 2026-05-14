@@ -38,36 +38,43 @@ const getHeaders = () => {
   return headers;
 };
 
-export const getAdminConfig = async (): Promise<TenantConfig> => {
-  const response = await fetch(`${API_BASE_URL}/api/admin/config`, {
-    headers: getHeaders(),
-  });
+// Helper fetch wrapper intercepting 401 Unauthorized to handle stale/expired sessions
+const fetchWithAuth = async (url: string, options: RequestInit = {}): Promise<Response> => {
+  const response = await fetch(url, options);
+  if (response.status === 401) {
+    console.warn("Session expired or invalid credentials. Clearing local storage.");
+    localStorage.removeItem("googleIdToken");
+    localStorage.removeItem("userEmail");
+    window.location.reload();
+    throw new Error("Your authentication session has expired. Please sign in again.");
+  }
   if (!response.ok) {
     throw new Error(await response.text());
   }
+  return response;
+};
+
+export const getAdminConfig = async (): Promise<TenantConfig> => {
+  const response = await fetchWithAuth(`${API_BASE_URL}/api/admin/config`, {
+    headers: getHeaders(),
+  });
   return response.json();
 };
 
 export const updateAdminConfig = async (config: TenantConfig): Promise<{ status: string }> => {
-  const response = await fetch(`${API_BASE_URL}/api/admin/config`, {
+  const response = await fetchWithAuth(`${API_BASE_URL}/api/admin/config`, {
     method: "POST",
     headers: getHeaders(),
     body: JSON.stringify(config),
   });
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
   return response.json();
 };
 
 export const generatePairingCode = async (): Promise<GenerateResponse> => {
-  const response = await fetch(`${API_BASE_URL}/api/chaining/generate`, {
+  const response = await fetchWithAuth(`${API_BASE_URL}/api/chaining/generate`, {
     method: "POST",
     headers: getHeaders(),
   });
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
   return response.json();
 };
 
@@ -76,7 +83,7 @@ export const verifyPairingCode = async (
   rawDeviceId?: string,
   evHeader?: string
 ): Promise<VerifyResponse> => {
-  const response = await fetch(`${API_BASE_URL}/api/chaining/verify`, {
+  const response = await fetchWithAuth(`${API_BASE_URL}/api/chaining/verify`, {
     method: "POST",
     headers: getHeaders(),
     body: JSON.stringify({
@@ -85,9 +92,6 @@ export const verifyPairingCode = async (
       ev_header: evHeader,
     }),
   });
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
   return response.json();
 };
 
@@ -95,7 +99,7 @@ export const networkApproval = async (
   rawDeviceId?: string,
   evHeader?: string
 ): Promise<VerifyResponse> => {
-  const response = await fetch(`${API_BASE_URL}/api/network/approve`, {
+  const response = await fetchWithAuth(`${API_BASE_URL}/api/network/approve`, {
     method: "POST",
     headers: getHeaders(),
     body: JSON.stringify({
@@ -103,32 +107,23 @@ export const networkApproval = async (
       ev_header: evHeader,
     }),
   });
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
   return response.json();
 };
 
 export const triggerCronCleanup = async (): Promise<{ status: string; revoked_count: number }> => {
-  const response = await fetch(`${API_BASE_URL}/api/cron/cleanup`, {
+  const response = await fetchWithAuth(`${API_BASE_URL}/api/cron/cleanup`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       "X-Mock-Cron": "true",
     },
   });
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
   return response.json();
 };
 
 export const getMyDevices = async (): Promise<DeviceUserItem[]> => {
-  const response = await fetch(`${API_BASE_URL}/api/devices/my-devices`, {
+  const response = await fetchWithAuth(`${API_BASE_URL}/api/devices/my-devices`, {
     headers: getHeaders(),
   });
-  if (!response.ok) {
-    throw new Error(await response.text());
-  }
   return response.json();
 };

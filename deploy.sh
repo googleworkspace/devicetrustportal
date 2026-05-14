@@ -25,7 +25,7 @@ setup_domain_wide_delegation() {
     SA_NAME="device-trust-gateway-sa"
     SA_EMAIL="${SA_NAME}@${GCP_PROJECT}.iam.gserviceaccount.com"
     
-    echo -e "\n${BLUE}[1/4] Verifying Service Account '$SA_EMAIL'...${NC}"
+    echo -e "\n${BLUE}[1/5] Verifying Service Account '$SA_EMAIL'...${NC}"
     if ! gcloud iam service-accounts describe "$SA_EMAIL" --project="$GCP_PROJECT" &>/dev/null; then
         echo "Creating new Service Account '$SA_NAME'..."
         gcloud iam service-accounts create "$SA_NAME" \
@@ -35,7 +35,7 @@ setup_domain_wide_delegation() {
         echo -e "${GREEN}✔ Service Account exists.${NC}"
     fi
     
-    echo -e "\n${BLUE}[2/4] Generating JSON Private Key...${NC}"
+    echo -e "\n${BLUE}[2/5] Generating JSON Private Key...${NC}"
     KEY_FILE="dwd_key.json"
     if [ ! -f "$KEY_FILE" ]; then
         gcloud iam service-accounts keys create "$KEY_FILE" \
@@ -46,7 +46,17 @@ setup_domain_wide_delegation() {
         echo -e "${GREEN}✔ Existing key file '$KEY_FILE' detected.${NC}"
     fi
     
-    echo -e "\n${BLUE}[3/4] Retrieving Service Account Client ID...${NC}"
+    echo -e "\n${BLUE}[3/5] Securing DWD Private Key in Secret Manager...${NC}"
+    KEY_SECRET_NAME="device_trust_gateway_dwd_key"
+    if ! gcloud secrets describe "$KEY_SECRET_NAME" --project="$GCP_PROJECT" &>/dev/null; then
+        echo "Creating Secret Manager secret '$KEY_SECRET_NAME'..."
+        gcloud secrets create "$KEY_SECRET_NAME" --replication-policy="automatic" --project="$GCP_PROJECT" --quiet
+        gcloud secrets versions add "$KEY_SECRET_NAME" --data-file="$KEY_FILE" --project="$GCP_PROJECT" --quiet
+    else
+        echo -e "${GREEN}✔ Secret '$KEY_SECRET_NAME' already securely stored.${NC}"
+    fi
+    
+    echo -e "\n${BLUE}[4/5] Retrieving Service Account Client ID...${NC}"
     CLIENT_ID=$(gcloud iam service-accounts describe "$SA_EMAIL" --project="$GCP_PROJECT" --format="value(oauth2ClientId)" 2>/dev/null || gcloud iam service-accounts describe "$SA_EMAIL" --project="$GCP_PROJECT" --format="value(uniqueId)")
     
     echo -e "\n${RED}===================================================================================================${NC}"
@@ -90,7 +100,9 @@ configure_inventory_seeding() {
         
         case $SEED_OPTION in
           1)
-            setup_domain_wide_delegation
+            if [ -z "$WORKSPACE_ADMIN_EMAIL" ]; then
+                setup_domain_wide_delegation
+            fi
             
             echo -e "\n${BLUE}Launching live inventory seeding script...${NC}"
             if [ -d "backend/venv" ]; then
@@ -227,6 +239,17 @@ case $OPTION in
     read -p "Enter target Cloud Run region [us-central1]: " GCP_REGION
     GCP_REGION=${GCP_REGION:-us-central1}
     
+    echo -e "\n${YELLOW}===================================================================================================${NC}"
+    echo -e "${YELLOW}🔑 REQUIRED OAUTH 2.0 CLIENT ID SETUP:${NC}"
+    echo -e "To authorize Google Sign-In authentication on your portal frontend:"
+    echo -e "  1. Open Google Cloud Console: https://console.cloud.google.com/apis/credentials?project=${GCP_PROJECT}"
+    echo -e "  2. Click ${YELLOW}'Create Credentials' > 'OAuth client ID'${NC}."
+    echo -e "  3. Select Application Type: ${YELLOW}'Web application'${NC}."
+    echo -e "  4. Add your Cloud Run URL to ${YELLOW}'Authorized JavaScript origins'${NC} (e.g., https://device-trust-gateway-HASH-uc.a.run.app)."
+    echo -e "  5. Copy the resulting Client ID string."
+    echo -e "${YELLOW}===================================================================================================${NC}\n"
+    read -p "Enter your Google OAuth 2.0 Client ID: " GOOGLE_CLIENT_ID
+    
     echo -e "\n${BLUE}[1/7] Setting active GCP project...${NC}"
     gcloud config set project "$GCP_PROJECT" --quiet
     
@@ -262,10 +285,14 @@ case $OPTION in
         echo -e "${GREEN}Secret '$SECRET_NAME' already exists in project.${NC}"
     fi
     
+    # Ensure DWD credentials and Admin Email are established before deploying container
+    if [ -z "$WORKSPACE_ADMIN_EMAIL" ]; then
+        setup_domain_wide_delegation
+    fi
+    
     echo -e "\n${BLUE}[5/7] Phase 1: Executing baseline container build to establish live Cloud Run URL...${NC}"
     IMAGE_TAG="gcr.io/$GCP_PROJECT/device-trust-gateway"
     
-    # Pass mock client ID during initial build just to establish service and grab live URL
     gcloud builds submit --config cloudbuild.yaml . --project="$GCP_PROJECT" --substitutions=_GOOGLE_CLIENT_ID="INITIAL_DEPLOY_PENDING" --suppress-logs
     
     SERVICE_URL=$(gcloud run deploy device-trust-gateway \
@@ -276,7 +303,8 @@ case $OPTION in
         --allow-unauthenticated \
         --format="value(status.url)" \
         --quiet \
-        --set-env-vars="USE_SECRET_MANAGER=true,SECRET_NAME=$SECRET_NAME,GOOGLE_CLOUD_PROJECT=$GCP_PROJECT" 2>/dev/null || echo "https://device-trust-gateway-${GCP_PROJECT}.us-central1.run.app")
+        --set-secrets="/secrets/dwd_key.json=device_trust_gateway_dwd_key:latest" \
+        --set-env-vars="USE_SECRET_MANAGER=true,SECRET_NAME=$SECRET_NAME,GOOGLE_CLOUD_PROJECT=$GCP_PROJECT,WORKSPACE_ADMIN_EMAIL=$WORKSPACE_ADMIN_EMAIL,GOOGLE_APPLICATION_CREDENTIALS=/secrets/dwd_key.json" 2>/dev/null || echo "https://device-trust-gateway-${GCP_PROJECT}.us-central1.run.app")
         
     echo -e "${GREEN}✔ Baseline service established at: ${SERVICE_URL}${NC}"
     
@@ -303,7 +331,8 @@ case $OPTION in
         --project "$GCP_PROJECT" \
         --allow-unauthenticated \
         --quiet \
-        --set-env-vars="USE_SECRET_MANAGER=true,SECRET_NAME=$SECRET_NAME,GOOGLE_CLOUD_PROJECT=$GCP_PROJECT"
+        --set-secrets="/secrets/dwd_key.json=device_trust_gateway_dwd_key:latest" \
+        --set-env-vars="USE_SECRET_MANAGER=true,SECRET_NAME=$SECRET_NAME,GOOGLE_CLOUD_PROJECT=$GCP_PROJECT,WORKSPACE_ADMIN_EMAIL=$WORKSPACE_ADMIN_EMAIL,GOOGLE_APPLICATION_CREDENTIALS=/secrets/dwd_key.json"
         
     echo -e "\n${GREEN}=========================================================${NC}"
     echo -e "${GREEN}✔ GCP Deployment & OAuth Authorization Complete!${NC}"
