@@ -74,7 +74,7 @@ setup_domain_wide_delegation() {
     echo -e "  3. In the ${YELLOW}'Client ID'${NC} field, copy and paste this exact numeric ID:"
     echo -e "     ${GREEN}${CLIENT_ID}${NC}"
     echo -e "  4. In the ${YELLOW}'OAuth Scopes'${NC} field, copy and paste this exact comma-separated string:"
-    echo -e "     ${GREEN}https://www.googleapis.com/auth/admin.directory.device.chromeos.readonly,https://www.googleapis.com/auth/cloud-identity.devices${NC}"
+    echo -e "     ${GREEN}https://www.googleapis.com/auth/cloud-identity.devices,https://www.googleapis.com/auth/cloud-identity,https://www.googleapis.com/auth/admin.directory.user.readonly,https://www.googleapis.com/auth/admin.directory.group.readonly,https://www.googleapis.com/auth/admin.directory.rolemanagement.readonly,https://www.googleapis.com/auth/admin.directory.device.chromeos.readonly${NC}"
     echo -e "  5. Click ${YELLOW}'Authorize'${NC}."
     echo -e "${RED}===================================================================================================${NC}\n"
     
