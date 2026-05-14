@@ -1,11 +1,34 @@
 import React, { useState, useEffect } from "react";
-import { triggerCronCleanup } from "../services/api";
+import { triggerCronCleanup, getMyDevices, DeviceUserItem } from "../services/api";
 import { GoogleLoginButton } from "../components/GoogleLoginButton";
 
 export const Dashboard: React.FC = () => {
   const [userEmail, setUserEmail] = useState(() => localStorage.getItem("userEmail") || "");
   const [message, setMessage] = useState("");
   const [authToken, setAuthToken] = useState(() => localStorage.getItem("googleIdToken") || "");
+  
+  // Real production devices state
+  const [devices, setDevices] = useState<DeviceUserItem[]>([]);
+  const [loadingDevices, setLoadingDevices] = useState(false);
+  const [deviceError, setDeviceError] = useState("");
+
+  useEffect(() => {
+    if (userEmail) {
+      setLoadingDevices(true);
+      setDeviceError("");
+      getMyDevices()
+        .then((data) => {
+          setDevices(data);
+          setLoadingDevices(false);
+        })
+        .catch((err) => {
+          setDeviceError(`Failed to load approved devices: ${err.message}`);
+          setLoadingDevices(false);
+        });
+    } else {
+      setDevices([]);
+    }
+  }, [userEmail, authToken]);
 
   const handleLoginSuccess = (email: string, token: string) => {
     setUserEmail(email);
@@ -48,6 +71,7 @@ export const Dashboard: React.FC = () => {
                   localStorage.removeItem("googleIdToken");
                   setUserEmail("");
                   setAuthToken("");
+                  setDevices([]);
                   setMessage("Signed out successfully.");
                 }}
                 style={{ padding: "8px 14px", backgroundColor: "#137333", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", fontWeight: "bold", fontSize: "12px" }}
@@ -67,27 +91,43 @@ export const Dashboard: React.FC = () => {
 
       <section style={{ marginBottom: "30px" }}>
         <h2>My Approved Devices</h2>
-        <table style={{ width: "100%", borderCollapse: "collapse", marginTop: "10px" }}>
-          <thead>
-            <tr style={{ backgroundColor: "#f5f5f5", borderBottom: "2px solid #ddd" }}>
-              <th style={{ padding: "10px", textAlign: "left" }}>Device Name</th>
-              <th style={{ padding: "10px", textAlign: "left" }}>Type</th>
-              <th style={{ padding: "10px", textAlign: "left" }}>Approval State</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr style={{ borderBottom: "1px solid #eee" }}>
-              <td style={{ padding: "10px" }}>devices/chrome-cb123/deviceUsers/du-1</td>
-              <td style={{ padding: "10px" }}>School Chromebook (Trust Anchor)</td>
-              <td style={{ padding: "10px", color: "green", fontWeight: "bold" }}>APPROVED</td>
-            </tr>
-            <tr style={{ borderBottom: "1px solid #eee" }}>
-              <td style={{ padding: "10px" }}>devices/pixel-phone99/deviceUsers/du-2</td>
-              <td style={{ padding: "10px" }}>Personal Smartphone</td>
-              <td style={{ padding: "10px", color: "green", fontWeight: "bold" }}>APPROVED</td>
-            </tr>
-          </tbody>
-        </table>
+        
+        {!userEmail ? (
+          <div style={{ padding: "15px", backgroundColor: "#fff3cd", color: "#856404", border: "1px solid #ffeeba", borderRadius: "4px" }}>
+            Please sign in with Google above to view your registered enterprise hardware assets.
+          </div>
+        ) : loadingDevices ? (
+          <div style={{ padding: "15px", color: "#555", fontStyle: "italic" }}>Loading approved devices from Cloud Identity...</div>
+        ) : deviceError ? (
+          <div style={{ padding: "15px", backgroundColor: "#f8d7da", color: "#721c24", border: "1px solid #f5c6cb", borderRadius: "4px" }}>
+            {deviceError}
+          </div>
+        ) : devices.length === 0 ? (
+          <div style={{ padding: "20px", backgroundColor: "#f8f9fa", color: "#6c757d", border: "1px solid #dee2e6", borderRadius: "4px", textAlign: "center" }}>
+            No approved personal devices found for <b>{userEmail}</b>. Use the registration portals below to authorize your hardware.
+          </div>
+        ) : (
+          <table style={{ width: "100%", borderCollapse: "collapse", marginTop: "10px" }}>
+            <thead>
+              <tr style={{ backgroundColor: "#f5f5f5", borderBottom: "2px solid #ddd" }}>
+                <th style={{ padding: "10px", textAlign: "left" }}>Device Resource Name</th>
+                <th style={{ padding: "10px", textAlign: "left" }}>Type</th>
+                <th style={{ padding: "10px", textAlign: "left" }}>Approval State</th>
+                <th style={{ padding: "10px", textAlign: "left" }}>Last Sync</th>
+              </tr>
+            </thead>
+            <tbody>
+              {devices.map((d, i) => (
+                <tr key={i} style={{ borderBottom: "1px solid #eee" }}>
+                  <td style={{ padding: "10px", fontFamily: "monospace", fontSize: "13px" }}>{d.device_user_name}</td>
+                  <td style={{ padding: "10px", fontSize: "14px" }}>{d.device_type}</td>
+                  <td style={{ padding: "10px", color: "green", fontWeight: "bold", fontSize: "14px" }}>{d.approval_state}</td>
+                  <td style={{ padding: "10px", color: "#666", fontSize: "13px" }}>{d.last_sync_time}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </section>
 
       <section style={{ display: "flex", gap: "15px", flexWrap: "wrap", marginBottom: "30px" }}>

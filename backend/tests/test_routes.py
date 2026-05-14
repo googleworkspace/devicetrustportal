@@ -30,6 +30,10 @@ def mock_services():
         mock_rev.return_value = {"status": "REVOKED"}
         
         mock_service.devices().create().execute.return_value = {"name": "devices/dev-99"}
+        mock_service.devices().list().execute.return_value = {"devices": [{"name": "devices/dev-1", "deviceType": "CHROME_OS"}]}
+        mock_service.devices().deviceUsers().list().execute.return_value = {
+            "deviceUsers": [{"name": "devices/dev-1/deviceUsers/du-1", "userEmail": "student@example.com", "approvalState": "APPROVED"}]
+        }
         
         yield
         app.dependency_overrides.clear()
@@ -146,3 +150,11 @@ def test_webhook_ignore_irrelevant_event():
     data = response.json()
     assert data["status"] == "SUCCESS"
     assert data["processed_count"] == 0
+
+def test_get_my_devices():
+    app.dependency_overrides[get_current_user_email] = lambda: "student@example.com"
+    response = client.get("/api/devices/my-devices")
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 1
+    assert data[0]["approval_state"] == "APPROVED"

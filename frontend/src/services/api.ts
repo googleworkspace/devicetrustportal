@@ -20,6 +20,13 @@ export interface VerifyResponse {
   operation?: any;
 }
 
+export interface DeviceUserItem {
+  device_user_name: str;
+  device_type: str;
+  approval_state: str;
+  last_sync_time: str;
+}
+
 const getHeaders = () => {
   const idToken = localStorage.getItem("googleIdToken");
   const headers: Record<string, string> = {
@@ -109,6 +116,16 @@ export const triggerCronCleanup = async (): Promise<{ status: string; revoked_co
       "Content-Type": "application/json",
       "X-Mock-Cron": "true",
     },
+  });
+  if (!response.ok) {
+    throw new Error(await response.text());
+  }
+  return response.json();
+};
+
+export const getMyDevices = async (): Promise<DeviceUserItem[]> => {
+  const response = await fetch(`${API_BASE_URL}/api/devices/my-devices`, {
+    headers: getHeaders(),
   });
   if (!response.ok) {
     throw new Error(await response.text());

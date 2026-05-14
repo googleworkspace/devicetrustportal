@@ -2,7 +2,7 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from backend.routes import admin, chaining, network_auth, cron, webhook
+from backend.routes import admin, chaining, network_auth, cron, webhook, devices
 
 app = FastAPI(
     title="Device Trust Gateway API",
@@ -24,6 +24,7 @@ app.include_router(chaining.router)
 app.include_router(network_auth.router)
 app.include_router(cron.router)
 app.include_router(webhook.router)
+app.include_router(devices.router)
 
 @app.get("/health")
 def health_check():
