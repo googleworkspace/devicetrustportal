@@ -15,8 +15,6 @@ def get_current_user_email(
     authorization: Optional[str] = Header(None),
     x_goog_authenticated_user_email: Optional[str] = Header(None)
 ) -> str:
-    """Extracts and verifies authentic user email exclusively from Google ID token Bearer or IAP headers."""
-    # 1. Check Google Sign-In OIDC Bearer Token
     if authorization and authorization.startswith("Bearer "):
         token = authorization.split("Bearer ")[-1]
         try:
@@ -27,7 +25,6 @@ def get_current_user_email(
         except Exception as e:
             print(f"Google ID token validation failed: {e}")
 
-    # 2. Check Google Cloud IAP Header
     if x_goog_authenticated_user_email:
         if ":" in x_goog_authenticated_user_email:
             return x_goog_authenticated_user_email.split(":")[-1]
@@ -37,20 +34,23 @@ def get_current_user_email(
 
 @router.get("/status", response_model=AdminStatusResponse)
 def check_admin_status(user_email: str = Depends(get_current_user_email)):
-    """Returns whether the requesting user holds Workspace Administrator privileges."""
-    is_admin = directory_service.verify_user_is_admin(user_email)
+    """Returns whether the requesting user holds Workspace Admin privileges or is listed in portal_admins."""
+    config = config_service.get_tenant_config()
+    is_admin = directory_service.verify_user_is_admin(user_email, portal_admins=config.portal_admins)
     return AdminStatusResponse(is_admin=is_admin)
 
 @router.get("/config", response_model=TenantConfig)
 def get_config(user_email: str = Depends(get_current_user_email)):
-    if not directory_service.verify_user_is_admin(user_email):
-        raise HTTPException(status_code=403, detail=f"Access denied: Workspace Admin required for {user_email}")
-    return config_service.get_tenant_config()
+    config = config_service.get_tenant_config()
+    if not directory_service.verify_user_is_admin(user_email, portal_admins=config.portal_admins):
+        raise HTTPException(status_code=403, detail=f"Access denied: Workspace Admin privileges required for {user_email}")
+    return config
 
 @router.post("/config")
 def update_config(config: TenantConfig, user_email: str = Depends(get_current_user_email)):
-    if not directory_service.verify_user_is_admin(user_email):
-        raise HTTPException(status_code=403, detail=f"Access denied: Workspace Admin required for {user_email}")
+    current_config = config_service.get_tenant_config()
+    if not directory_service.verify_user_is_admin(user_email, portal_admins=current_config.portal_admins):
+        raise HTTPException(status_code=403, detail=f"Access denied: Workspace Admin privileges required for {user_email}")
     
     success = config_service.update_tenant_config(config)
     if not success:

@@ -5,9 +5,7 @@ const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || "";
 export interface TenantConfig {
   customer_id: string;
   inactivity_threshold_days: number;
-  trusted_ip_ranges: string[];
-  chaining_allowed_groups: string[];
-  chaining_allowed_ous: string[];
+  portal_admins: string[];
 }
 
 export interface GenerateResponse {
