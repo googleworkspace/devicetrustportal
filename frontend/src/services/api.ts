@@ -21,10 +21,10 @@ export interface VerifyResponse {
 }
 
 export interface DeviceUserItem {
-  device_user_name: str;
-  device_type: str;
-  approval_state: str;
-  last_sync_time: str;
+  device_user_name: string;
+  device_type: string;
+  approval_state: string;
+  last_sync_time: string;
 }
 
 const getHeaders = () => {
