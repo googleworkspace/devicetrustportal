@@ -118,6 +118,23 @@ export const Dashboard: React.FC = () => {
     }
   };
 
+  const formatLastSync = (isoStr: string) => {
+    if (!isoStr || isoStr === "N/A") return "N/A";
+    try {
+      const d = new Date(isoStr);
+      if (isNaN(d.getTime())) return isoStr;
+      return d.toLocaleDateString(undefined, {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+    } catch (e) {
+      return isoStr;
+    }
+  };
+
   return (
     <div style={{ padding: "20px", fontFamily: "sans-serif", maxWidth: "950px", margin: "0 auto", position: "relative" }}>
       <header style={{ borderBottom: "1px solid #ccc", paddingBottom: "15px", marginBottom: "20px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "15px" }}>
@@ -258,7 +275,7 @@ export const Dashboard: React.FC = () => {
                         {d.approval_state}
                       </span>
                     </td>
-                    <td style={{ padding: "14px 15px", color: "#5f6368", fontSize: "13px" }}>{d.last_sync_time}</td>
+                    <td style={{ padding: "14px 15px", color: "#5f6368", fontSize: "13px" }}>{formatLastSync(d.last_sync_time)}</td>
                     <td style={{ padding: "14px 15px", textAlign: "center" }}>
                       {d.owner_type === "COMPANY" ? (
                         <span style={{ padding: "6px 12px", backgroundColor: "#e8f0fe", color: "#1a73e8", borderRadius: "4px", fontSize: "12px", fontWeight: "bold", display: "inline-block", border: "1px solid #d2e3fc" }}>
