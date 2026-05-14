@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { getMyDevices, approveDevice, revokeDevice, checkIsAdmin, DeviceUserItem } from "../services/api";
 import { GoogleLoginButton } from "../components/GoogleLoginButton";
 
@@ -12,7 +12,7 @@ export const Dashboard: React.FC = () => {
   const [deviceError, setDeviceError] = useState("");
   const [isAdmin, setIsAdmin] = useState(false);
 
-  const loadDevices = () => {
+  const loadDevices = useCallback(() => {
     if (userEmail) {
       setLoadingDevices(true);
       setDeviceError("");
@@ -28,7 +28,7 @@ export const Dashboard: React.FC = () => {
     } else {
       setDevices([]);
     }
-  };
+  }, [userEmail]);
 
   useEffect(() => {
     loadDevices();
@@ -37,7 +37,7 @@ export const Dashboard: React.FC = () => {
     } else {
       setIsAdmin(false);
     }
-  }, [userEmail, authToken]);
+  }, [userEmail, authToken, loadDevices]);
 
   const handleLoginSuccess = (email: string, token: string) => {
     setUserEmail(email);
@@ -125,8 +125,8 @@ export const Dashboard: React.FC = () => {
               {`@keyframes spin { to { transform: rotate(360deg); } }`}
             </style>
             <div style={{ display: "inline-block", width: "40px", height: "40px", border: "4px solid rgba(26, 115, 232, 0.2)", borderRadius: "50%", borderTopColor: "#1a73e8", animation: "spin 1s ease-in-out infinite", marginBottom: "15px" }} />
-            <div style={{ fontWeight: "bold", color: "#202124", fontSize: "16px", marginBottom: "6px" }}>Loading enterprise hardware assets...</div>
-            <div style={{ color: "#5f6368", fontSize: "13px" }}>Actively crawling Cloud Identity catalogs across all tenant pages for <b>{userEmail}</b>.</div>
+            <div style={{ fontWeight: "bold", color: "#202124", fontSize: "16px", marginBottom: "6px" }}>Retrieving your registered devices...</div>
+            <div style={{ color: "#5f6368", fontSize: "13px" }}>Securely verifying your hardware inventory for <b>{userEmail}</b>.</div>
           </div>
         ) : deviceError ? (
           <div style={{ padding: "15px", backgroundColor: "#f8d7da", color: "#721c24", border: "1px solid #f5c6cb", borderRadius: "4px" }}>
@@ -135,7 +135,7 @@ export const Dashboard: React.FC = () => {
         ) : devices.length === 0 ? (
           <div style={{ padding: "25px", backgroundColor: "#f8f9fa", color: "#6c757d", border: "1px solid #dee2e6", borderRadius: "6px", textAlign: "center" }}>
             <div style={{ fontSize: "16px", fontWeight: "bold", marginBottom: "8px", color: "#3c4043" }}>No Registered Hardware Assets Discovered</div>
-            <div style={{ fontSize: "14px" }}>We successfully crawled your tenant's Cloud Identity catalog but found no approved devices matching <b>{userEmail}</b>.</div>
+            <div style={{ fontSize: "14px" }}>We successfully checked your inventory but found no approved devices matching <b>{userEmail}</b>.</div>
             <div style={{ fontSize: "13px", marginTop: "10px", color: "#1a73e8" }}>Use the registration portals below to authorize your personal phone or laptop!</div>
           </div>
         ) : (
