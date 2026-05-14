@@ -239,17 +239,6 @@ case $OPTION in
     read -p "Enter target Cloud Run region [us-central1]: " GCP_REGION
     GCP_REGION=${GCP_REGION:-us-central1}
     
-    echo -e "\n${YELLOW}===================================================================================================${NC}"
-    echo -e "${YELLOW}🔑 REQUIRED OAUTH 2.0 CLIENT ID SETUP:${NC}"
-    echo -e "To authorize Google Sign-In authentication on your portal frontend:"
-    echo -e "  1. Open Google Cloud Console: https://console.cloud.google.com/apis/credentials?project=${GCP_PROJECT}"
-    echo -e "  2. Click ${YELLOW}'Create Credentials' > 'OAuth client ID'${NC}."
-    echo -e "  3. Select Application Type: ${YELLOW}'Web application'${NC}."
-    echo -e "  4. Add your Cloud Run URL to ${YELLOW}'Authorized JavaScript origins'${NC} (e.g., https://device-trust-gateway-HASH-uc.a.run.app)."
-    echo -e "  5. Copy the resulting Client ID string."
-    echo -e "${YELLOW}===================================================================================================${NC}\n"
-    read -p "Enter your Google OAuth 2.0 Client ID: " GOOGLE_CLIENT_ID
-    
     echo -e "\n${BLUE}[1/7] Setting active GCP project...${NC}"
     gcloud config set project "$GCP_PROJECT" --quiet
     
