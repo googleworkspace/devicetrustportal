@@ -1,4 +1,18 @@
 #!/usr/bin/env bash
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 # Device Trust Gateway - Automated Deployment & Setup Script
 
 set -e
@@ -74,7 +88,7 @@ setup_domain_wide_delegation() {
     echo -e "  3. In the ${YELLOW}'Client ID'${NC} field, copy and paste this exact numeric ID:"
     echo -e "     ${GREEN}${CLIENT_ID}${NC}"
     echo -e "  4. In the ${YELLOW}'OAuth Scopes'${NC} field, copy and paste this exact comma-separated string:"
-    echo -e "     ${GREEN}https://www.googleapis.com/auth/cloud-identity.devices,https://www.googleapis.com/auth/cloud-identity,https://www.googleapis.com/auth/admin.directory.user.readonly,https://www.googleapis.com/auth/admin.directory.group.readonly,https://www.googleapis.com/auth/admin.directory.rolemanagement.readonly,https://www.googleapis.com/auth/admin.directory.device.chromeos.readonly${NC}"
+    echo -e "     ${GREEN}https://www.googleapis.com/auth/cloud-identity.devices,https://www.googleapis.com/auth/cloud-identity,https://www.googleapis.com/auth/admin.directory.user.readonly,https://www.googleapis.com/auth/admin.directory.group.readonly,https://www.googleapis.com/auth/admin.directory.group.member.readonly,https://www.googleapis.com/auth/admin.directory.rolemanagement.readonly,https://www.googleapis.com/auth/admin.directory.device.chromeos.readonly${NC}"
     echo -e "  5. Click ${YELLOW}'Authorize'${NC}."
     echo -e "${RED}===================================================================================================${NC}\n"
     
@@ -119,6 +133,8 @@ execute_mass_revocation_prompt() {
 
 # Helper function for Chromebook fleet inventory seeding
 configure_inventory_seeding() {
+    local GATEWAY_URL="$1"
+    
     echo -e "\n${YELLOW}--- Chromebook Fleet Inventory Seeding Configuration ---${NC}"
     echo "Would you like to configure automated Chromebook Fleet Inventory Seeding to anchor enterprise devices in Cloud Identity?"
     read -p "Configure Seeding? (y/n): " DO_SEED
@@ -132,6 +148,21 @@ configure_inventory_seeding() {
         echo "  4) Event-Driven Real-Time Webhook (Pub/Sub Push) + Weekly Safety Net"
         echo ""
         read -p "Enter option [1-4]: " SEED_OPTION
+        
+        # For options that require a public gateway URL, ensure we have one
+        if [[ "$SEED_OPTION" =~ ^[234]$ ]]; then
+            if [ -z "$GATEWAY_URL" ] || [[ "$GATEWAY_URL" == *"localhost"* ]] || [[ "$GATEWAY_URL" == *"127.0.0.1"* ]]; then
+                echo -e "${YELLOW}Warning: GCP Cloud Scheduler and Pub/Sub Push require a publicly accessible HTTPS URL.${NC}"
+                read -p "Enter your public Gateway URL (e.g., https://yourgateway.com): " CUSTOM_URL
+                GATEWAY_URL="$CUSTOM_URL"
+            fi
+            if [ -z "$GATEWAY_URL" ]; then
+                echo -e "${RED}Error: Public Gateway URL is required for this option. Skipping seeding configuration.${NC}"
+                return
+            fi
+            # Remove trailing slash if present
+            GATEWAY_URL="${GATEWAY_URL%/}"
+        fi
         
         case $SEED_OPTION in
           1)
@@ -160,7 +191,7 @@ configure_inventory_seeding() {
             
             gcloud scheduler jobs create http seed-chromebook-inventory-daily \
                 --schedule="0 2 * * *" \
-                --uri="https://device-trust-gateway-HASH-uc.a.run.app/api/cron/cleanup" \
+                --uri="${GATEWAY_URL}/api/cron/cleanup" \
                 --http-method=POST \
                 --headers="X-Cloudscheduler=true" \
                 --location="$GCP_REGION" \
@@ -179,7 +210,7 @@ configure_inventory_seeding() {
             
             gcloud scheduler jobs create http seed-chromebook-inventory-weekly \
                 --schedule="0 3 * * 0" \
-                --uri="https://device-trust-gateway-HASH-uc.a.run.app/api/cron/cleanup" \
+                --uri="${GATEWAY_URL}/api/cron/cleanup" \
                 --http-method=POST \
                 --headers="X-Cloudscheduler=true" \
                 --location="$GCP_REGION" \
@@ -201,7 +232,7 @@ configure_inventory_seeding() {
             gcloud pubsub topics create "$TOPIC_NAME" --project="$GCP_PROJECT" --quiet 2>/dev/null || echo "Topic already exists."
             
             SUB_NAME="chrome-enrollment-webhook-sub"
-            WEBHOOK_URI="https://device-trust-gateway-HASH-uc.a.run.app/api/webhook/chrome-enrollment"
+            WEBHOOK_URI="${GATEWAY_URL}/api/webhook/chrome-enrollment"
             
             echo "Creating Pub/Sub Push Subscription targeting '$WEBHOOK_URI'..."
             gcloud pubsub subscriptions create "$SUB_NAME" \
@@ -213,7 +244,7 @@ configure_inventory_seeding() {
             echo "Configuring Weekly Cloud Scheduler safety net..."
             gcloud scheduler jobs create http seed-chromebook-inventory-weekly \
                 --schedule="0 3 * * 0" \
-                --uri="https://device-trust-gateway-HASH-uc.a.run.app/api/cron/cleanup" \
+                --uri="${GATEWAY_URL}/api/cron/cleanup" \
                 --http-method=POST \
                 --headers="X-Cloudscheduler=true" \
                 --location="$GCP_REGION" \
@@ -340,14 +371,26 @@ case $OPTION in
     
     echo -e "\n${BLUE}[6/7] Phase 2: Interactive Google OAuth 2.0 Client ID Origin Authorization...${NC}"
     echo -e "\n${YELLOW}===================================================================================================${NC}"
-    echo -e "${YELLOW}🔑 REQUIRED OAUTH 2.0 CLIENT ID SETUP:${NC}"
+    echo -e "${YELLOW}🔑 REQUIRED OAUTH 2.0 CLIENT ID & CONSENT SCREEN SETUP:${NC}"
     echo -e "Now that your live Cloud Run URL is established, authorize Google Sign-In for your portal frontend:"
-    echo -e "  1. Open Google Cloud Console: https://console.cloud.google.com/apis/credentials?project=${GCP_PROJECT}"
-    echo -e "  2. Click ${YELLOW}'Create Credentials' > 'OAuth client ID'${NC}."
-    echo -e "  3. Select Application Type: ${YELLOW}'Web application'${NC}."
-    echo -e "  4. Under ${YELLOW}'Authorized JavaScript origins'${NC}, copy and paste this exact live URL:"
-    echo -e "     ${GREEN}${SERVICE_URL}${NC}"
-    echo -e "  5. Click ${YELLOW}'Create'${NC} and copy the resulting Client ID string."
+    echo ""
+    echo -e "  ${BLUE}PART A: OAuth Consent Screen (If using a Custom Domain)${NC}"
+    echo -e "  If you plan to use a custom domain (e.g., ${YELLOW}gateway.yourdomain.com${NC}) instead of the default run.app URL:"
+    echo -e "    1. Navigate to: https://console.cloud.google.com/apis/credentials/consent?project=${GCP_PROJECT}"
+    echo -e "    2. Ensure the User Type is configured (Internal is recommended for Workspace tenants)."
+    echo -e "    3. Under ${YELLOW}'Authorized domains'${NC}, add your top-level domain (e.g., ${GREEN}yourdomain.com${NC})."
+    echo -e "    4. Save the configurations."
+    echo ""
+    echo -e "  ${BLUE}PART B: Create OAuth Client ID Credentials${NC}"
+    echo -e "    1. Open Google Cloud Credentials: https://console.cloud.google.com/apis/credentials?project=${GCP_PROJECT}"
+    echo -e "    2. Click ${YELLOW}'Create Credentials' > 'OAuth client ID'${NC}."
+    echo -e "    3. Select Application Type: ${YELLOW}'Web application'${NC}."
+    echo -e "    4. In ${YELLOW}'Authorized JavaScript origins'${NC}, add your live service URL:"
+    echo -e "       ${GREEN}${SERVICE_URL}${NC}"
+    echo -e "    5. In ${YELLOW}'Authorized redirect URIs'${NC}, add your live service URL (required for some redirect flows):"
+    echo -e "       ${GREEN}${SERVICE_URL}${NC}"
+    echo -e "       ${GREEN}${SERVICE_URL}/${NC}"
+    echo -e "    6. Click ${YELLOW}'Create'${NC} and copy the resulting Client ID string."
     echo -e "${YELLOW}===================================================================================================${NC}\n"
     read -p "Enter your authorized Google OAuth 2.0 Client ID: " GOOGLE_CLIENT_ID
     
@@ -370,7 +413,7 @@ case $OPTION in
     echo -e "${GREEN}=========================================================${NC}"
     
     execute_mass_revocation_prompt
-    configure_inventory_seeding
+    configure_inventory_seeding "$SERVICE_URL"
     print_final_summary "$SERVICE_URL"
     ;;
     
@@ -404,7 +447,7 @@ EOF
     echo -e "${GREEN}=========================================================${NC}"
     
     execute_mass_revocation_prompt
-    configure_inventory_seeding
+    configure_inventory_seeding "http://localhost:8080"
     print_final_summary "http://localhost:8080"
     ;;
     

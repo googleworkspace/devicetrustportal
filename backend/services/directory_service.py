@@ -1,3 +1,17 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import os
 from typing import List, Dict, Any, Optional
 import google.auth
@@ -10,6 +24,7 @@ class DirectoryService:
         self.scopes = [
             "https://www.googleapis.com/auth/admin.directory.user.readonly",
             "https://www.googleapis.com/auth/admin.directory.group.readonly",
+            "https://www.googleapis.com/auth/admin.directory.group.member.readonly",
             "https://www.googleapis.com/auth/admin.directory.rolemanagement.readonly"
         ]
         key_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
@@ -37,7 +52,7 @@ class DirectoryService:
 
         if not self.service:
             print(f"INFO [directory_service.py]: Simulated admin check for '{target_email}'")
-            return target_email in ["admin@example.com", "claycodes@gwfe.org"]
+            return target_email in ["admin@example.com"]
 
         try:
             request = self.service.users().get(userKey=target_email, projection="full")
@@ -51,9 +66,44 @@ class DirectoryService:
             return False
 
     def get_user_chaining_policy(self, user_email: str, allowed_groups: List[str], allowed_ous: List[str]) -> bool:
-        """Legacy chaining policy verification wrapper."""
+        """Verifies if user is allowed to chain trust based on groups and OUs."""
+        target_email = user_email.lower().strip()
+        
+        if not allowed_groups and not allowed_ous:
+            return False
+
         if not self.service:
-            return user_email in allowed_groups or "/Staff" in allowed_ous
-        return True
+            # Simulation mode
+            return target_email in [g.lower().strip() for g in allowed_groups] or "/Staff" in allowed_ous
+
+        try:
+            # 1. Check Org Unit (OU)
+            request = self.service.users().get(userKey=target_email, projection="basic")
+            user_res = request.execute()
+            user_ou = user_res.get("orgUnitPath", "")
+            
+            if user_ou and any(user_ou.lower().strip() == ou.lower().strip() for ou in allowed_ous):
+                print(f"SUCCESS [directory_service.py]: User '{target_email}' authorized via OU '{user_ou}'.")
+                return True
+
+            # 2. Check Groups
+            for group in allowed_groups:
+                try:
+                    member_check = self.service.members().hasMember(
+                        groupKey=group.strip(),
+                        memberKey=target_email
+                    ).execute()
+                    
+                    if member_check.get("isMember", False):
+                        print(f"SUCCESS [directory_service.py]: User '{target_email}' authorized via Group '{group}'.")
+                        return True
+                except HttpError as e:
+                    print(f"Warning: Failed to check membership in group '{group}': {e}")
+                    continue
+
+            return False
+        except HttpError as e:
+            print(f"Directory API error checking chaining policy for {target_email}: {e}")
+            return False
 
 directory_service = DirectoryService()

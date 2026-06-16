@@ -1,3 +1,17 @@
+# Copyright 2026 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import pytest
 from unittest.mock import MagicMock, patch
 from backend.services.config_service import config_service, TenantConfig
@@ -21,18 +35,50 @@ def test_directory_admin_verification(mock_dir):
     assert directory_service.verify_user_is_admin("admin@example.com") == True
 
 @patch("backend.services.directory_service.DirectoryService")
-def test_directory_hierarchical_chaining_policy(mock_dir):
+def test_directory_hierarchical_chaining_policy_group_match(mock_dir):
     mock_service = MagicMock()
-    # Mock group member exists
-    mock_service.members().get().execute.return_value = {"status": "ACTIVE"}
+    # Mock OU check to not match
+    mock_service.users().get().execute.return_value = {"orgUnitPath": "/Other"}
+    # Mock Group check to match
+    mock_service.members().hasMember().execute.return_value = {"isMember": True}
     directory_service.service = mock_service
 
     allowed_groups = ["trust-chaining-allowed@example.com"]
     allowed_ous = ["/Staff", "/Faculty"]
 
     assert directory_service.get_user_chaining_policy(
-        "trust-chaining-allowed@example.com", allowed_groups, allowed_ous
+        "user@example.com", allowed_groups, allowed_ous
     ) == True
+
+@patch("backend.services.directory_service.DirectoryService")
+def test_directory_hierarchical_chaining_policy_ou_match(mock_dir):
+    mock_service = MagicMock()
+    # Mock OU check to match
+    mock_service.users().get().execute.return_value = {"orgUnitPath": "/Staff"}
+    directory_service.service = mock_service
+
+    allowed_groups = ["trust-chaining-allowed@example.com"]
+    allowed_ous = ["/Staff", "/Faculty"]
+
+    assert directory_service.get_user_chaining_policy(
+        "user@example.com", allowed_groups, allowed_ous
+    ) == True
+
+@patch("backend.services.directory_service.DirectoryService")
+def test_directory_hierarchical_chaining_policy_no_match(mock_dir):
+    mock_service = MagicMock()
+    # Mock OU check to not match
+    mock_service.users().get().execute.return_value = {"orgUnitPath": "/Other"}
+    # Mock Group check to not match
+    mock_service.members().hasMember().execute.return_value = {"isMember": False}
+    directory_service.service = mock_service
+
+    allowed_groups = ["trust-chaining-allowed@example.com"]
+    allowed_ous = ["/Staff", "/Faculty"]
+
+    assert directory_service.get_user_chaining_policy(
+        "user@example.com", allowed_groups, allowed_ous
+    ) == False
 
 @patch("backend.services.cloud_identity.CloudIdentityService")
 def test_cloud_identity_approve(mock_ci):
