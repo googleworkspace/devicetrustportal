@@ -367,7 +367,7 @@ case $OPTION in
     echo -e "\n${BLUE}[5/7] Phase 1: Executing baseline container build to establish live Cloud Run URL...${NC}"
     IMAGE_TAG="gcr.io/$GCP_PROJECT/device-trust-gateway"
     
-    gcloud builds submit --config cloudbuild.yaml . --project="$GCP_PROJECT" --substitutions=_GOOGLE_CLIENT_ID="INITIAL_DEPLOY_PENDING" --suppress-logs
+    gcloud builds submit --config cloudbuild.yaml . --project="$GCP_PROJECT" --substitutions=_GOOGLE_CLIENT_ID="" --suppress-logs
     
     SERVICE_URL=$(gcloud run deploy device-trust-gateway \
         --image "$IMAGE_TAG" \

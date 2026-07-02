@@ -23,17 +23,40 @@ interface Props {
 }
 
 export const GoogleLoginButton: React.FC<Props> = ({ onLoginSuccess }) => {
-  const [clientId, setClientId] = useState<string>(process.env.REACT_APP_GOOGLE_CLIENT_ID || "");
+  const [clientId, setClientId] = useState<string>("");
+  const [loading, setLoading] = useState<boolean>(true);
 
   useEffect(() => {
     getPublicConfig()
       .then((data) => {
-        if (data && data.google_client_id) {
+        if (data && data.google_client_id && data.google_client_id !== "INITIAL_DEPLOY_PENDING") {
           setClientId(data.google_client_id);
+        } else {
+          const envId = process.env.REACT_APP_GOOGLE_CLIENT_ID || "";
+          if (envId && envId !== "INITIAL_DEPLOY_PENDING") {
+            setClientId(envId);
+          }
         }
       })
-      .catch((err) => console.warn("Could not load dynamic OAuth config:", err));
+      .catch((err) => {
+        console.warn("Could not load dynamic OAuth config:", err);
+        const envId = process.env.REACT_APP_GOOGLE_CLIENT_ID || "";
+        if (envId && envId !== "INITIAL_DEPLOY_PENDING") {
+          setClientId(envId);
+        }
+      })
+      .finally(() => {
+        setLoading(false);
+      });
   }, []);
+
+  if (loading) {
+    return (
+      <div style={{ padding: "12px", color: "#5f6368", fontStyle: "italic", fontSize: "14px" }}>
+        Initializing Google Sign-In SDK...
+      </div>
+    );
+  }
 
   const effectiveId = clientId || "1234567890-mockclient.apps.googleusercontent.com";
 
