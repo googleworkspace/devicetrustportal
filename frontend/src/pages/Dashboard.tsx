@@ -15,14 +15,26 @@
  */
 
 import React, { useState, useEffect, useCallback } from "react";
-import { getMyDevices, approveDevice, revokeDevice, revokeDeviceBulk, checkIsAdmin, DeviceUserItem } from "../services/api";
+import { getMyDevices, approveDevice, revokeDevice, revokeDeviceBulk, checkIsAdmin, getPublicConfig, DeviceUserItem } from "../services/api";
 import { GoogleLoginButton } from "../components/GoogleLoginButton";
+import { getTranslator } from "../i18n/translations";
 
 export const Dashboard: React.FC = () => {
   const [userEmail, setUserEmail] = useState(() => localStorage.getItem("userEmail") || "");
   const [message, setMessage] = useState("");
   const [authToken, setAuthToken] = useState(() => localStorage.getItem("googleIdToken") || "");
-  
+  const [locale, setLocale] = useState(() => localStorage.getItem("userLocale") || "en");
+  const t = getTranslator(locale);
+
+  useEffect(() => {
+    getPublicConfig().then((data) => {
+      if (data?.default_locale && !localStorage.getItem("userLocale")) {
+        const browserLang = navigator.language?.slice(0, 2);
+        setLocale(["en", "es", "fr", "ja"].includes(browserLang) ? browserLang : data.default_locale);
+      }
+    }).catch(() => {});
+  }, []);
+
   const [devices, setDevices] = useState<DeviceUserItem[]>([]);
   const [loadingDevices, setLoadingDevices] = useState(false);
   const [deviceError, setDeviceError] = useState("");
@@ -150,23 +162,42 @@ export const Dashboard: React.FC = () => {
   return (
     <div style={{ padding: "20px", fontFamily: "sans-serif", maxWidth: "950px", margin: "0 auto", position: "relative" }}>
       <header style={{ borderBottom: "1px solid #ccc", paddingBottom: "15px", marginBottom: "20px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "15px" }}>
-        <h1 style={{ margin: 0 }}>Device Trust Gateway</h1>
+        <div>
+          <h1 style={{ margin: 0 }}>{t.portalTitle}</h1>
+          <div style={{ fontSize: "13px", color: "#5f6368", marginTop: "4px" }}>{t.subtitle}</div>
+        </div>
         
-        {isAdmin && (
-          <a
-            href="#/admin"
-            style={{ padding: "10px 18px", backgroundColor: "#ea4335", color: "white", textDecoration: "none", borderRadius: "5px", fontWeight: "bold", fontSize: "14px", display: "inline-block" }}
+        <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+          <select
+            value={locale}
+            onChange={(e) => {
+              setLocale(e.target.value);
+              localStorage.setItem("userLocale", e.target.value);
+            }}
+            style={{ padding: "8px 12px", borderRadius: "4px", border: "1px solid #ccc", fontSize: "14px", backgroundColor: "#fff", cursor: "pointer" }}
           >
-            ⚙️ Admin Configurations
-          </a>
-        )}
+            <option value="en">🌐 English (en)</option>
+            <option value="es">🌐 Español (es)</option>
+            <option value="fr">🌐 Français (fr)</option>
+            <option value="ja">🌐 日本語 (ja)</option>
+          </select>
+
+          {isAdmin && (
+            <a
+              href="#/admin"
+              style={{ padding: "10px 18px", backgroundColor: "#ea4335", color: "white", textDecoration: "none", borderRadius: "5px", fontWeight: "bold", fontSize: "14px", display: "inline-block" }}
+            >
+              ⚙️ {t.adminConfigTab}
+            </a>
+          )}
+        </div>
       </header>
 
       {/* Google Sign-In Container */}
       <div style={{ backgroundColor: "#f8f9fa", padding: "20px", borderRadius: "8px", marginBottom: "25px", border: "1px solid #e9ecef" }}>
-        <h3 style={{ marginTop: 0, marginBottom: "10px", fontSize: "18px", color: "#202124" }}>Google Authentication</h3>
+        <h3 style={{ marginTop: 0, marginBottom: "10px", fontSize: "18px", color: "#202124" }}>Google Workspace Authentication</h3>
         <p style={{ fontSize: "14px", color: "#5f6368", marginBottom: "15px" }}>
-          Sign in with your Google Workspace account to authorize live device approvals and manage configurations.
+          {t.signInPrompt}
         </p>
         
         {!userEmail ? (
@@ -174,7 +205,7 @@ export const Dashboard: React.FC = () => {
         ) : (
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", backgroundColor: "#e6f4ea", padding: "12px 18px", borderRadius: "6px", border: "1px solid #ceead6", flexWrap: "wrap", gap: "10px" }}>
             <div>
-              <span style={{ fontSize: "12px", color: "#137333", fontWeight: "bold", display: "block", textTransform: "uppercase" }}>Active Session</span>
+              <span style={{ fontSize: "12px", color: "#137333", fontWeight: "bold", display: "block", textTransform: "uppercase" }}>{t.signedInAs}</span>
               <span style={{ fontSize: "16px", color: "#202124", fontWeight: "bold" }}>{userEmail}</span>
             </div>
             <button
@@ -189,7 +220,7 @@ export const Dashboard: React.FC = () => {
               }}
               style={{ padding: "8px 14px", backgroundColor: "#137333", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", fontWeight: "bold", fontSize: "12px" }}
             >
-              Sign Out
+              {t.signOut}
             </button>
           </div>
         )}
@@ -216,7 +247,7 @@ export const Dashboard: React.FC = () => {
         
         {!userEmail ? (
           <div style={{ padding: "15px", backgroundColor: "#fff3cd", color: "#856404", border: "1px solid #ffeeba", borderRadius: "4px" }}>
-            Please sign in with Google above to view your registered enterprise hardware assets.
+            {t.signInPrompt}
           </div>
         ) : loadingDevices ? (
           <div style={{ padding: "40px 20px", backgroundColor: "#f8f9fa", border: "1px solid #e9ecef", borderRadius: "8px", textAlign: "center", marginTop: "10px" }}>
@@ -224,7 +255,7 @@ export const Dashboard: React.FC = () => {
               {`@keyframes spin { to { transform: rotate(360deg); } }`}
             </style>
             <div style={{ display: "inline-block", width: "40px", height: "40px", border: "4px solid rgba(26, 115, 232, 0.2)", borderRadius: "50%", borderTopColor: "#1a73e8", animation: "spin 1s ease-in-out infinite", marginBottom: "15px" }} />
-            <div style={{ fontWeight: "bold", color: "#202124", fontSize: "16px", marginBottom: "6px" }}>Retrieving your registered devices...</div>
+            <div style={{ fontWeight: "bold", color: "#202124", fontSize: "16px", marginBottom: "6px" }}>{t.loadingDevices}</div>
             <div style={{ color: "#5f6368", fontSize: "13px" }}>Securely verifying your hardware inventory for <b>{userEmail}</b>.</div>
           </div>
         ) : deviceError ? (
@@ -233,9 +264,8 @@ export const Dashboard: React.FC = () => {
           </div>
         ) : devices.length === 0 ? (
           <div style={{ padding: "25px", backgroundColor: "#f8f9fa", color: "#6c757d", border: "1px solid #dee2e6", borderRadius: "6px", textAlign: "center" }}>
-            <div style={{ fontSize: "16px", fontWeight: "bold", marginBottom: "8px", color: "#3c4043" }}>No Registered Hardware Assets Discovered</div>
-            <div style={{ fontSize: "14px" }}>We successfully checked your inventory but found no approved devices matching <b>{userEmail}</b>.</div>
-            <div style={{ fontSize: "13px", marginTop: "10px", color: "#1a73e8" }}>Ensure your Endpoint Verification extension is actively reporting your device!</div>
+            <div style={{ fontSize: "16px", fontWeight: "bold", marginBottom: "8px", color: "#3c4043" }}>{t.noApprovedDevices}</div>
+            <div style={{ fontSize: "14px" }}>We checked your inventory but found no approved devices matching <b>{userEmail}</b>.</div>
           </div>
         ) : (
           <table style={{ width: "100%", borderCollapse: "collapse", marginTop: "10px", backgroundColor: "#fff", boxShadow: "0 1px 3px rgba(0,0,0,0.1)", borderRadius: "6px", overflow: "hidden" }}>
@@ -251,12 +281,12 @@ export const Dashboard: React.FC = () => {
                     }
                   />
                 </th>
-                <th style={{ padding: "12px 15px", textAlign: "left", color: "#202124", fontSize: "14px" }}>Hardware Model</th>
+                <th style={{ padding: "12px 15px", textAlign: "left", color: "#202124", fontSize: "14px" }}>{t.deviceHeader}</th>
                 <th style={{ padding: "12px 15px", textAlign: "left", color: "#202124", fontSize: "14px" }}>Operating System</th>
                 <th style={{ padding: "12px 15px", textAlign: "left", color: "#202124", fontSize: "14px" }}>Identifier</th>
-                <th style={{ padding: "12px 15px", textAlign: "left", color: "#202124", fontSize: "14px" }}>Approval State</th>
+                <th style={{ padding: "12px 15px", textAlign: "left", color: "#202124", fontSize: "14px" }}>{t.statusHeader}</th>
                 <th style={{ padding: "12px 15px", textAlign: "left", color: "#202124", fontSize: "14px" }}>Last Sync</th>
-                <th style={{ padding: "12px 15px", textAlign: "center", color: "#202124", fontSize: "14px" }}>Action</th>
+                <th style={{ padding: "12px 15px", textAlign: "center", color: "#202124", fontSize: "14px" }}>{t.actionsHeader}</th>
               </tr>
             </thead>
             <tbody>
@@ -298,14 +328,14 @@ export const Dashboard: React.FC = () => {
                           onClick={() => initiateRevoke([d.device_user_name])}
                           style={{ padding: "6px 12px", backgroundColor: "#d93025", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", fontSize: "12px", fontWeight: "bold" }}
                         >
-                          ✕ Revoke
+                          ✕ {t.revokeAction}
                         </button>
                       ) : (
                         <button
                           onClick={() => handleApprove(d.device_user_name)}
                           style={{ padding: "6px 12px", backgroundColor: "#137333", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", fontSize: "12px", fontWeight: "bold" }}
                         >
-                          ✓ Approve
+                          ✓ {t.approveAction}
                         </button>
                       )}
                     </td>

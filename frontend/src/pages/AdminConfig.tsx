@@ -27,6 +27,7 @@ export const AdminConfig: React.FC = () => {
   const [portalAdmins, setPortalAdmins] = useState<string[]>([]);
   const [revocationAction, setRevocationAction] = useState("DELETE");
   const [googleClientId, setGoogleClientId] = useState("");
+  const [defaultLocale, setDefaultLocale] = useState("en");
   const [newAdminEmail, setNewAdminEmail] = useState("");
 
   const userEmail = localStorage.getItem("userEmail") || "";
@@ -46,6 +47,7 @@ export const AdminConfig: React.FC = () => {
         setPortalAdmins(data.portal_admins || []);
         setRevocationAction(data.revocation_action || "DELETE");
         setGoogleClientId(data.google_client_id || "");
+        setDefaultLocale(data.default_locale || "en");
         setLoading(false);
       } catch (e: any) {
         setError(`Access Denied: ${e.message || "Workspace Administrator privileges required."}`);
@@ -80,6 +82,7 @@ export const AdminConfig: React.FC = () => {
       portal_admins: portalAdmins,
       revocation_action: revocationAction,
       google_client_id: googleClientId.trim(),
+      default_locale: defaultLocale,
     };
 
     try {
@@ -158,6 +161,23 @@ export const AdminConfig: React.FC = () => {
           />
           <span style={{ fontSize: "12px", color: "#777", display: "block", marginTop: "4px" }}>
             Dynamically powers Google Sign-In across the frontend portal without requiring container recompilation or builds.
+          </span>
+        </div>
+
+        <div style={{ marginBottom: "25px" }}>
+          <label style={{ display: "block", fontWeight: "bold", marginBottom: "6px" }}>Default Tenant UI Language (Localization Fallback):</label>
+          <select
+            value={defaultLocale}
+            onChange={(e) => setDefaultLocale(e.target.value)}
+            style={{ padding: "10px", width: "100%", boxSizing: "border-box", fontSize: "15px", borderRadius: "4px", border: "1px solid #ccc", backgroundColor: "#fff" }}
+          >
+            <option value="en">English (en) — Default International</option>
+            <option value="es">Español (es) — Spanish Regionalization</option>
+            <option value="fr">Français (fr) — French Regionalization</option>
+            <option value="ja">日本語 (ja) — Japanese Regionalization</option>
+          </select>
+          <span style={{ fontSize: "12px", color: "#777", display: "block", marginTop: "4px" }}>
+            Sets the default fallback language for end users accessing the portal when their browser language is unsupported or unset.
           </span>
         </div>
 

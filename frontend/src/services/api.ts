@@ -24,6 +24,7 @@ export interface TenantConfig {
   portal_admins: string[];
   revocation_action?: string;
   google_client_id?: string;
+  default_locale?: string;
 }
 
 export interface GenerateResponse {
@@ -85,7 +86,7 @@ export const checkIsAdmin = async (): Promise<boolean> => {
   }
 };
 
-export const getPublicConfig = async (): Promise<{ google_client_id: string }> => {
+export const getPublicConfig = async (): Promise<{ google_client_id: string; default_locale?: string }> => {
   const response = await fetch(`${API_BASE_URL}/api/config/public`);
   return response.json();
 };

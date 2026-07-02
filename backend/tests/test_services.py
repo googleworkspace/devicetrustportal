@@ -25,6 +25,7 @@ def test_tenant_config_defaults():
     assert config.trusted_ip_ranges == []
     assert config.revocation_action == "DELETE"
     assert config.google_client_id == ""
+    assert config.default_locale == "en"
     assert config.chaining_allowed_groups == []
     assert config.chaining_allowed_ous == []
 

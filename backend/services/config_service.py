@@ -26,6 +26,7 @@ class TenantConfig(BaseModel):
     portal_admins: List[str] = Field(default=[], description="List of user emails authorized to access Admin Config UI")
     revocation_action: str = Field(default="DELETE", description="Action when revoking a device: 'DELETE' or 'BLOCK'")
     google_client_id: str = Field(default="", description="Google OAuth 2.0 Client ID for frontend Google Sign-In")
+    default_locale: str = Field(default="en", description="Default UI language code fallback for end users (e.g., 'en', 'es', 'fr', 'ja')")
     trusted_ip_ranges: List[str] = Field(default=[], description="Deprecated")
     chaining_allowed_groups: List[str] = Field(default=[], description="Deprecated")
     chaining_allowed_ous: List[str] = Field(default=[], description="Deprecated")
@@ -73,6 +74,7 @@ class ConfigService:
             portal_admins=local_admins,
             revocation_action=os.getenv("TENANT_REVOCATION_ACTION", "DELETE"),
             google_client_id=os.getenv("TENANT_GOOGLE_CLIENT_ID", "") or env_client_id,
+            default_locale=os.getenv("TENANT_DEFAULT_LOCALE", "en"),
             trusted_ip_ranges=json.loads(os.getenv("TENANT_TRUSTED_IPS", '[]')),
             chaining_allowed_groups=json.loads(os.getenv("TENANT_CHAINING_GROUPS", '[]')),
             chaining_allowed_ous=json.loads(os.getenv("TENANT_CHAINING_OUS", '[]'))
@@ -94,7 +96,7 @@ class ConfigService:
 
         dotenv_path = os.path.join(os.getcwd(), ".env")
         if not os.path.exists(dotenv_path):
-            with open(dotenv_path, "w") as f:
+            with open(dotenv_path, "w", encoding="utf-8") as f:
                 f.write("# Device Trust Gateway Configuration\n")
 
         set_key(dotenv_path, "TENANT_CUSTOMER_ID", config.customer_id)
@@ -102,6 +104,7 @@ class ConfigService:
         set_key(dotenv_path, "TENANT_PORTAL_ADMINS", json.dumps(config.portal_admins))
         set_key(dotenv_path, "TENANT_REVOCATION_ACTION", config.revocation_action)
         set_key(dotenv_path, "TENANT_GOOGLE_CLIENT_ID", config.google_client_id)
+        set_key(dotenv_path, "TENANT_DEFAULT_LOCALE", config.default_locale)
         set_key(dotenv_path, "TENANT_TRUSTED_IPS", json.dumps(config.trusted_ip_ranges))
         set_key(dotenv_path, "TENANT_CHAINING_GROUPS", json.dumps(config.chaining_allowed_groups))
         set_key(dotenv_path, "TENANT_CHAINING_OUS", json.dumps(config.chaining_allowed_ous))

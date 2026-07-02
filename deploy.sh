@@ -13,6 +13,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Enforce UTF-8 character encoding stability across international deployment environments
+export LANG=C.UTF-8
+export LC_ALL=C.UTF-8
+
 # Device Trust Gateway - Automated Deployment & Setup Script
 
 set -e
@@ -341,7 +345,7 @@ case $OPTION in
         if [ -n "$WORKSPACE_ADMIN_EMAIL" ]; then
             INIT_ADMINS="[\"$WORKSPACE_ADMIN_EMAIL\"]"
         fi
-        DEFAULT_CONFIG="{\"customer_id\": \"customers/my_customer\", \"inactivity_threshold_days\": 90, \"revocation_action\": \"DELETE\", \"portal_admins\": ${INIT_ADMINS}, \"trusted_ip_ranges\": [], \"chaining_allowed_groups\": [], \"chaining_allowed_ous\": []}"
+        DEFAULT_CONFIG="{\"customer_id\": \"customers/my_customer\", \"inactivity_threshold_days\": 90, \"revocation_action\": \"DELETE\", \"default_locale\": \"en\", \"portal_admins\": ${INIT_ADMINS}, \"trusted_ip_ranges\": [], \"chaining_allowed_groups\": [], \"chaining_allowed_ous\": []}"
         echo -n "$DEFAULT_CONFIG" | gcloud secrets versions add "$SECRET_NAME" --data-file=- --project="$GCP_PROJECT" --quiet
     else
         echo -e "${GREEN}Secret '$SECRET_NAME' already exists in project.${NC}"
@@ -435,6 +439,7 @@ USE_SECRET_MANAGER=false
 TENANT_CUSTOMER_ID=customers/my_customer
 TENANT_INACTIVITY_THRESHOLD=90
 TENANT_REVOCATION_ACTION=DELETE
+TENANT_DEFAULT_LOCALE=en
 TENANT_TRUSTED_IPS=[]
 TENANT_CHAINING_GROUPS=[]
 TENANT_CHAINING_OUS=[]
