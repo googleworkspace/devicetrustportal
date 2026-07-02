@@ -99,7 +99,13 @@ setup_domain_wide_delegation() {
     read -p "Press [ENTER] when Domain-Wide Delegation has been successfully authorized in the Workspace Admin console..."
     
     echo ""
-    read -p "Enter the email address of a Workspace Super Administrator to impersonate (e.g., admin@yourdomain.com): " ADMIN_EMAIL
+    CURRENT_EMAIL=$(gcloud config get-value account 2>/dev/null || true)
+    if [ -n "$CURRENT_EMAIL" ] && [[ "$CURRENT_EMAIL" != *"gserviceaccount.com"* ]]; then
+        read -p "Enter the email address of a Workspace Super Administrator to impersonate [${CURRENT_EMAIL}]: " ADMIN_EMAIL
+        ADMIN_EMAIL=${ADMIN_EMAIL:-$CURRENT_EMAIL}
+    else
+        read -p "Enter the email address of a Workspace Super Administrator to impersonate (e.g., admin@yourdomain.com): " ADMIN_EMAIL
+    fi
     
     export GOOGLE_APPLICATION_CREDENTIALS="$(pwd)/$KEY_FILE"
     export WORKSPACE_ADMIN_EMAIL="$ADMIN_EMAIL"
