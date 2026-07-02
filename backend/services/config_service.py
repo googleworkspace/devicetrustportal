@@ -44,20 +44,28 @@ class ConfigService:
                 self.use_secret_manager = False
 
     def get_tenant_config(self) -> TenantConfig:
+        env_admin = os.getenv("WORKSPACE_ADMIN_EMAIL", "").lower().strip()
         if self.use_secret_manager and self.project_id:
             try:
                 name = f"projects/{self.project_id}/secrets/{self.secret_name}/versions/latest"
                 response = self.sm_client.access_secret_version(request={"name": name})
                 payload = response.payload.data.decode("UTF-8")
                 data = json.loads(payload)
-                return TenantConfig(**data)
+                config = TenantConfig(**data)
+                if env_admin and env_admin not in [a.lower().strip() for a in config.portal_admins]:
+                    config.portal_admins.append(env_admin)
+                return config
             except Exception as e:
                 print(f"Error reading from Secret Manager: {e}. Falling back to local config.")
+
+        local_admins = json.loads(os.getenv("TENANT_PORTAL_ADMINS", '[]'))
+        if env_admin and env_admin not in [a.lower().strip() for a in local_admins]:
+            local_admins.append(env_admin)
 
         return TenantConfig(
             customer_id=os.getenv("TENANT_CUSTOMER_ID", "customers/my_customer"),
             inactivity_threshold_days=int(os.getenv("TENANT_INACTIVITY_THRESHOLD", 90)),
-            portal_admins=json.loads(os.getenv("TENANT_PORTAL_ADMINS", '[]')),
+            portal_admins=local_admins,
             revocation_action=os.getenv("TENANT_REVOCATION_ACTION", "DELETE"),
             trusted_ip_ranges=json.loads(os.getenv("TENANT_TRUSTED_IPS", '[]')),
             chaining_allowed_groups=json.loads(os.getenv("TENANT_CHAINING_GROUPS", '[]')),

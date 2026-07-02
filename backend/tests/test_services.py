@@ -28,12 +28,15 @@ def test_tenant_config_defaults():
     assert config.chaining_allowed_ous == []
 
 @patch("backend.services.directory_service.DirectoryService")
-def test_directory_admin_verification(mock_dir):
+def test_directory_admin_verification(mock_dir, monkeypatch):
     mock_service = MagicMock()
     mock_service.users().get().execute.return_value = {"isAdmin": True}
     directory_service.service = mock_service
 
     assert directory_service.verify_user_is_admin("admin@example.com") == True
+
+    monkeypatch.setenv("WORKSPACE_ADMIN_EMAIL", "deployer@example.com")
+    assert directory_service.verify_user_is_admin("deployer@example.com") == True
 
 @patch("backend.services.directory_service.DirectoryService")
 def test_directory_hierarchical_chaining_policy_group_match(mock_dir):

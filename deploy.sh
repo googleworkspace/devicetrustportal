@@ -337,7 +337,11 @@ case $OPTION in
         echo "Creating new Secret Manager secret: $SECRET_NAME"
         gcloud secrets create "$SECRET_NAME" --replication-policy="automatic" --project="$GCP_PROJECT" --quiet
         
-        DEFAULT_CONFIG='{"customer_id": "customers/my_customer", "inactivity_threshold_days": 90, "revocation_action": "DELETE", "trusted_ip_ranges": [], "chaining_allowed_groups": [], "chaining_allowed_ous": []}'
+        INIT_ADMINS='[]'
+        if [ -n "$WORKSPACE_ADMIN_EMAIL" ]; then
+            INIT_ADMINS="[\"$WORKSPACE_ADMIN_EMAIL\"]"
+        fi
+        DEFAULT_CONFIG="{\"customer_id\": \"customers/my_customer\", \"inactivity_threshold_days\": 90, \"revocation_action\": \"DELETE\", \"portal_admins\": ${INIT_ADMINS}, \"trusted_ip_ranges\": [], \"chaining_allowed_groups\": [], \"chaining_allowed_ous\": []}"
         echo -n "$DEFAULT_CONFIG" | gcloud secrets versions add "$SECRET_NAME" --data-file=- --project="$GCP_PROJECT" --quiet
     else
         echo -e "${GREEN}Secret '$SECRET_NAME' already exists in project.${NC}"

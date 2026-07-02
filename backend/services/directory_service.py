@@ -50,6 +50,11 @@ class DirectoryService:
             print(f"SUCCESS [directory_service.py]: User '{target_email}' verified via portal_admins delegation list.")
             return True
 
+        env_admin = os.getenv("WORKSPACE_ADMIN_EMAIL", "").lower().strip()
+        if env_admin and target_email == env_admin:
+            print(f"SUCCESS [directory_service.py]: User '{target_email}' verified via WORKSPACE_ADMIN_EMAIL environment variable.")
+            return True
+
         if not self.service:
             print(f"INFO [directory_service.py]: Simulated admin check for '{target_email}'")
             return target_email in ["admin@example.com"]
