@@ -120,86 +120,91 @@ export const AdminConfig: React.FC = () => {
         Dynamically manage tenant-wide security thresholds and delegated administrative access.
       </p>
 
-      {message && <div style={{ padding: "12px", backgroundColor: "#d4edda", color: "#155724", borderRadius: "4px", marginBottom: "20px" }}>{message}</div>}
-      {error && <div style={{ padding: "12px", backgroundColor: "#f8d7da", color: "#721c24", borderRadius: "4px", marginBottom: "20px" }}>{error}</div>}
+      {message && <div role="status" aria-live="polite" style={{ padding: "14px 16px", backgroundColor: "#e6f4ea", color: "#137333", border: "1px solid #ceead6", borderRadius: "6px", marginBottom: "20px", fontWeight: 500 }}>{message}</div>}
+      {error && <div role="alert" style={{ padding: "14px 16px", backgroundColor: "#fce8e6", color: "#c5221f", border: "1px solid #fad2cf", borderRadius: "6px", marginBottom: "20px", fontWeight: 500 }}>{error}</div>}
 
-      <form onSubmit={handleSubmit} style={{ border: "1px solid #ddd", padding: "25px", borderRadius: "8px", backgroundColor: "#fdfdfd" }}>
-        <div style={{ marginBottom: "25px" }}>
-          <label style={{ display: "block", fontWeight: "bold", marginBottom: "6px" }}>Inactivity Threshold (Days):</label>
+      <form onSubmit={handleSubmit} style={{ border: "1px solid #dadce0", padding: "28px", borderRadius: "8px", backgroundColor: "#ffffff", boxShadow: "0 1px 2px 0 rgba(60,64,67,0.3)" }}>
+        <div style={{ marginBottom: "24px" }}>
+          <label htmlFor="inactivity-threshold" style={{ display: "block", fontWeight: 500, marginBottom: "6px", color: "#202124" }}>Inactivity Threshold (Days):</label>
           <input
+            id="inactivity-threshold"
             type="number"
             value={threshold}
             onChange={(e) => setThreshold(Number(e.target.value))}
-            style={{ padding: "10px", width: "100%", boxSizing: "border-box", fontSize: "16px" }}
+            style={{ padding: "10px 12px", width: "100%", boxSizing: "border-box", fontSize: "15px", borderRadius: "4px", border: "1px solid #dadce0" }}
           />
-          <span style={{ fontSize: "12px", color: "#777" }}>Automated cron revocation triggers for BYOD devices idle longer than this window.</span>
+          <span style={{ fontSize: "12px", color: "#5f6368", display: "block", marginTop: "4px" }}>Automated cron revocation triggers for BYOD devices idle longer than this window.</span>
         </div>
 
-        <div style={{ marginBottom: "25px" }}>
-          <label style={{ display: "block", fontWeight: "bold", marginBottom: "6px" }}>Revocation Action Behavior:</label>
+        <div style={{ marginBottom: "24px" }}>
+          <label htmlFor="revocation-action" style={{ display: "block", fontWeight: 500, marginBottom: "6px", color: "#202124" }}>Revocation Action Behavior:</label>
           <select
+            id="revocation-action"
             value={revocationAction}
             onChange={(e) => setRevocationAction(e.target.value)}
-            style={{ padding: "10px", width: "100%", boxSizing: "border-box", fontSize: "15px", borderRadius: "4px", border: "1px solid #ccc", backgroundColor: "#fff" }}
+            style={{ padding: "10px 12px", width: "100%", boxSizing: "border-box", fontSize: "15px", borderRadius: "4px", border: "1px solid #dadce0", backgroundColor: "#fff", cursor: "pointer" }}
           >
             <option value="DELETE">DELETE API (Purge DeviceUser binding) — Recommended when 'Require Admin Approval' is ON</option>
             <option value="BLOCK">BLOCK API (Mark state as BLOCKED) — Explicitly blocks access without purging binding</option>
           </select>
-          <span style={{ fontSize: "12px", color: "#777", display: "block", marginTop: "4px" }}>
+          <span style={{ fontSize: "12px", color: "#5f6368", display: "block", marginTop: "4px" }}>
             Configures the backend action performed when unapproving devices or running inactivity cleanup. Using DELETE alongside Workspace Admin Console's 'Require Admin Approval' ensures new connections enter PENDING_APPROVAL.
           </span>
         </div>
 
-        <div style={{ marginBottom: "25px" }}>
-          <label style={{ display: "block", fontWeight: "bold", marginBottom: "6px" }}>Google OAuth 2.0 Client ID:</label>
+        <div style={{ marginBottom: "24px" }}>
+          <label htmlFor="oauth-client-id" style={{ display: "block", fontWeight: 500, marginBottom: "6px", color: "#202124" }}>Google OAuth 2.0 Client ID:</label>
           <input
+            id="oauth-client-id"
             type="text"
             placeholder="1234567890-abcdef.apps.googleusercontent.com"
             value={googleClientId}
             onChange={(e) => setGoogleClientId(e.target.value)}
-            style={{ padding: "10px", width: "100%", boxSizing: "border-box", fontSize: "14px", fontFamily: "monospace" }}
+            style={{ padding: "10px 12px", width: "100%", boxSizing: "border-box", fontSize: "14px", fontFamily: "monospace", borderRadius: "4px", border: "1px solid #dadce0" }}
           />
-          <span style={{ fontSize: "12px", color: "#777", display: "block", marginTop: "4px" }}>
+          <span style={{ fontSize: "12px", color: "#5f6368", display: "block", marginTop: "4px" }}>
             Dynamically powers Google Sign-In across the frontend portal without requiring container recompilation or builds.
           </span>
         </div>
 
-        <div style={{ marginBottom: "25px" }}>
-          <label style={{ display: "block", fontWeight: "bold", marginBottom: "6px" }}>Default Tenant UI Language (Localization Fallback):</label>
+        <div style={{ marginBottom: "24px" }}>
+          <label htmlFor="default-locale-select" style={{ display: "block", fontWeight: 500, marginBottom: "6px", color: "#202124" }}>Default Tenant UI Language (Localization Fallback):</label>
           <select
+            id="default-locale-select"
             value={defaultLocale}
             onChange={(e) => setDefaultLocale(e.target.value)}
-            style={{ padding: "10px", width: "100%", boxSizing: "border-box", fontSize: "15px", borderRadius: "4px", border: "1px solid #ccc", backgroundColor: "#fff" }}
+            style={{ padding: "10px 12px", width: "100%", boxSizing: "border-box", fontSize: "15px", borderRadius: "4px", border: "1px solid #dadce0", backgroundColor: "#fff", cursor: "pointer" }}
           >
             <option value="en">English (en) — Default International</option>
             <option value="es">Español (es) — Spanish Regionalization</option>
             <option value="fr">Français (fr) — French Regionalization</option>
             <option value="ja">日本語 (ja) — Japanese Regionalization</option>
           </select>
-          <span style={{ fontSize: "12px", color: "#777", display: "block", marginTop: "4px" }}>
+          <span style={{ fontSize: "12px", color: "#5f6368", display: "block", marginTop: "4px" }}>
             Sets the default fallback language for end users accessing the portal when their browser language is unsupported or unset.
           </span>
         </div>
 
         {/* Delegated Portal Administrators List Manager */}
         <div style={{ marginBottom: "30px" }}>
-          <label style={{ display: "block", fontWeight: "bold", marginBottom: "6px" }}>Authorized Portal Administrators (Emails):</label>
-          <p style={{ fontSize: "12px", color: "#777", marginBottom: "10px", marginTop: 0 }}>
+          <label htmlFor="new-admin-email" style={{ display: "block", fontWeight: 500, marginBottom: "6px", color: "#202124" }}>Authorized Portal Administrators (Emails):</label>
+          <p style={{ fontSize: "13px", color: "#5f6368", marginBottom: "12px", marginTop: 0 }}>
             Delegate access to manage these configurations to specific IT helpdesk or security staff without granting full Workspace Super Admin privileges.
           </p>
           
-          <div style={{ display: "flex", gap: "10px", marginBottom: "15px" }}>
+          <div style={{ display: "flex", gap: "10px", marginBottom: "16px" }}>
             <input
+              id="new-admin-email"
               type="email"
               placeholder="helpdesk@example.com"
               value={newAdminEmail}
               onChange={(e) => setNewAdminEmail(e.target.value)}
-              style={{ padding: "10px", flexGrow: 1, fontSize: "14px", boxSizing: "border-box" }}
+              style={{ padding: "10px 12px", flexGrow: 1, fontSize: "14px", boxSizing: "border-box", borderRadius: "4px", border: "1px solid #dadce0" }}
             />
             <button
               type="button"
               onClick={handleAddAdmin}
-              style={{ padding: "10px 20px", backgroundColor: "#34a853", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", fontWeight: "bold", fontSize: "14px" }}
+              style={{ padding: "10px 20px", backgroundColor: "#137333", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", fontWeight: 500, fontSize: "14px" }}
             >
               Add Admin
             </button>
@@ -216,8 +221,9 @@ export const AdminConfig: React.FC = () => {
                   <span style={{ fontFamily: "monospace", fontSize: "14px", color: "#202124" }}>{email}</span>
                   <button
                     type="button"
+                    aria-label={`Remove administrator ${email}`}
                     onClick={() => handleRemoveAdmin(email)}
-                    style={{ padding: "4px 8px", backgroundColor: "#fce8e6", color: "#d93025", border: "1px solid #fad2cf", borderRadius: "4px", cursor: "pointer", fontSize: "12px", fontWeight: "bold" }}
+                    style={{ padding: "6px 10px", backgroundColor: "#fce8e6", color: "#c5221f", border: "1px solid #fad2cf", borderRadius: "4px", cursor: "pointer", fontSize: "12px", fontWeight: 500 }}
                   >
                     ✕ Remove
                   </button>
@@ -229,7 +235,7 @@ export const AdminConfig: React.FC = () => {
 
         <button
           type="submit"
-          style={{ padding: "14px 25px", backgroundColor: "#1a73e8", color: "white", border: "none", borderRadius: "5px", fontWeight: "bold", cursor: "pointer", fontSize: "16px", width: "100%" }}
+          style={{ padding: "14px 24px", backgroundColor: "#1a73e8", color: "white", border: "none", borderRadius: "6px", fontWeight: 500, cursor: "pointer", fontSize: "15px", width: "100%", boxShadow: "0 1px 2px 0 rgba(60,64,67,0.3)" }}
         >
           Save Configurations
         </button>

@@ -227,18 +227,18 @@ export const Dashboard: React.FC = () => {
       </div>
 
       {message && (
-        <div style={{ padding: "12px", backgroundColor: "#e6f7ff", border: "1px solid #91d5ff", marginBottom: "20px", borderRadius: "4px" }}>
+        <div role="status" aria-live="polite" style={{ padding: "12px 16px", backgroundColor: "#e8f0fe", border: "1px solid #d2e3fc", color: "#1a73e8", marginBottom: "20px", borderRadius: "6px", fontWeight: 500 }}>
           {message}
         </div>
       )}
 
       <section style={{ marginBottom: "30px" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "15px", flexWrap: "wrap", gap: "10px" }}>
-          <h2 style={{ margin: 0 }}>My Hardware Assets</h2>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px", flexWrap: "wrap", gap: "12px" }}>
+          <h2 style={{ margin: 0, fontSize: "20px", fontWeight: 500, color: "#202124" }}>My Hardware Assets</h2>
           {selectedDevices.length > 0 && (
             <button
               onClick={() => initiateRevoke(selectedDevices)}
-              style={{ padding: "8px 16px", backgroundColor: "#d93025", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", fontSize: "14px", fontWeight: "bold" }}
+              style={{ padding: "8px 16px", backgroundColor: "#d93025", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", fontSize: "14px", fontWeight: 500 }}
             >
               ✕ Bulk Revoke Selected ({selectedDevices.length})
             </button>
@@ -246,34 +246,35 @@ export const Dashboard: React.FC = () => {
         </div>
         
         {!userEmail ? (
-          <div style={{ padding: "15px", backgroundColor: "#fff3cd", color: "#856404", border: "1px solid #ffeeba", borderRadius: "4px" }}>
+          <div role="status" style={{ padding: "16px", backgroundColor: "#fef7e0", color: "#b06000", border: "1px solid #feefc3", borderRadius: "6px", fontWeight: 500 }}>
             {t.signInPrompt}
           </div>
         ) : loadingDevices ? (
-          <div style={{ padding: "40px 20px", backgroundColor: "#f8f9fa", border: "1px solid #e9ecef", borderRadius: "8px", textAlign: "center", marginTop: "10px" }}>
+          <div role="status" aria-live="polite" style={{ padding: "40px 20px", backgroundColor: "#ffffff", border: "1px solid #dadce0", borderRadius: "8px", textAlign: "center", marginTop: "10px", boxShadow: "0 1px 2px 0 rgba(60,64,67,0.3)" }}>
             <style>
               {`@keyframes spin { to { transform: rotate(360deg); } }`}
             </style>
             <div style={{ display: "inline-block", width: "40px", height: "40px", border: "4px solid rgba(26, 115, 232, 0.2)", borderRadius: "50%", borderTopColor: "#1a73e8", animation: "spin 1s ease-in-out infinite", marginBottom: "15px" }} />
-            <div style={{ fontWeight: "bold", color: "#202124", fontSize: "16px", marginBottom: "6px" }}>{t.loadingDevices}</div>
+            <div style={{ fontWeight: 500, color: "#202124", fontSize: "16px", marginBottom: "6px" }}>{t.loadingDevices}</div>
             <div style={{ color: "#5f6368", fontSize: "13px" }}>Securely verifying your hardware inventory for <b>{userEmail}</b>.</div>
           </div>
         ) : deviceError ? (
-          <div style={{ padding: "15px", backgroundColor: "#f8d7da", color: "#721c24", border: "1px solid #f5c6cb", borderRadius: "4px" }}>
+          <div role="alert" style={{ padding: "16px", backgroundColor: "#fce8e6", color: "#c5221f", border: "1px solid #f8d7da", borderRadius: "6px", fontWeight: 500 }}>
             {deviceError}
           </div>
         ) : devices.length === 0 ? (
-          <div style={{ padding: "25px", backgroundColor: "#f8f9fa", color: "#6c757d", border: "1px solid #dee2e6", borderRadius: "6px", textAlign: "center" }}>
-            <div style={{ fontSize: "16px", fontWeight: "bold", marginBottom: "8px", color: "#3c4043" }}>{t.noApprovedDevices}</div>
+          <div role="status" style={{ padding: "30px", backgroundColor: "#ffffff", color: "#5f6368", border: "1px solid #dadce0", borderRadius: "8px", textAlign: "center", boxShadow: "0 1px 2px 0 rgba(60,64,67,0.3)" }}>
+            <div style={{ fontSize: "16px", fontWeight: 500, marginBottom: "8px", color: "#202124" }}>{t.noApprovedDevices}</div>
             <div style={{ fontSize: "14px" }}>We checked your inventory but found no approved devices matching <b>{userEmail}</b>.</div>
           </div>
         ) : (
-          <table style={{ width: "100%", borderCollapse: "collapse", marginTop: "10px", backgroundColor: "#fff", boxShadow: "0 1px 3px rgba(0,0,0,0.1)", borderRadius: "6px", overflow: "hidden" }}>
+          <table aria-label="Registered Hardware Inventory Table" style={{ width: "100%", borderCollapse: "collapse", marginTop: "10px", backgroundColor: "#ffffff", boxShadow: "0 1px 2px 0 rgba(60,64,67,0.3), 0 1px 3px 1px rgba(60,64,67,0.15)", borderRadius: "8px", overflow: "hidden" }}>
             <thead>
-              <tr style={{ backgroundColor: "#f1f3f4", borderBottom: "2px solid #dadce0" }}>
-                <th style={{ padding: "12px 15px", width: "30px", textAlign: "center" }}>
+              <tr style={{ backgroundColor: "#f8f9fa", borderBottom: "2px solid #dadce0" }}>
+                <th scope="col" style={{ padding: "14px 16px", width: "40px", textAlign: "center" }}>
                   <input
                     type="checkbox"
+                    aria-label="Select all eligible devices"
                     onChange={handleSelectAll}
                     checked={
                       devices.filter((d) => d.owner_type !== "COMPANY" && d.approval_state === "APPROVED").length > 0 &&
@@ -281,12 +282,12 @@ export const Dashboard: React.FC = () => {
                     }
                   />
                 </th>
-                <th style={{ padding: "12px 15px", textAlign: "left", color: "#202124", fontSize: "14px" }}>{t.deviceHeader}</th>
-                <th style={{ padding: "12px 15px", textAlign: "left", color: "#202124", fontSize: "14px" }}>Operating System</th>
-                <th style={{ padding: "12px 15px", textAlign: "left", color: "#202124", fontSize: "14px" }}>Identifier</th>
-                <th style={{ padding: "12px 15px", textAlign: "left", color: "#202124", fontSize: "14px" }}>{t.statusHeader}</th>
-                <th style={{ padding: "12px 15px", textAlign: "left", color: "#202124", fontSize: "14px" }}>Last Sync</th>
-                <th style={{ padding: "12px 15px", textAlign: "center", color: "#202124", fontSize: "14px" }}>{t.actionsHeader}</th>
+                <th scope="col" style={{ padding: "14px 16px", textAlign: "left", color: "#202124", fontSize: "14px", fontWeight: 500 }}>{t.deviceHeader}</th>
+                <th scope="col" style={{ padding: "14px 16px", textAlign: "left", color: "#202124", fontSize: "14px", fontWeight: 500 }}>Operating System</th>
+                <th scope="col" style={{ padding: "14px 16px", textAlign: "left", color: "#202124", fontSize: "14px", fontWeight: 500 }}>Identifier</th>
+                <th scope="col" style={{ padding: "14px 16px", textAlign: "left", color: "#202124", fontSize: "14px", fontWeight: 500 }}>{t.statusHeader}</th>
+                <th scope="col" style={{ padding: "14px 16px", textAlign: "left", color: "#202124", fontSize: "14px", fontWeight: 500 }}>Last Sync</th>
+                <th scope="col" style={{ padding: "14px 16px", textAlign: "center", color: "#202124", fontSize: "14px", fontWeight: 500 }}>{t.actionsHeader}</th>
               </tr>
             </thead>
             <tbody>
@@ -294,17 +295,18 @@ export const Dashboard: React.FC = () => {
                 const isRevokable = d.owner_type !== "COMPANY" && d.approval_state === "APPROVED";
                 return (
                   <tr key={i} style={{ borderBottom: "1px solid #eee", backgroundColor: selectedDevices.includes(d.device_user_name) ? "#fce8e6" : "inherit" }}>
-                    <td style={{ padding: "14px 15px", textAlign: "center" }}>
+                    <td style={{ padding: "14px 16px", textAlign: "center" }}>
                       <input
                         type="checkbox"
+                        aria-label={`Select device ${d.model}`}
                         checked={selectedDevices.includes(d.device_user_name)}
                         onChange={() => handleSelectSingle(d.device_user_name)}
                         disabled={!isRevokable}
                       />
                     </td>
-                    <td style={{ padding: "14px 15px", color: "#202124" }}>
-                      <div style={{ fontWeight: "bold", fontSize: "14px" }}>{d.model}</div>
-                      <div style={{ fontSize: "11px", color: d.owner_type === "COMPANY" ? "#1a73e8" : "#5f6368", fontWeight: d.owner_type === "COMPANY" ? "bold" : "normal", marginTop: "2px", textTransform: "uppercase" }}>
+                    <td style={{ padding: "14px 16px", color: "#202124" }}>
+                      <div style={{ fontWeight: 500, fontSize: "14px" }}>{d.model}</div>
+                      <div style={{ fontSize: "11px", color: d.owner_type === "COMPANY" ? "#1a73e8" : "#5f6368", fontWeight: d.owner_type === "COMPANY" ? 500 : 400, marginTop: "2px", textTransform: "uppercase" }}>
                         {d.owner_type === "COMPANY" ? "🏢 Company Owned Asset" : "👤 Personal BYOD"}
                       </div>
                     </td>
