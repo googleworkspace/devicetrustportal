@@ -24,7 +24,7 @@ class TenantConfig(BaseModel):
     customer_id: str = Field(default="customers/my_customer", description="Google Workspace Customer Resource Name")
     inactivity_threshold_days: int = Field(default=90, description="Days of inactivity before automated revocation")
     portal_admins: List[str] = Field(default=[], description="List of user emails authorized to access Admin Config UI")
-    revocation_action: str = Field(default="DELETE", description="Action when revoking a device: 'DELETE' or 'BLOCK'")
+    revocation_action: str = Field(default="BLOCK", description="Action when revoking a device: 'DELETE' or 'BLOCK'")
     google_client_id: str = Field(default="", description="Google OAuth 2.0 Client ID for frontend Google Sign-In")
     default_locale: str = Field(default="en", description="Default UI language code fallback for end users (e.g., 'en', 'es', 'fr', 'ja')")
     trusted_ip_ranges: List[str] = Field(default=[], description="Deprecated")
@@ -72,7 +72,7 @@ class ConfigService:
             customer_id=os.getenv("TENANT_CUSTOMER_ID", "customers/my_customer"),
             inactivity_threshold_days=int(os.getenv("TENANT_INACTIVITY_THRESHOLD", 90)),
             portal_admins=local_admins,
-            revocation_action=os.getenv("TENANT_REVOCATION_ACTION", "DELETE"),
+            revocation_action=os.getenv("TENANT_REVOCATION_ACTION", "BLOCK"),
             google_client_id=os.getenv("TENANT_GOOGLE_CLIENT_ID", "") or env_client_id,
             default_locale=os.getenv("TENANT_DEFAULT_LOCALE", "en"),
             trusted_ip_ranges=json.loads(os.getenv("TENANT_TRUSTED_IPS", '[]')),

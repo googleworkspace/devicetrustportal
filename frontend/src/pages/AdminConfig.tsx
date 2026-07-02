@@ -25,7 +25,6 @@ export const AdminConfig: React.FC = () => {
 
   const [threshold, setThreshold] = useState(90);
   const [portalAdmins, setPortalAdmins] = useState<string[]>([]);
-  const [revocationAction, setRevocationAction] = useState("DELETE");
   const [googleClientId, setGoogleClientId] = useState("");
   const [defaultLocale, setDefaultLocale] = useState("en");
   const [newAdminEmail, setNewAdminEmail] = useState("");
@@ -45,7 +44,6 @@ export const AdminConfig: React.FC = () => {
         setConfig(data);
         setThreshold(data.inactivity_threshold_days);
         setPortalAdmins(data.portal_admins || []);
-        setRevocationAction(data.revocation_action || "DELETE");
         setGoogleClientId(data.google_client_id || "");
         setDefaultLocale(data.default_locale || "en");
         setLoading(false);
@@ -54,7 +52,6 @@ export const AdminConfig: React.FC = () => {
         setLoading(false);
       }
     };
-
     load();
   }, [userEmail]);
 
@@ -80,7 +77,7 @@ export const AdminConfig: React.FC = () => {
       customer_id: "customers/my_customer",
       inactivity_threshold_days: Number(threshold),
       portal_admins: portalAdmins,
-      revocation_action: revocationAction,
+      revocation_action: "BLOCK",
       google_client_id: googleClientId.trim(),
       default_locale: defaultLocale,
     };
@@ -134,22 +131,6 @@ export const AdminConfig: React.FC = () => {
             style={{ padding: "10px 12px", width: "100%", boxSizing: "border-box", fontSize: "15px", borderRadius: "4px", border: "1px solid #dadce0" }}
           />
           <span style={{ fontSize: "12px", color: "#5f6368", display: "block", marginTop: "4px" }}>Automated cron revocation triggers for BYOD devices idle longer than this window.</span>
-        </div>
-
-        <div style={{ marginBottom: "24px" }}>
-          <label htmlFor="revocation-action" style={{ display: "block", fontWeight: 500, marginBottom: "6px", color: "#202124" }}>Revocation Action Behavior:</label>
-          <select
-            id="revocation-action"
-            value={revocationAction}
-            onChange={(e) => setRevocationAction(e.target.value)}
-            style={{ padding: "10px 12px", width: "100%", boxSizing: "border-box", fontSize: "15px", borderRadius: "4px", border: "1px solid #dadce0", backgroundColor: "#fff", cursor: "pointer" }}
-          >
-            <option value="DELETE">DELETE API (Purge DeviceUser binding) — Recommended when 'Require Admin Approval' is ON</option>
-            <option value="BLOCK">BLOCK API (Mark state as BLOCKED) — Explicitly blocks access without purging binding</option>
-          </select>
-          <span style={{ fontSize: "12px", color: "#5f6368", display: "block", marginTop: "4px" }}>
-            Configures the backend action performed when unapproving devices or running inactivity cleanup. Using DELETE alongside Workspace Admin Console's 'Require Admin Approval' ensures new connections enter PENDING_APPROVAL.
-          </span>
         </div>
 
         <div style={{ marginBottom: "24px" }}>

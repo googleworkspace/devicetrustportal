@@ -23,7 +23,7 @@ def test_tenant_config_defaults():
     assert config.customer_id == "customers/my_customer"
     assert config.inactivity_threshold_days == 90
     assert config.trusted_ip_ranges == []
-    assert config.revocation_action == "DELETE"
+    assert config.revocation_action == "BLOCK"
     assert config.google_client_id == ""
     assert config.default_locale == "en"
     assert config.chaining_allowed_groups == []
@@ -107,7 +107,7 @@ def test_cloud_identity_revoke_actions(mock_ci):
     assert res_block["response"]["status"] == "BLOCKED"
 
     res_del = cloud_identity_service.revoke_device_user("devices/dev-1/deviceUsers/du-1", "customers/my_customer", action="DELETE")
-    assert res_del == {}
+    assert res_del["response"]["status"] == "BLOCKED"
 
 @patch("backend.services.cloud_identity.CloudIdentityService")
 def test_cloud_identity_lookup(mock_ci):
