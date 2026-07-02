@@ -42,10 +42,11 @@ def run_inactivity_cleanup(
 
         for du in inactive_device_users:
             device_user_name = du["name"]
-            print(f"INFO [cron.py]: Revoking stale device user '{device_user_name}' (Exceeded {config.inactivity_threshold_days} days inactivity)...")
+            print(f"INFO [cron.py]: Revoking stale device user '{device_user_name}' (Exceeded {config.inactivity_threshold_days} days inactivity) via {config.revocation_action}...")
             cloud_identity_service.revoke_device_user(
                 device_user_name=device_user_name,
-                customer_id=config.customer_id
+                customer_id=config.customer_id,
+                action=config.revocation_action
             )
             revoked_count += 1
 

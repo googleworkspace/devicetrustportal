@@ -25,6 +25,7 @@ export const AdminConfig: React.FC = () => {
 
   const [threshold, setThreshold] = useState(90);
   const [portalAdmins, setPortalAdmins] = useState<string[]>([]);
+  const [revocationAction, setRevocationAction] = useState("DELETE");
   const [newAdminEmail, setNewAdminEmail] = useState("");
 
   const userEmail = localStorage.getItem("userEmail") || "";
@@ -42,6 +43,7 @@ export const AdminConfig: React.FC = () => {
         setConfig(data);
         setThreshold(data.inactivity_threshold_days);
         setPortalAdmins(data.portal_admins || []);
+        setRevocationAction(data.revocation_action || "DELETE");
         setLoading(false);
       } catch (e: any) {
         setError(`Access Denied: ${e.message || "Workspace Administrator privileges required."}`);
@@ -74,6 +76,7 @@ export const AdminConfig: React.FC = () => {
       customer_id: "customers/my_customer",
       inactivity_threshold_days: Number(threshold),
       portal_admins: portalAdmins,
+      revocation_action: revocationAction,
     };
 
     try {
@@ -124,6 +127,21 @@ export const AdminConfig: React.FC = () => {
             style={{ padding: "10px", width: "100%", boxSizing: "border-box", fontSize: "16px" }}
           />
           <span style={{ fontSize: "12px", color: "#777" }}>Automated cron revocation triggers for BYOD devices idle longer than this window.</span>
+        </div>
+
+        <div style={{ marginBottom: "25px" }}>
+          <label style={{ display: "block", fontWeight: "bold", marginBottom: "6px" }}>Revocation Action Behavior:</label>
+          <select
+            value={revocationAction}
+            onChange={(e) => setRevocationAction(e.target.value)}
+            style={{ padding: "10px", width: "100%", boxSizing: "border-box", fontSize: "15px", borderRadius: "4px", border: "1px solid #ccc", backgroundColor: "#fff" }}
+          >
+            <option value="DELETE">DELETE API (Purge DeviceUser binding) — Recommended when 'Require Admin Approval' is ON</option>
+            <option value="BLOCK">BLOCK API (Mark state as BLOCKED) — Explicitly blocks access without purging binding</option>
+          </select>
+          <span style={{ fontSize: "12px", color: "#777", display: "block", marginTop: "4px" }}>
+            Configures the backend action performed when unapproving devices or running inactivity cleanup. Using DELETE alongside Workspace Admin Console's 'Require Admin Approval' ensures new connections enter PENDING_APPROVAL.
+          </span>
         </div>
 
         {/* Delegated Portal Administrators List Manager */}

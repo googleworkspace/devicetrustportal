@@ -24,6 +24,7 @@ class TenantConfig(BaseModel):
     customer_id: str = Field(default="customers/my_customer", description="Google Workspace Customer Resource Name")
     inactivity_threshold_days: int = Field(default=90, description="Days of inactivity before automated revocation")
     portal_admins: List[str] = Field(default=[], description="List of user emails authorized to access Admin Config UI")
+    revocation_action: str = Field(default="DELETE", description="Action when revoking a device: 'DELETE' or 'BLOCK'")
     trusted_ip_ranges: List[str] = Field(default=[], description="Deprecated")
     chaining_allowed_groups: List[str] = Field(default=[], description="Deprecated")
     chaining_allowed_ous: List[str] = Field(default=[], description="Deprecated")
@@ -57,6 +58,7 @@ class ConfigService:
             customer_id=os.getenv("TENANT_CUSTOMER_ID", "customers/my_customer"),
             inactivity_threshold_days=int(os.getenv("TENANT_INACTIVITY_THRESHOLD", 90)),
             portal_admins=json.loads(os.getenv("TENANT_PORTAL_ADMINS", '[]')),
+            revocation_action=os.getenv("TENANT_REVOCATION_ACTION", "DELETE"),
             trusted_ip_ranges=json.loads(os.getenv("TENANT_TRUSTED_IPS", '[]')),
             chaining_allowed_groups=json.loads(os.getenv("TENANT_CHAINING_GROUPS", '[]')),
             chaining_allowed_ous=json.loads(os.getenv("TENANT_CHAINING_OUS", '[]'))
@@ -84,6 +86,7 @@ class ConfigService:
         set_key(dotenv_path, "TENANT_CUSTOMER_ID", config.customer_id)
         set_key(dotenv_path, "TENANT_INACTIVITY_THRESHOLD", str(config.inactivity_threshold_days))
         set_key(dotenv_path, "TENANT_PORTAL_ADMINS", json.dumps(config.portal_admins))
+        set_key(dotenv_path, "TENANT_REVOCATION_ACTION", config.revocation_action)
         set_key(dotenv_path, "TENANT_TRUSTED_IPS", json.dumps(config.trusted_ip_ranges))
         set_key(dotenv_path, "TENANT_CHAINING_GROUPS", json.dumps(config.chaining_allowed_groups))
         set_key(dotenv_path, "TENANT_CHAINING_OUS", json.dumps(config.chaining_allowed_ous))

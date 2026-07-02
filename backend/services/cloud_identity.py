@@ -116,22 +116,26 @@ class CloudIdentityService:
         except HttpError as e:
             raise Exception(f"Cloud Identity API error during inactive list: {e}")
 
-    def revoke_device_user(self, device_user_name: str, customer_id: str) -> Dict[str, Any]:
+    def revoke_device_user(self, device_user_name: str, customer_id: str, action: str = "DELETE") -> Dict[str, Any]:
         if not self.service:
             raise Exception("Cloud Identity service not initialized with valid credentials")
 
         try:
-            request = self.service.devices().deviceUsers().delete(name=device_user_name, customer=customer_id)
+            if action.upper() == "BLOCK":
+                body = {"customer": customer_id}
+                request = self.service.devices().deviceUsers().block(name=device_user_name, body=body)
+            else:
+                request = self.service.devices().deviceUsers().delete(name=device_user_name, customer=customer_id)
             response = request.execute()
             return response
         except HttpError as e:
             raise Exception(f"Cloud Identity API error during revocation: {e}")
 
-    def revoke_device_users_bulk(self, device_user_names: List[str], customer_id: str) -> Dict[str, Any]:
+    def revoke_device_users_bulk(self, device_user_names: List[str], customer_id: str, action: str = "DELETE") -> Dict[str, Any]:
         if not self.service:
             raise Exception("Cloud Identity service not initialized with valid credentials")
 
-        print(f"INFO [cloud_identity.py]: Executing BatchHttpRequest for {len(device_user_names)} device revocation(s)...")
+        print(f"INFO [cloud_identity.py]: Executing BatchHttpRequest for {len(device_user_names)} device revocation(s) using action '{action}'...")
         batch = self.service.new_batch_http_request()
         
         errors = []
@@ -139,9 +143,12 @@ class CloudIdentityService:
             if exception:
                 errors.append(exception)
 
+        body = {"customer": customer_id}
         for du_name in device_user_names:
-            # Add individual delete call to multipart batch
-            req = self.service.devices().deviceUsers().delete(name=du_name, customer=customer_id)
+            if action.upper() == "BLOCK":
+                req = self.service.devices().deviceUsers().block(name=du_name, body=body)
+            else:
+                req = self.service.devices().deviceUsers().delete(name=du_name, customer=customer_id)
             batch.add(req, callback=callback)
 
         batch.execute()

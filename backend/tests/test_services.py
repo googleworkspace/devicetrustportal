@@ -23,6 +23,7 @@ def test_tenant_config_defaults():
     assert config.customer_id == "customers/my_customer"
     assert config.inactivity_threshold_days == 90
     assert config.trusted_ip_ranges == []
+    assert config.revocation_action == "DELETE"
     assert config.chaining_allowed_groups == []
     assert config.chaining_allowed_ous == []
 
@@ -89,6 +90,19 @@ def test_cloud_identity_approve(mock_ci):
     res = cloud_identity_service.approve_device_user("devices/dev-1/deviceUsers/du-1", "customers/my_customer")
     assert res["done"] == True
     assert res["response"]["status"] == "APPROVED"
+
+@patch("backend.services.cloud_identity.CloudIdentityService")
+def test_cloud_identity_revoke_actions(mock_ci):
+    mock_service = MagicMock()
+    mock_service.devices().deviceUsers().block().execute.return_value = {"done": True, "response": {"status": "BLOCKED"}}
+    mock_service.devices().deviceUsers().delete().execute.return_value = {}
+    cloud_identity_service.service = mock_service
+
+    res_block = cloud_identity_service.revoke_device_user("devices/dev-1/deviceUsers/du-1", "customers/my_customer", action="BLOCK")
+    assert res_block["response"]["status"] == "BLOCKED"
+
+    res_del = cloud_identity_service.revoke_device_user("devices/dev-1/deviceUsers/du-1", "customers/my_customer", action="DELETE")
+    assert res_del == {}
 
 @patch("backend.services.cloud_identity.CloudIdentityService")
 def test_cloud_identity_lookup(mock_ci):

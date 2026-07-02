@@ -22,6 +22,7 @@ export interface TenantConfig {
   customer_id: string;
   inactivity_threshold_days: number;
   portal_admins: string[];
+  revocation_action?: string;
 }
 
 export interface GenerateResponse {

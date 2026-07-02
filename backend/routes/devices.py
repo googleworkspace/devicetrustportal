@@ -166,9 +166,10 @@ def revoke_device(request: DeviceActionRequest, user_email: str = Depends(get_cu
 
         cloud_identity_service.revoke_device_user(
             device_user_name=request.device_user_name,
-            customer_id=config.customer_id
+            customer_id=config.customer_id,
+            action=config.revocation_action
         )
-        return {"status": "SUCCESS", "message": "Device revoked successfully."}
+        return {"status": "SUCCESS", "message": f"Device revoked successfully via {config.revocation_action}."}
     except HTTPException:
         raise
     except Exception as e:
@@ -196,7 +197,8 @@ def revoke_device_bulk(request: BulkRevokeRequest, user_email: str = Depends(get
 
         res = cloud_identity_service.revoke_device_users_bulk(
             device_user_names=bulk_targets,
-            customer_id=config.customer_id
+            customer_id=config.customer_id,
+            action=config.revocation_action
         )
         return res
     except Exception as e:

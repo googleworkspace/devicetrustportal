@@ -337,7 +337,7 @@ case $OPTION in
         echo "Creating new Secret Manager secret: $SECRET_NAME"
         gcloud secrets create "$SECRET_NAME" --replication-policy="automatic" --project="$GCP_PROJECT" --quiet
         
-        DEFAULT_CONFIG='{"customer_id": "customers/my_customer", "inactivity_threshold_days": 90, "trusted_ip_ranges": [], "chaining_allowed_groups": [], "chaining_allowed_ous": []}'
+        DEFAULT_CONFIG='{"customer_id": "customers/my_customer", "inactivity_threshold_days": 90, "revocation_action": "DELETE", "trusted_ip_ranges": [], "chaining_allowed_groups": [], "chaining_allowed_ous": []}'
         echo -n "$DEFAULT_CONFIG" | gcloud secrets versions add "$SECRET_NAME" --data-file=- --project="$GCP_PROJECT" --quiet
     else
         echo -e "${GREEN}Secret '$SECRET_NAME' already exists in project.${NC}"
@@ -431,6 +431,7 @@ case $OPTION in
 USE_SECRET_MANAGER=false
 TENANT_CUSTOMER_ID=customers/my_customer
 TENANT_INACTIVITY_THRESHOLD=90
+TENANT_REVOCATION_ACTION=DELETE
 TENANT_TRUSTED_IPS=[]
 TENANT_CHAINING_GROUPS=[]
 TENANT_CHAINING_OUS=[]
