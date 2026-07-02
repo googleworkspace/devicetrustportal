@@ -14,18 +14,31 @@
  * limitations under the License.
  */
 
-import React from "react";
+import React, { useState, useEffect } from "react";
 import { GoogleOAuthProvider, GoogleLogin } from "@react-oauth/google";
+import { getPublicConfig } from "../services/api";
 
 interface Props {
   onLoginSuccess: (email: string, token: string) => void;
 }
 
 export const GoogleLoginButton: React.FC<Props> = ({ onLoginSuccess }) => {
-  const clientId = process.env.REACT_APP_GOOGLE_CLIENT_ID || "1234567890-mockclient.apps.googleusercontent.com";
+  const [clientId, setClientId] = useState<string>(process.env.REACT_APP_GOOGLE_CLIENT_ID || "");
+
+  useEffect(() => {
+    getPublicConfig()
+      .then((data) => {
+        if (data && data.google_client_id) {
+          setClientId(data.google_client_id);
+        }
+      })
+      .catch((err) => console.warn("Could not load dynamic OAuth config:", err));
+  }, []);
+
+  const effectiveId = clientId || "1234567890-mockclient.apps.googleusercontent.com";
 
   return (
-    <GoogleOAuthProvider clientId={clientId}>
+    <GoogleOAuthProvider key={effectiveId} clientId={effectiveId}>
       <div style={{ marginTop: "15px", marginBottom: "15px" }}>
         <GoogleLogin
           onSuccess={(credentialResponse) => {

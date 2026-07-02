@@ -182,3 +182,8 @@ def test_get_my_devices():
     data = response.json()
     assert len(data) == 1
     assert data[0]["approval_state"] == "APPROVED"
+
+def test_get_public_config():
+    response = client.get("/api/config/public")
+    assert response.status_code == 200
+    assert "google_client_id" in response.json()

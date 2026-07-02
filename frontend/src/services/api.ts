@@ -23,6 +23,7 @@ export interface TenantConfig {
   inactivity_threshold_days: number;
   portal_admins: string[];
   revocation_action?: string;
+  google_client_id?: string;
 }
 
 export interface GenerateResponse {
@@ -82,6 +83,11 @@ export const checkIsAdmin = async (): Promise<boolean> => {
   } catch (e) {
     return false;
   }
+};
+
+export const getPublicConfig = async (): Promise<{ google_client_id: string }> => {
+  const response = await fetch(`${API_BASE_URL}/api/config/public`);
+  return response.json();
 };
 
 export const getAdminConfig = async (): Promise<TenantConfig> => {

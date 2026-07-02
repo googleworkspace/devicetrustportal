@@ -17,6 +17,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from backend.routes import admin, chaining, network_auth, cron, webhook, devices
+from backend.services.config_service import config_service
 
 app = FastAPI(
     title="Device Trust Gateway API",
@@ -43,6 +44,13 @@ app.include_router(devices.router)
 @app.get("/health")
 def health_check():
     return {"status": "OK"}
+
+@app.get("/api/config/public")
+def get_public_config():
+    config = config_service.get_tenant_config()
+    return {
+        "google_client_id": getattr(config, "google_client_id", "") or "1234567890-mockclient.apps.googleusercontent.com"
+    }
 
 # Serve React static frontend build files
 if os.path.exists("frontend/build"):

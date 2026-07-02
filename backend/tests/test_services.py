@@ -24,6 +24,7 @@ def test_tenant_config_defaults():
     assert config.inactivity_threshold_days == 90
     assert config.trusted_ip_ranges == []
     assert config.revocation_action == "DELETE"
+    assert config.google_client_id == ""
     assert config.chaining_allowed_groups == []
     assert config.chaining_allowed_ous == []
 

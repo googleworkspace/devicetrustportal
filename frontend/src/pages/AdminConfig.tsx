@@ -26,6 +26,7 @@ export const AdminConfig: React.FC = () => {
   const [threshold, setThreshold] = useState(90);
   const [portalAdmins, setPortalAdmins] = useState<string[]>([]);
   const [revocationAction, setRevocationAction] = useState("DELETE");
+  const [googleClientId, setGoogleClientId] = useState("");
   const [newAdminEmail, setNewAdminEmail] = useState("");
 
   const userEmail = localStorage.getItem("userEmail") || "";
@@ -44,6 +45,7 @@ export const AdminConfig: React.FC = () => {
         setThreshold(data.inactivity_threshold_days);
         setPortalAdmins(data.portal_admins || []);
         setRevocationAction(data.revocation_action || "DELETE");
+        setGoogleClientId(data.google_client_id || "");
         setLoading(false);
       } catch (e: any) {
         setError(`Access Denied: ${e.message || "Workspace Administrator privileges required."}`);
@@ -77,6 +79,7 @@ export const AdminConfig: React.FC = () => {
       inactivity_threshold_days: Number(threshold),
       portal_admins: portalAdmins,
       revocation_action: revocationAction,
+      google_client_id: googleClientId.trim(),
     };
 
     try {
@@ -141,6 +144,20 @@ export const AdminConfig: React.FC = () => {
           </select>
           <span style={{ fontSize: "12px", color: "#777", display: "block", marginTop: "4px" }}>
             Configures the backend action performed when unapproving devices or running inactivity cleanup. Using DELETE alongside Workspace Admin Console's 'Require Admin Approval' ensures new connections enter PENDING_APPROVAL.
+          </span>
+        </div>
+
+        <div style={{ marginBottom: "25px" }}>
+          <label style={{ display: "block", fontWeight: "bold", marginBottom: "6px" }}>Google OAuth 2.0 Client ID:</label>
+          <input
+            type="text"
+            placeholder="1234567890-abcdef.apps.googleusercontent.com"
+            value={googleClientId}
+            onChange={(e) => setGoogleClientId(e.target.value)}
+            style={{ padding: "10px", width: "100%", boxSizing: "border-box", fontSize: "14px", fontFamily: "monospace" }}
+          />
+          <span style={{ fontSize: "12px", color: "#777", display: "block", marginTop: "4px" }}>
+            Dynamically powers Google Sign-In across the frontend portal without requiring container recompilation or builds.
           </span>
         </div>
 
