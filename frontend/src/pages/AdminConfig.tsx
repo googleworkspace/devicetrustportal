@@ -91,136 +91,162 @@ export const AdminConfig: React.FC = () => {
   };
 
   if (loading) {
-    return <div style={{ padding: "20px", fontFamily: "sans-serif" }}>Loading admin configurations...</div>;
+    return (
+      <div style={{ backgroundColor: "#f8f9fa", minHeight: "100vh", display: "flex", justifyContent: "center", alignItems: "center", fontFamily: "'Google Sans', Roboto, Arial, sans-serif" }}>
+        <div style={{ textAlign: "center", color: "#5f6368", fontSize: "15px", fontWeight: 500 }}>Loading Google Workspace Admin configurations...</div>
+      </div>
+    );
   }
 
   if (error && !config) {
     return (
-      <div style={{ padding: "20px", fontFamily: "sans-serif", maxWidth: "600px", margin: "0 auto" }}>
-        <a href="#/" style={{ color: "#1a73e8", textDecoration: "none", fontWeight: "bold" }}>&larr; Back to Dashboard</a>
-        <h1 style={{ color: "#d93025", marginTop: "20px" }}>Access Denied</h1>
-        <p style={{ color: "#555" }}>
-          {error}
-        </p>
-        <p style={{ fontSize: "14px", color: "#777" }}>
-          Active Session: <b>{userEmail || "None"}</b>. Only authorized Google Workspace Super Administrators or delegated Portal Admins may manage tenant configurations.
-        </p>
+      <div style={{ backgroundColor: "#f8f9fa", minHeight: "100vh", fontFamily: "'Google Sans', Roboto, Arial, sans-serif", padding: "40px 20px" }}>
+        <div style={{ maxWidth: "600px", margin: "0 auto", backgroundColor: "#ffffff", padding: "32px", borderRadius: "8px", border: "1px solid #dadce0", boxShadow: "0 1px 2px 0 rgba(60,64,67,0.3)" }}>
+          <a href="#/" style={{ color: "#1a73e8", textDecoration: "none", fontWeight: 500, fontSize: "14px", display: "inline-flex", alignItems: "center", gap: "6px" }}>
+            &larr; Return to Dashboard
+          </a>
+          <h1 style={{ color: "#d93025", marginTop: "20px", fontSize: "22px", fontWeight: 500 }}>Access Denied</h1>
+          <p style={{ color: "#202124", fontSize: "15px", lineHeight: "1.5" }}>
+            {error}
+          </p>
+          <div style={{ backgroundColor: "#f8f9fa", padding: "12px 16px", borderRadius: "6px", border: "1px solid #dadce0", fontSize: "13px", color: "#5f6368", marginTop: "20px" }}>
+            Active Session: <b style={{ color: "#202124" }}>{userEmail || "None"}</b>. Only authorized Google Workspace Super Administrators or delegated Portal Admins may manage tenant configurations.
+          </div>
+        </div>
       </div>
     );
   }
 
   return (
-    <div style={{ padding: "20px", fontFamily: "sans-serif", maxWidth: "800px", margin: "0 auto" }}>
-      <a href="#/" style={{ color: "#1a73e8", textDecoration: "none", fontWeight: "bold" }}>&larr; Back to Dashboard</a>
-      <h1 style={{ marginTop: "20px" }}>Admin Configurations</h1>
-      <p style={{ color: "#555" }}>
-        Dynamically manage tenant-wide security thresholds and delegated administrative access.
-      </p>
-
-      {message && <div role="status" aria-live="polite" style={{ padding: "14px 16px", backgroundColor: "#e6f4ea", color: "#137333", border: "1px solid #ceead6", borderRadius: "6px", marginBottom: "20px", fontWeight: 500 }}>{message}</div>}
-      {error && <div role="alert" style={{ padding: "14px 16px", backgroundColor: "#fce8e6", color: "#c5221f", border: "1px solid #fad2cf", borderRadius: "6px", marginBottom: "20px", fontWeight: 500 }}>{error}</div>}
-
-      <form onSubmit={handleSubmit} style={{ border: "1px solid #dadce0", padding: "28px", borderRadius: "8px", backgroundColor: "#ffffff", boxShadow: "0 1px 2px 0 rgba(60,64,67,0.3)" }}>
-        <div style={{ marginBottom: "24px" }}>
-          <label htmlFor="inactivity-threshold" style={{ display: "block", fontWeight: 500, marginBottom: "6px", color: "#202124" }}>Inactivity Threshold (Days):</label>
-          <input
-            id="inactivity-threshold"
-            type="number"
-            value={threshold}
-            onChange={(e) => setThreshold(Number(e.target.value))}
-            style={{ padding: "10px 12px", width: "100%", boxSizing: "border-box", fontSize: "15px", borderRadius: "4px", border: "1px solid #dadce0" }}
-          />
-          <span style={{ fontSize: "12px", color: "#5f6368", display: "block", marginTop: "4px" }}>Automated cron revocation triggers for BYOD devices idle longer than this window.</span>
+    <div style={{ backgroundColor: "#f8f9fa", minHeight: "100vh", fontFamily: "'Google Sans', Roboto, Arial, sans-serif", color: "#202124" }}>
+      {/* Google Cloud Console Top App Bar */}
+      <header style={{ backgroundColor: "#ffffff", borderBottom: "1px solid #dadce0", padding: "12px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", position: "sticky", top: 0, zIndex: 1000, boxShadow: "0 1px 2px 0 rgba(60,64,67,0.1)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+          <a href="#/" style={{ color: "#5f6368", textDecoration: "none", display: "flex", alignItems: "center" }} aria-label="Return to Dashboard">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/>
+            </svg>
+          </a>
+          <div>
+            <h1 style={{ margin: 0, fontSize: "18px", fontWeight: 500, letterSpacing: "-0.2px", color: "#202124" }}>Google Workspace Tenant Settings</h1>
+            <div style={{ fontSize: "12px", color: "#5f6368", marginTop: "2px" }}>Device Trust Gateway Administration</div>
+          </div>
         </div>
+        
+        <a href="#/" style={{ padding: "6px 14px", backgroundColor: "#ffffff", color: "#1a73e8", border: "1px solid #dadce0", textDecoration: "none", borderRadius: "4px", fontWeight: 500, fontSize: "13px" }}>
+          Back to Portal
+        </a>
+      </header>
 
-        <div style={{ marginBottom: "24px" }}>
-          <label htmlFor="oauth-client-id" style={{ display: "block", fontWeight: 500, marginBottom: "6px", color: "#202124" }}>Google OAuth 2.0 Client ID:</label>
-          <input
-            id="oauth-client-id"
-            type="text"
-            placeholder="1234567890-abcdef.apps.googleusercontent.com"
-            value={googleClientId}
-            onChange={(e) => setGoogleClientId(e.target.value)}
-            style={{ padding: "10px 12px", width: "100%", boxSizing: "border-box", fontSize: "14px", fontFamily: "monospace", borderRadius: "4px", border: "1px solid #dadce0" }}
-          />
-          <span style={{ fontSize: "12px", color: "#5f6368", display: "block", marginTop: "4px" }}>
-            Dynamically powers Google Sign-In across the frontend portal without requiring container recompilation or builds.
-          </span>
-        </div>
+      <main style={{ padding: "28px 24px", maxWidth: "850px", margin: "0 auto" }}>
+        {message && <div role="status" aria-live="polite" style={{ padding: "14px 16px", backgroundColor: "#e6f4ea", color: "#137333", border: "1px solid #ceead6", borderRadius: "6px", marginBottom: "20px", fontWeight: 500 }}>{message}</div>}
+        {error && <div role="alert" style={{ padding: "14px 16px", backgroundColor: "#fce8e6", color: "#c5221f", border: "1px solid #fad2cf", borderRadius: "6px", marginBottom: "20px", fontWeight: 500 }}>{error}</div>}
 
-        <div style={{ marginBottom: "24px" }}>
-          <label htmlFor="default-locale-select" style={{ display: "block", fontWeight: 500, marginBottom: "6px", color: "#202124" }}>Default Tenant UI Language (Localization Fallback):</label>
-          <select
-            id="default-locale-select"
-            value={defaultLocale}
-            onChange={(e) => setDefaultLocale(e.target.value)}
-            style={{ padding: "10px 12px", width: "100%", boxSizing: "border-box", fontSize: "15px", borderRadius: "4px", border: "1px solid #dadce0", backgroundColor: "#fff", cursor: "pointer" }}
-          >
-            <option value="en">English (en) — Default International</option>
-            <option value="es">Español (es) — Spanish Regionalization</option>
-            <option value="fr">Français (fr) — French Regionalization</option>
-            <option value="ja">日本語 (ja) — Japanese Regionalization</option>
-          </select>
-          <span style={{ fontSize: "12px", color: "#5f6368", display: "block", marginTop: "4px" }}>
-            Sets the default fallback language for end users accessing the portal when their browser language is unsupported or unset.
-          </span>
-        </div>
+        <form onSubmit={handleSubmit} style={{ border: "1px solid #dadce0", padding: "32px", borderRadius: "8px", backgroundColor: "#ffffff", boxShadow: "0 1px 2px 0 rgba(60,64,67,0.3)" }}>
+          <h2 style={{ margin: "0 0 8px 0", fontSize: "18px", fontWeight: 500, color: "#202124" }}>General Security Policies</h2>
+          <p style={{ fontSize: "13px", color: "#5f6368", margin: "0 0 24px 0" }}>Configure automated cleanup thresholds and client integration credentials.</p>
 
-        {/* Delegated Portal Administrators List Manager */}
-        <div style={{ marginBottom: "30px" }}>
-          <label htmlFor="new-admin-email" style={{ display: "block", fontWeight: 500, marginBottom: "6px", color: "#202124" }}>Authorized Portal Administrators (Emails):</label>
-          <p style={{ fontSize: "13px", color: "#5f6368", marginBottom: "12px", marginTop: 0 }}>
-            Delegate access to manage these configurations to specific IT helpdesk or security staff without granting full Workspace Super Admin privileges.
-          </p>
-          
-          <div style={{ display: "flex", gap: "10px", marginBottom: "16px" }}>
+          <div style={{ marginBottom: "24px" }}>
+            <label htmlFor="inactivity-threshold" style={{ display: "block", fontWeight: 500, marginBottom: "6px", color: "#202124", fontSize: "14px" }}>Inactivity Threshold (Days):</label>
             <input
-              id="new-admin-email"
-              type="email"
-              placeholder="helpdesk@example.com"
-              value={newAdminEmail}
-              onChange={(e) => setNewAdminEmail(e.target.value)}
-              style={{ padding: "10px 12px", flexGrow: 1, fontSize: "14px", boxSizing: "border-box", borderRadius: "4px", border: "1px solid #dadce0" }}
+              id="inactivity-threshold"
+              type="number"
+              value={threshold}
+              onChange={(e) => setThreshold(Number(e.target.value))}
+              style={{ padding: "10px 12px", width: "100%", boxSizing: "border-box", fontSize: "15px", borderRadius: "4px", border: "1px solid #dadce0", color: "#202124" }}
             />
-            <button
-              type="button"
-              onClick={handleAddAdmin}
-              style={{ padding: "10px 20px", backgroundColor: "#137333", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", fontWeight: 500, fontSize: "14px" }}
-            >
-              Add Admin
-            </button>
+            <span style={{ fontSize: "12px", color: "#5f6368", display: "block", marginTop: "4px" }}>Automated cron revocation triggers for BYOD devices idle longer than this window.</span>
           </div>
 
-          {portalAdmins.length === 0 ? (
-            <div style={{ padding: "12px", backgroundColor: "#f1f3f4", color: "#5f6368", fontSize: "13px", borderRadius: "4px", fontStyle: "italic" }}>
-              No delegated portal administrators configured. Only Workspace Super Administrators have access.
-            </div>
-          ) : (
-            <div style={{ border: "1px solid #e9ecef", borderRadius: "6px", backgroundColor: "#fff", overflow: "hidden" }}>
-              {portalAdmins.map((email, idx) => (
-                <div key={idx} style={{ padding: "10px 15px", borderBottom: idx < portalAdmins.length - 1 ? "1px solid #eee" : "none", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <span style={{ fontFamily: "monospace", fontSize: "14px", color: "#202124" }}>{email}</span>
-                  <button
-                    type="button"
-                    aria-label={`Remove administrator ${email}`}
-                    onClick={() => handleRemoveAdmin(email)}
-                    style={{ padding: "6px 10px", backgroundColor: "#fce8e6", color: "#c5221f", border: "1px solid #fad2cf", borderRadius: "4px", cursor: "pointer", fontSize: "12px", fontWeight: 500 }}
-                  >
-                    ✕ Remove
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+          <div style={{ marginBottom: "24px" }}>
+            <label htmlFor="oauth-client-id" style={{ display: "block", fontWeight: 500, marginBottom: "6px", color: "#202124", fontSize: "14px" }}>Google OAuth 2.0 Client ID:</label>
+            <input
+              id="oauth-client-id"
+              type="text"
+              placeholder="1234567890-abcdef.apps.googleusercontent.com"
+              value={googleClientId}
+              onChange={(e) => setGoogleClientId(e.target.value)}
+              style={{ padding: "10px 12px", width: "100%", boxSizing: "border-box", fontSize: "14px", fontFamily: "monospace", borderRadius: "4px", border: "1px solid #dadce0", color: "#202124" }}
+            />
+            <span style={{ fontSize: "12px", color: "#5f6368", display: "block", marginTop: "4px" }}>
+              Dynamically powers Google Sign-In across the frontend portal without requiring container recompilation or builds.
+            </span>
+          </div>
 
-        <button
-          type="submit"
-          style={{ padding: "14px 24px", backgroundColor: "#1a73e8", color: "white", border: "none", borderRadius: "6px", fontWeight: 500, cursor: "pointer", fontSize: "15px", width: "100%", boxShadow: "0 1px 2px 0 rgba(60,64,67,0.3)" }}
-        >
-          Save Configurations
-        </button>
-      </form>
+          <div style={{ marginBottom: "32px" }}>
+            <label htmlFor="default-locale-select" style={{ display: "block", fontWeight: 500, marginBottom: "6px", color: "#202124", fontSize: "14px" }}>Default Tenant UI Language (Localization Fallback):</label>
+            <select
+              id="default-locale-select"
+              value={defaultLocale}
+              onChange={(e) => setDefaultLocale(e.target.value)}
+              style={{ padding: "10px 12px", width: "100%", boxSizing: "border-box", fontSize: "14px", borderRadius: "4px", border: "1px solid #dadce0", backgroundColor: "#fff", color: "#202124", cursor: "pointer" }}
+            >
+              <option value="en">English (en) — Default International</option>
+              <option value="es">Español (es) — Spanish Regionalization</option>
+              <option value="fr">Français (fr) — French Regionalization</option>
+              <option value="ja">日本語 (ja) — Japanese Regionalization</option>
+            </select>
+            <span style={{ fontSize: "12px", color: "#5f6368", display: "block", marginTop: "4px" }}>
+              Sets the default fallback language for end users accessing the portal when their browser language is unsupported or unset.
+            </span>
+          </div>
+
+          <hr style={{ border: "none", borderTop: "1px solid #dadce0", margin: "32px 0" }} />
+
+          <h2 style={{ margin: "0 0 8px 0", fontSize: "18px", fontWeight: 500, color: "#202124" }}>Delegated Access Management</h2>
+          <p style={{ fontSize: "13px", color: "#5f6368", margin: "0 0 20px 0" }}>Delegate portal configuration access without granting full Workspace Super Admin privileges.</p>
+
+          <div style={{ marginBottom: "32px" }}>
+            <label htmlFor="new-admin-email" style={{ display: "block", fontWeight: 500, marginBottom: "6px", color: "#202124", fontSize: "14px" }}>Authorized Portal Administrators (Emails):</label>
+            <div style={{ display: "flex", gap: "10px", marginBottom: "16px", marginTop: "8px" }}>
+              <input
+                id="new-admin-email"
+                type="email"
+                placeholder="helpdesk@example.com"
+                value={newAdminEmail}
+                onChange={(e) => setNewAdminEmail(e.target.value)}
+                style={{ padding: "10px 12px", flexGrow: 1, fontSize: "14px", boxSizing: "border-box", borderRadius: "4px", border: "1px solid #dadce0", color: "#202124" }}
+              />
+              <button
+                type="button"
+                onClick={handleAddAdmin}
+                style={{ padding: "10px 20px", backgroundColor: "#137333", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", fontWeight: 500, fontSize: "14px" }}
+              >
+                Add Admin
+              </button>
+            </div>
+
+            {portalAdmins.length === 0 ? (
+              <div style={{ padding: "14px", backgroundColor: "#f8f9fa", color: "#5f6368", fontSize: "13px", borderRadius: "4px", border: "1px solid #dadce0" }}>
+                No delegated portal administrators configured. Only Workspace Super Administrators have access.
+              </div>
+            ) : (
+              <div style={{ border: "1px solid #dadce0", borderRadius: "6px", backgroundColor: "#fff", overflow: "hidden" }}>
+                {portalAdmins.map((email, idx) => (
+                  <div key={idx} style={{ padding: "12px 16px", borderBottom: idx < portalAdmins.length - 1 ? "1px solid #dadce0" : "none", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span style={{ fontFamily: "monospace", fontSize: "14px", color: "#202124" }}>{email}</span>
+                    <button
+                      type="button"
+                      aria-label={`Remove administrator ${email}`}
+                      onClick={() => handleRemoveAdmin(email)}
+                      style={{ padding: "6px 12px", backgroundColor: "#ffffff", color: "#d93025", border: "1px solid #dadce0", borderRadius: "4px", cursor: "pointer", fontSize: "12px", fontWeight: 500 }}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <button
+            type="submit"
+            style={{ padding: "12px 24px", backgroundColor: "#1a73e8", color: "white", border: "none", borderRadius: "4px", fontWeight: 500, cursor: "pointer", fontSize: "14px", width: "100%", boxShadow: "0 1px 2px 0 rgba(60,64,67,0.3)" }}
+          >
+            Save Configurations
+          </button>
+        </form>
+      </main>
     </div>
   );
 };

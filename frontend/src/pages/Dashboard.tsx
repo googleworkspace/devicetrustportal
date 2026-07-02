@@ -160,71 +160,90 @@ export const Dashboard: React.FC = () => {
   };
 
   return (
-    <div style={{ padding: "20px", fontFamily: "sans-serif", maxWidth: "950px", margin: "0 auto", position: "relative" }}>
-      <header style={{ borderBottom: "1px solid #ccc", paddingBottom: "15px", marginBottom: "20px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "15px" }}>
-        <div>
-          <h1 style={{ margin: 0 }}>{t.portalTitle}</h1>
-          <div style={{ fontSize: "13px", color: "#5f6368", marginTop: "4px" }}>{t.subtitle}</div>
+    <div style={{ backgroundColor: "#f8f9fa", minHeight: "100vh", fontFamily: "'Google Sans', Roboto, Arial, sans-serif", color: "#202124" }}>
+      {/* Google Cloud Console / Workspace Top Navigation App Bar */}
+      <header style={{ backgroundColor: "#ffffff", borderBottom: "1px solid #dadce0", padding: "12px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", position: "sticky", top: 0, zIndex: 1000, boxShadow: "0 1px 2px 0 rgba(60,64,67,0.1)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+          {/* Authentic Google Shield Lockup Icon */}
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M12 2L3 6V11C3 16.55 6.84 21.74 12 23C17.16 21.74 21 16.55 21 11V6L12 2Z" fill="#1a73e8"/>
+            <path d="M12 6V11H17C16.47 14.19 14.52 16.8 12 17.65V23C17.16 21.74 21 16.55 21 11H12V6Z" fill="#4285F4" opacity="0.8"/>
+            <path d="M10.5 15.5L6.5 11.5L7.91 10.09L10.5 12.67L16.09 7.09L17.5 8.5L10.5 15.5Z" fill="#ffffff"/>
+          </svg>
+          <div>
+            <h1 style={{ margin: 0, fontSize: "18px", fontWeight: 500, letterSpacing: "-0.2px", color: "#202124" }}>{t.portalTitle}</h1>
+            <div style={{ fontSize: "12px", color: "#5f6368", marginTop: "2px" }}>{t.subtitle}</div>
+          </div>
         </div>
         
         <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
           <select
+            aria-label="Language Selector"
             value={locale}
             onChange={(e) => {
               setLocale(e.target.value);
               localStorage.setItem("userLocale", e.target.value);
             }}
-            style={{ padding: "8px 12px", borderRadius: "4px", border: "1px solid #ccc", fontSize: "14px", backgroundColor: "#fff", cursor: "pointer" }}
+            style={{ padding: "6px 12px", borderRadius: "4px", border: "1px solid #dadce0", fontSize: "13px", backgroundColor: "#ffffff", color: "#3c4043", cursor: "pointer", fontWeight: 500 }}
           >
-            <option value="en">🌐 English (en)</option>
-            <option value="es">🌐 Español (es)</option>
-            <option value="fr">🌐 Français (fr)</option>
-            <option value="ja">🌐 日本語 (ja)</option>
+            <option value="en">English (en)</option>
+            <option value="es">Español (es)</option>
+            <option value="fr">Français (fr)</option>
+            <option value="ja">日本語 (ja)</option>
           </select>
 
           {isAdmin && (
             <a
               href="#/admin"
-              style={{ padding: "10px 18px", backgroundColor: "#ea4335", color: "white", textDecoration: "none", borderRadius: "5px", fontWeight: "bold", fontSize: "14px", display: "inline-block" }}
+              style={{ padding: "6px 14px", backgroundColor: "#ffffff", color: "#1a73e8", border: "1px solid #dadce0", textDecoration: "none", borderRadius: "4px", fontWeight: 500, fontSize: "13px", display: "inline-flex", alignItems: "center", gap: "6px", boxShadow: "0 1px 2px 0 rgba(60,64,67,0.1)" }}
             >
-              ⚙️ {t.adminConfigTab}
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/>
+              </svg>
+              {t.adminConfigTab}
             </a>
           )}
         </div>
       </header>
 
-      {/* Google Sign-In Container */}
-      <div style={{ backgroundColor: "#f8f9fa", padding: "20px", borderRadius: "8px", marginBottom: "25px", border: "1px solid #e9ecef" }}>
-        <h3 style={{ marginTop: 0, marginBottom: "10px", fontSize: "18px", color: "#202124" }}>{t.googleAuthTitle}</h3>
-        <p style={{ fontSize: "14px", color: "#5f6368", marginBottom: "15px" }}>
-          {t.signInPrompt}
-        </p>
-        
-        {!userEmail ? (
-          <GoogleLoginButton onLoginSuccess={handleLoginSuccess} />
-        ) : (
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", backgroundColor: "#e6f4ea", padding: "12px 18px", borderRadius: "6px", border: "1px solid #ceead6", flexWrap: "wrap", gap: "10px" }}>
-            <div>
-              <span style={{ fontSize: "12px", color: "#137333", fontWeight: "bold", display: "block", textTransform: "uppercase" }}>{t.signedInAs}</span>
-              <span style={{ fontSize: "16px", color: "#202124", fontWeight: "bold" }}>{userEmail}</span>
+      <main style={{ padding: "24px", maxWidth: "1100px", margin: "0 auto" }}>
+        {/* Google Workspace Authentication Surface Card */}
+        <div style={{ backgroundColor: "#ffffff", padding: "24px", borderRadius: "8px", marginBottom: "24px", border: "1px solid #dadce0", boxShadow: "0 1px 2px 0 rgba(60,64,67,0.3)" }}>
+          <h3 style={{ marginTop: 0, marginBottom: "8px", fontSize: "16px", fontWeight: 500, color: "#202124" }}>{t.googleAuthTitle}</h3>
+          <p style={{ fontSize: "13px", color: "#5f6368", marginBottom: "16px", marginTop: 0 }}>
+            {t.signInPrompt}
+          </p>
+          
+          {!userEmail ? (
+            <GoogleLoginButton onLoginSuccess={handleLoginSuccess} />
+          ) : (
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", backgroundColor: "#f8f9fa", padding: "12px 16px", borderRadius: "6px", border: "1px solid #dadce0", flexWrap: "wrap", gap: "12px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                <div style={{ width: "36px", height: "36px", borderRadius: "50%", backgroundColor: "#e8f0fe", color: "#1a73e8", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 500, fontSize: "15px" }}>
+                  {userEmail.charAt(0).toUpperCase()}
+                </div>
+                <div>
+                  <span style={{ fontSize: "11px", color: "#5f6368", fontWeight: 500, display: "block", textTransform: "uppercase", letterSpacing: "0.5px" }}>{t.signedInAs}</span>
+                  <span style={{ fontSize: "14px", color: "#202124", fontWeight: 500 }}>{userEmail}</span>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  localStorage.removeItem("userEmail");
+                  localStorage.removeItem("googleIdToken");
+                  setUserEmail("");
+                  setAuthToken("");
+                  setDevices([]);
+                  setIsAdmin(false);
+                  setMessage("Signed out successfully.");
+                }}
+                style={{ padding: "6px 14px", backgroundColor: "#ffffff", color: "#3c4043", border: "1px solid #dadce0", borderRadius: "4px", cursor: "pointer", fontWeight: 500, fontSize: "13px", transition: "all 0.15s ease" }}
+              >
+                {t.signOut}
+              </button>
             </div>
-            <button
-              onClick={() => {
-                localStorage.removeItem("userEmail");
-                localStorage.removeItem("googleIdToken");
-                setUserEmail("");
-                setAuthToken("");
-                setDevices([]);
-                setIsAdmin(false);
-                setMessage("Signed out successfully.");
-              }}
-              style={{ padding: "8px 14px", backgroundColor: "#137333", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", fontWeight: "bold", fontSize: "12px" }}
-            >
-              {t.signOut}
-            </button>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
 
       {message && (
         <div role="status" aria-live="polite" style={{ padding: "12px 16px", backgroundColor: "#e8f0fe", border: "1px solid #d2e3fc", color: "#1a73e8", marginBottom: "20px", borderRadius: "6px", fontWeight: 500 }}>
@@ -348,6 +367,7 @@ export const Dashboard: React.FC = () => {
           </table>
         )}
       </section>
+      </main>
 
       {/* Revocation Confirmation Modal Overlay */}
       {showRevokeModal && (
