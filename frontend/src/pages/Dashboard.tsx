@@ -195,7 +195,7 @@ export const Dashboard: React.FC = () => {
 
       {/* Google Sign-In Container */}
       <div style={{ backgroundColor: "#f8f9fa", padding: "20px", borderRadius: "8px", marginBottom: "25px", border: "1px solid #e9ecef" }}>
-        <h3 style={{ marginTop: 0, marginBottom: "10px", fontSize: "18px", color: "#202124" }}>Google Workspace Authentication</h3>
+        <h3 style={{ marginTop: 0, marginBottom: "10px", fontSize: "18px", color: "#202124" }}>{t.googleAuthTitle}</h3>
         <p style={{ fontSize: "14px", color: "#5f6368", marginBottom: "15px" }}>
           {t.signInPrompt}
         </p>
@@ -234,13 +234,13 @@ export const Dashboard: React.FC = () => {
 
       <section style={{ marginBottom: "30px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px", flexWrap: "wrap", gap: "12px" }}>
-          <h2 style={{ margin: 0, fontSize: "20px", fontWeight: 500, color: "#202124" }}>My Hardware Assets</h2>
+          <h2 style={{ margin: 0, fontSize: "20px", fontWeight: 500, color: "#202124" }}>{t.myHardwareAssetsTitle}</h2>
           {selectedDevices.length > 0 && (
             <button
               onClick={() => initiateRevoke(selectedDevices)}
               style={{ padding: "8px 16px", backgroundColor: "#d93025", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", fontSize: "14px", fontWeight: 500 }}
             >
-              ✕ Bulk Revoke Selected ({selectedDevices.length})
+              ✕ {t.bulkRevokeSelected} ({selectedDevices.length})
             </button>
           )}
         </div>
@@ -283,10 +283,10 @@ export const Dashboard: React.FC = () => {
                   />
                 </th>
                 <th scope="col" style={{ padding: "14px 16px", textAlign: "left", color: "#202124", fontSize: "14px", fontWeight: 500 }}>{t.deviceHeader}</th>
-                <th scope="col" style={{ padding: "14px 16px", textAlign: "left", color: "#202124", fontSize: "14px", fontWeight: 500 }}>Operating System</th>
-                <th scope="col" style={{ padding: "14px 16px", textAlign: "left", color: "#202124", fontSize: "14px", fontWeight: 500 }}>Identifier</th>
+                <th scope="col" style={{ padding: "14px 16px", textAlign: "left", color: "#202124", fontSize: "14px", fontWeight: 500 }}>{t.osHeader}</th>
+                <th scope="col" style={{ padding: "14px 16px", textAlign: "left", color: "#202124", fontSize: "14px", fontWeight: 500 }}>{t.idHeader}</th>
                 <th scope="col" style={{ padding: "14px 16px", textAlign: "left", color: "#202124", fontSize: "14px", fontWeight: 500 }}>{t.statusHeader}</th>
-                <th scope="col" style={{ padding: "14px 16px", textAlign: "left", color: "#202124", fontSize: "14px", fontWeight: 500 }}>Last Sync</th>
+                <th scope="col" style={{ padding: "14px 16px", textAlign: "left", color: "#202124", fontSize: "14px", fontWeight: 500 }}>{t.lastSyncHeader}</th>
                 <th scope="col" style={{ padding: "14px 16px", textAlign: "center", color: "#202124", fontSize: "14px", fontWeight: 500 }}>{t.actionsHeader}</th>
               </tr>
             </thead>
@@ -307,23 +307,23 @@ export const Dashboard: React.FC = () => {
                     <td style={{ padding: "14px 16px", color: "#202124" }}>
                       <div style={{ fontWeight: 500, fontSize: "14px" }}>{d.model}</div>
                       <div style={{ fontSize: "11px", color: d.owner_type === "COMPANY" ? "#1a73e8" : "#5f6368", fontWeight: d.owner_type === "COMPANY" ? 500 : 400, marginTop: "2px", textTransform: "uppercase" }}>
-                        {d.owner_type === "COMPANY" ? "🏢 Company Owned Asset" : "👤 Personal BYOD"}
+                        {d.owner_type === "COMPANY" ? t.companyOwnedLabel : t.personalByodLabel}
                       </div>
                     </td>
                     <td style={{ padding: "14px 15px", color: "#5f6368", fontSize: "14px" }}>{d.os_version} ({d.device_type})</td>
                     <td style={{ padding: "14px 15px", fontFamily: "monospace", fontSize: "13px", color: "#3c4043" }}>
-                      <div>{d.serial_number !== "N/A" ? `Serial/IMEI: ${d.serial_number}` : "Virtual Asset / EV Cert"}</div>
+                      <div>{d.serial_number !== "N/A" ? `${t.serialImeiPrefix} ${d.serial_number}` : t.virtualAssetLabel}</div>
                     </td>
                     <td style={{ padding: "14px 15px" }}>
                       <span style={{ padding: "4px 8px", backgroundColor: d.approval_state === "APPROVED" ? "#e6f4ea" : "#fef7e0", color: d.approval_state === "APPROVED" ? "#137333" : "#b06000", borderRadius: "4px", fontWeight: "bold", fontSize: "12px", textTransform: "uppercase", border: `1px solid ${d.approval_state === "APPROVED" ? "#ceead6" : "#feefc3"}` }}>
-                        {d.approval_state}
+                        {d.approval_state === "APPROVED" ? t.approvedStatus : d.approval_state === "PENDING_APPROVAL" ? t.pendingStatus : t.revokedStatus}
                       </span>
                     </td>
                     <td style={{ padding: "14px 15px", color: "#5f6368", fontSize: "13px" }}>{formatLastSync(d.last_sync_time)}</td>
                     <td style={{ padding: "14px 15px", textAlign: "center" }}>
                       {d.owner_type === "COMPANY" ? (
                         <span style={{ padding: "6px 12px", backgroundColor: "#e8f0fe", color: "#1a73e8", borderRadius: "4px", fontSize: "12px", fontWeight: "bold", display: "inline-block", border: "1px solid #d2e3fc" }}>
-                          🔒 Immutable Anchor
+                          {t.immutableAnchorLabel}
                         </span>
                       ) : d.approval_state === "APPROVED" ? (
                         <button
@@ -354,23 +354,23 @@ export const Dashboard: React.FC = () => {
         <div style={{ position: "fixed", top: 0, left: 0, width: "100vw", height: "100vh", backgroundColor: "rgba(0,0,0,0.5)", display: "flex", justifyContent: "center", alignItems: "center", zIndex: 9999 }}>
           <div style={{ backgroundColor: "#fff", padding: "30px", borderRadius: "8px", maxWidth: "500px", width: "90%", boxShadow: "0 4px 15px rgba(0,0,0,0.2)" }}>
             <div style={{ fontSize: "20px", fontWeight: "bold", color: "#d93025", marginBottom: "15px", display: "flex", alignItems: "center", gap: "10px" }}>
-              ⚠️ Confirm Access Revocation
+              {t.confirmRevocationTitle}
             </div>
             <p style={{ color: "#202124", fontSize: "15px", lineHeight: "1.5", marginBottom: "15px" }}>
-              Are you absolutely sure you want to revoke approval for the following <b>{revokeTarget.length}</b> device(s)?
+              {t.confirmRevocationBody}
             </p>
             <div style={{ maxHeight: "150px", overflowY: "auto", backgroundColor: "#f1f3f4", padding: "12px", borderRadius: "6px", marginBottom: "20px", fontSize: "13px", fontFamily: "monospace", color: "#3c4043" }}>
-              {revokeTarget.map((t, idx) => {
-                const matchingDev = devices.find((d) => d.device_user_name === t);
+              {revokeTarget.map((targetName, idx) => {
+                const matchingDev = devices.find((d) => d.device_user_name === targetName);
                 return (
                   <div key={idx} style={{ marginBottom: "6px" }}>
-                    • {matchingDev ? `${matchingDev.model} (Serial: ${matchingDev.serial_number})` : t}
+                    • {matchingDev ? `${matchingDev.model} (${t.serialImeiPrefix} ${matchingDev.serial_number})` : targetName}
                   </div>
                 );
               })}
             </div>
             <p style={{ color: "#5f6368", fontSize: "13px", marginBottom: "25px" }}>
-              This action will instantly unapprove the device binding in Cloud Identity. Enterprise resources gated by Context-Aware Access policies will be immediately blocked.
+              {t.confirmRevocationWarning}
             </p>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: "15px" }}>
               <button
@@ -378,14 +378,14 @@ export const Dashboard: React.FC = () => {
                 disabled={isRevoking}
                 style={{ padding: "10px 18px", backgroundColor: "#f1f3f4", color: "#3c4043", border: "none", borderRadius: "4px", cursor: "pointer", fontWeight: "bold", fontSize: "14px" }}
               >
-                Cancel
+                {t.cancelAction}
               </button>
               <button
                 onClick={handleConfirmRevoke}
                 disabled={isRevoking}
                 style={{ padding: "10px 18px", backgroundColor: "#d93025", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", fontWeight: "bold", fontSize: "14px" }}
               >
-                {isRevoking ? "Revoking Access..." : "Yes, Revoke Access"}
+                {isRevoking ? t.revokingAction : t.yesRevokeAction}
               </button>
             </div>
           </div>
