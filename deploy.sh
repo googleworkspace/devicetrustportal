@@ -398,8 +398,7 @@ case $OPTION in
     echo -e "${YELLOW}===================================================================================================${NC}\n"
     read -p "Enter your authorized Google OAuth 2.0 Client ID: " GOOGLE_CLIENT_ID
     
-    echo -e "\n${BLUE}[7/7] Phase 3: Rebuilding container with authorized OAuth Client ID and deploying final revision...${NC}"
-    gcloud builds submit --config cloudbuild.yaml . --project="$GCP_PROJECT" --substitutions=_GOOGLE_CLIENT_ID="$GOOGLE_CLIENT_ID" --suppress-logs
+    echo -e "\n${BLUE}[7/7] Phase 3: Updating Cloud Run configuration with authorized OAuth Client ID (Zero container rebuild required!)...${NC}"
     
     gcloud run deploy device-trust-gateway \
         --image "$IMAGE_TAG" \
@@ -410,7 +409,7 @@ case $OPTION in
         --service-account="$DWD_SA_EMAIL" \
         --quiet \
         --set-secrets="/secrets/dwd_key.json=device_trust_gateway_dwd_key:latest" \
-        --set-env-vars="USE_SECRET_MANAGER=true,SECRET_NAME=$SECRET_NAME,GOOGLE_CLOUD_PROJECT=$GCP_PROJECT,WORKSPACE_ADMIN_EMAIL=$WORKSPACE_ADMIN_EMAIL,GOOGLE_APPLICATION_CREDENTIALS=/secrets/dwd_key.json"
+        --set-env-vars="USE_SECRET_MANAGER=true,SECRET_NAME=$SECRET_NAME,GOOGLE_CLOUD_PROJECT=$GCP_PROJECT,WORKSPACE_ADMIN_EMAIL=$WORKSPACE_ADMIN_EMAIL,GOOGLE_CLIENT_ID=$GOOGLE_CLIENT_ID,GOOGLE_APPLICATION_CREDENTIALS=/secrets/dwd_key.json"
         
     echo -e "\n${GREEN}=========================================================${NC}"
     echo -e "${GREEN}✔ GCP Deployment & OAuth Authorization Complete!${NC}"
