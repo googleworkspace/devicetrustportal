@@ -75,7 +75,7 @@ setup_domain_wide_delegation() {
     gcloud secrets add-iam-policy-binding "$KEY_SECRET_NAME" \
         --member="serviceAccount:$SA_EMAIL" \
         --role="roles/secretmanager.secretAccessor" \
-        --project="$GCP_PROJECT" --quiet 2>/dev/null || echo "IAM binding already configured."
+        --project="$GCP_PROJECT" --quiet > /dev/null 2>&1 || echo "IAM binding already configured."
         
     echo -e "\n${BLUE}[4/5] Retrieving Service Account Client ID...${NC}"
     CLIENT_ID=$(gcloud iam service-accounts describe "$SA_EMAIL" --project="$GCP_PROJECT" --format="value(oauth2ClientId)" 2>/dev/null || gcloud iam service-accounts describe "$SA_EMAIL" --project="$GCP_PROJECT" --format="value(uniqueId)")
@@ -352,7 +352,7 @@ case $OPTION in
     gcloud secrets add-iam-policy-binding "$SECRET_NAME" \
         --member="serviceAccount:$DWD_SA_EMAIL" \
         --role="roles/secretmanager.secretAccessor" \
-        --project="$GCP_PROJECT" --quiet 2>/dev/null || echo "IAM binding already configured."
+        --project="$GCP_PROJECT" --quiet > /dev/null 2>&1 || echo "IAM binding already configured."
     
     echo -e "\n${BLUE}[5/7] Phase 1: Executing baseline container build to establish live Cloud Run URL...${NC}"
     IMAGE_TAG="gcr.io/$GCP_PROJECT/device-trust-gateway"
