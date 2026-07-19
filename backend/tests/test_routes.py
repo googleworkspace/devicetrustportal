@@ -183,6 +183,71 @@ def test_get_my_devices():
     assert len(data) == 1
     assert data[0]["approval_state"] == "APPROVED"
 
+def test_get_my_devices_deduplication(mock_services):
+    app.dependency_overrides[get_current_user_email] = lambda: "user@example.com"
+    
+    mock_service = MagicMock()
+    mock_devices_resource = MagicMock()
+    mock_device_users_resource = MagicMock()
+    
+    mock_service.devices.return_value = mock_devices_resource
+    mock_devices_resource.deviceUsers.return_value = mock_device_users_resource
+    
+    # Simulate list returns 3 Mac entries (1 serial-backed, 2 virtual duplicates)
+    mock_devices_resource.list.return_value.execute.return_value = {
+        "devices": [
+            {
+                "name": "devices/mac-serial",
+                "deviceType": "MAC_OS",
+                "model": "MacBook Pro",
+                "osVersion": "MacOS 15.6.1",
+                "serialNumber": "C02F30BV0KPF",
+                "ownerType": "BYOD",
+                "lastSyncTime": "2026-07-19T17:00:00Z"
+            },
+            {
+                "name": "devices/mac-virtual1",
+                "deviceType": "MAC_OS",
+                "model": "MacBookPro17,1",
+                "osVersion": "MacOS 15.6.1",
+                "ownerType": "BYOD",
+                "lastSyncTime": "2026-07-19T17:00:00Z"
+            },
+            {
+                "name": "devices/mac-virtual2",
+                "deviceType": "MAC_OS",
+                "model": "Mac OS",
+                "osVersion": "macOS 10.15.7",
+                "ownerType": "BYOD",
+                "lastSyncTime": "2026-07-19T16:00:00Z"
+            }
+        ]
+    }
+    
+    def du_list_side_effect(parent, customer, pageToken=None):
+        mock_req = MagicMock()
+        mock_req.execute.return_value = {
+            "deviceUsers": [
+                {
+                    "name": f"{parent}/deviceUsers/du-1",
+                    "userEmail": "user@example.com",
+                    "managementState": "APPROVED"
+                }
+            ]
+        }
+        return mock_req
+        
+    mock_device_users_resource.list.side_effect = du_list_side_effect
+    
+    with patch("backend.routes.devices.cloud_identity_service.service", mock_service):
+        response = client.get("/api/devices/my-devices")
+        assert response.status_code == 200
+        data = response.json()
+        # Should deduplicate 3 Mac entries down to 1 physical serial-backed asset
+        assert len(data) == 1
+        assert data[0]["serial_number"] == "C02F30BV0KPF"
+        assert data[0]["model"] == "MacBook Pro"
+
 def test_get_public_config():
     response = client.get("/api/config/public")
     assert response.status_code == 200

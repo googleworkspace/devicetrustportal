@@ -6,16 +6,17 @@ The **Device Trust Gateway** is a secure bridge application designed for organiz
 
 ## 📋 Table of Contents
 1. [Architecture & Zero-Trust Overview](#-architecture--zero-trust-overview)
-2. [Prerequisites & Billing Check](#-prerequisites--billing-check)
-3. [⚡ Automated Interactive Deployer (Recommended)](#-automated-interactive-deployer-recommended)
-4. [🔒 Endpoint Verification & BYOD Approval Lifecycle](#-endpoint-verification--byod-approval-lifecycle)
-5. [Chromebook Fleet Seeding Tool](#-chromebook-fleet-seeding-tool)
-6. [Manual Setup: Local Development](#-manual-setup-local-development)
-7. [Manual Setup: Docker (On-Premise)](#-manual-setup-docker-on-premise)
-8. [Manual Setup: Google Cloud (GCP Cloud Run)](#-manual-setup-google-cloud-gcp-cloud-run)
-9. [Configuration & Admin UI](#-configuration--admin-ui)
-10. [Firewall, Network Allowlist & Anti-Spoofing](#-firewall-network-allowlist--anti-spoofing)
-11. [🔒 Identity-Aware Proxy (IAP) Edge Gating](#-identity-aware-proxy-iap-edge-gating)
+2. [Google Workspace Settings & Extension Guide](docs/workspace_setup_and_extension_guide.md)
+3. [Prerequisites & Billing Check](#-prerequisites--billing-check)
+4. [⚡ Automated Interactive Deployer (Recommended)](#-automated-interactive-deployer-recommended)
+5. [🔒 Endpoint Verification & BYOD Approval Lifecycle](#-endpoint-verification--byod-approval-lifecycle)
+6. [Chromebook Fleet Seeding Tool](#-chromebook-fleet-seeding-tool)
+7. [Manual Setup: Local Development](#-manual-setup-local-development)
+8. [Manual Setup: Docker (On-Premise)](#-manual-setup-docker-on-premise)
+9. [Manual Setup: Google Cloud (GCP Cloud Run)](#-manual-setup-google-cloud-gcp-cloud-run)
+10. [Configuration & Admin UI](#-configuration--admin-ui)
+11. [Firewall, Network Allowlist & Anti-Spoofing](#-firewall-network-allowlist--anti-spoofing)
+12. [🔒 Identity-Aware Proxy (IAP) Edge Gating](#-identity-aware-proxy-iap-edge-gating)
 
 ---
 
@@ -23,8 +24,9 @@ The **Device Trust Gateway** is a secure bridge application designed for organiz
 
 The Gateway leverages Google Workspace Context-Aware Access (CAA) to establish a zero-trust access perimeter. 
 
-For a comprehensive whitepaper detailing how Context-Aware Access Custom Access Levels, Company-Owned inventory anchors, Cloud Identity device approvals, and Identity-Aware Proxy (IAP) edge gating interact across the tenant, please read our dedicated enterprise guide:
-👉 **[docs/caa_architecture_overview.md](docs/caa_architecture_overview.md)**
+For comprehensive guides detailing tenant setup, force-installing extensions, CAA rules, and zero-trust whitepapers:
+👉 **[docs/workspace_setup_and_extension_guide.md](docs/workspace_setup_and_extension_guide.md)** — Step-by-step Google Workspace Console settings, Extension Force-Install ID, Mobile vs. Desktop approval behavior, and Mass Baseline Revocation.
+👉 **[docs/caa_architecture_overview.md](docs/caa_architecture_overview.md)** — Enterprise zero-trust architecture whitepaper.
 
 ### Key Architectural Principles:
 * **Unmanaged BYOD Hardware:** Personal devices do **not** require intrusive Mobile Device Management (MDM) enrollment or profiles. Users install the lightweight Endpoint Verification browser extension, registering the device as "Unmanaged" while still allowing our backend to approve them (`devices.deviceUsers.approve`), satisfying CAA policy rules while preserving user privacy.

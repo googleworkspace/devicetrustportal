@@ -130,8 +130,34 @@ def get_my_approved_devices(user_email: str = Depends(get_current_user_email)):
             if not next_page_token:
                 break
                 
-        print(f"INFO [devices.py]: Matched {total_devices_matched} total hardware assets across {page_count} pages. Returning {len(my_devices)} matching device bindings.")
-        return my_devices
+        # Deduplicate device entries by platform & prioritize physical hardware serial assets over virtual duplicates
+        grouped: Dict[str, List[DeviceUserItem]] = {}
+        for dev_item in my_devices:
+            dev_type = dev_item.device_type
+            if dev_type not in grouped:
+                grouped[dev_type] = []
+            grouped[dev_type].append(dev_item)
+
+        deduped_devices: List[DeviceUserItem] = []
+        for dev_type, items in grouped.items():
+            serial_items = [i for i in items if i.serial_number != "N/A"]
+            virtual_items = [i for i in items if i.serial_number == "N/A"]
+
+            if serial_items:
+                # If physical hardware serial items exist for this platform, return unique hardware serial assets
+                unique_serials: Dict[str, DeviceUserItem] = {}
+                for s_item in serial_items:
+                    if s_item.serial_number not in unique_serials:
+                        unique_serials[s_item.serial_number] = s_item
+                deduped_devices.extend(list(unique_serials.values()))
+            else:
+                # If only virtual extension assets exist, keep the single most recently synced asset for that platform
+                virtual_items.sort(key=lambda x: x.last_sync_time, reverse=True)
+                if virtual_items:
+                    deduped_devices.extend(virtual_items[:1])
+
+        print(f"INFO [devices.py]: Matched {total_devices_matched} total hardware assets across {page_count} pages. Deduplicated {len(my_devices)} down to {len(deduped_devices)} primary device bindings.")
+        return deduped_devices
     except Exception as e:
         print(f"ERROR [devices.py]: Cloud Identity API filtered crawl failed: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to fetch user devices from Cloud Identity: {e}")

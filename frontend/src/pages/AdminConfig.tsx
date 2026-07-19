@@ -28,6 +28,7 @@ export const AdminConfig: React.FC = () => {
   const [googleClientId, setGoogleClientId] = useState("");
   const [defaultLocale, setDefaultLocale] = useState("en");
   const [newAdminEmail, setNewAdminEmail] = useState("");
+  const [showAddAdminModal, setShowAddAdminModal] = useState(false);
 
   const userEmail = localStorage.getItem("userEmail") || "";
 
@@ -55,13 +56,15 @@ export const AdminConfig: React.FC = () => {
     load();
   }, [userEmail]);
 
-  const handleAddAdmin = () => {
+  const handleAddAdmin = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
     if (!newAdminEmail) return;
     const target = newAdminEmail.toLowerCase().trim();
     if (!portalAdmins.includes(target)) {
       setPortalAdmins([...portalAdmins, target]);
     }
     setNewAdminEmail("");
+    setShowAddAdminModal(false);
   };
 
   const handleRemoveAdmin = (email: string) => {
@@ -158,21 +161,6 @@ export const AdminConfig: React.FC = () => {
             <span style={{ fontSize: "12px", color: "#5f6368", display: "block", marginTop: "4px" }}>Automated cron revocation triggers for BYOD devices idle longer than this window.</span>
           </div>
 
-          <div style={{ marginBottom: "24px" }}>
-            <label htmlFor="oauth-client-id" style={{ display: "block", fontWeight: 500, marginBottom: "6px", color: "#202124", fontSize: "14px" }}>Google OAuth 2.0 Client ID:</label>
-            <input
-              id="oauth-client-id"
-              type="text"
-              placeholder="1234567890-abcdef.apps.googleusercontent.com"
-              value={googleClientId}
-              onChange={(e) => setGoogleClientId(e.target.value)}
-              style={{ padding: "10px 12px", width: "100%", boxSizing: "border-box", fontSize: "14px", fontFamily: "monospace", borderRadius: "4px", border: "1px solid #dadce0", color: "#202124" }}
-            />
-            <span style={{ fontSize: "12px", color: "#5f6368", display: "block", marginTop: "4px" }}>
-              Dynamically powers Google Sign-In across the frontend portal without requiring container recompilation or builds.
-            </span>
-          </div>
-
           <div style={{ marginBottom: "32px" }}>
             <label htmlFor="default-locale-select" style={{ display: "block", fontWeight: 500, marginBottom: "6px", color: "#202124", fontSize: "14px" }}>Default Tenant UI Language (Localization Fallback):</label>
             <select
@@ -197,22 +185,14 @@ export const AdminConfig: React.FC = () => {
           <p style={{ fontSize: "13px", color: "#5f6368", margin: "0 0 20px 0" }}>Delegate portal configuration access without granting full Workspace Super Admin privileges.</p>
 
           <div style={{ marginBottom: "32px" }}>
-            <label htmlFor="new-admin-email" style={{ display: "block", fontWeight: 500, marginBottom: "6px", color: "#202124", fontSize: "14px" }}>Authorized Portal Administrators (Emails):</label>
-            <div style={{ display: "flex", gap: "10px", marginBottom: "16px", marginTop: "8px" }}>
-              <input
-                id="new-admin-email"
-                type="email"
-                placeholder="helpdesk@example.com"
-                value={newAdminEmail}
-                onChange={(e) => setNewAdminEmail(e.target.value)}
-                style={{ padding: "10px 12px", flexGrow: 1, fontSize: "14px", boxSizing: "border-box", borderRadius: "4px", border: "1px solid #dadce0", color: "#202124" }}
-              />
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
+              <label style={{ display: "block", fontWeight: 500, color: "#202124", fontSize: "14px" }}>Authorized Portal Administrators (Emails):</label>
               <button
                 type="button"
-                onClick={handleAddAdmin}
-                style={{ padding: "10px 20px", backgroundColor: "#137333", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", fontWeight: 500, fontSize: "14px" }}
+                onClick={() => setShowAddAdminModal(true)}
+                style={{ padding: "6px 14px", backgroundColor: "#ffffff", color: "#1a73e8", border: "1px solid #dadce0", borderRadius: "4px", cursor: "pointer", fontWeight: 500, fontSize: "13px", display: "inline-flex", alignItems: "center", gap: "6px", boxShadow: "0 1px 2px 0 rgba(60,64,67,0.1)" }}
               >
-                Add Admin
+                + Add Administrator
               </button>
             </div>
 
@@ -247,6 +227,52 @@ export const AdminConfig: React.FC = () => {
           </button>
         </form>
       </main>
+
+      {/* Add Authorized Administrator Modal Overlay */}
+      {showAddAdminModal && (
+        <div style={{ position: "fixed", top: 0, left: 0, width: "100vw", height: "100vh", backgroundColor: "rgba(0,0,0,0.5)", display: "flex", justifyContent: "center", alignItems: "center", zIndex: 9999 }}>
+          <div style={{ backgroundColor: "#fff", padding: "28px", borderRadius: "8px", maxWidth: "450px", width: "90%", boxShadow: "0 4px 15px rgba(0,0,0,0.2)" }}>
+            <h3 style={{ margin: "0 0 12px 0", fontSize: "18px", fontWeight: 500, color: "#202124" }}>Add Portal Administrator</h3>
+            <p style={{ fontSize: "13px", color: "#5f6368", margin: "0 0 20px 0", lineHeight: "1.5" }}>
+              Enter the Google Workspace corporate email address to grant delegated configuration access.
+            </p>
+            
+            <form onSubmit={handleAddAdmin}>
+              <div style={{ marginBottom: "24px" }}>
+                <label htmlFor="modal-admin-email" style={{ display: "block", fontWeight: 500, marginBottom: "6px", color: "#202124", fontSize: "13px" }}>Email Address:</label>
+                <input
+                  id="modal-admin-email"
+                  type="email"
+                  required
+                  placeholder="admin@yourdomain.com"
+                  value={newAdminEmail}
+                  onChange={(e) => setNewAdminEmail(e.target.value)}
+                  style={{ padding: "10px 12px", width: "100%", boxSizing: "border-box", fontSize: "14px", borderRadius: "4px", border: "1px solid #dadce0", color: "#202124" }}
+                />
+              </div>
+
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: "12px" }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNewAdminEmail("");
+                    setShowAddAdminModal(false);
+                  }}
+                  style={{ padding: "8px 16px", backgroundColor: "#ffffff", color: "#3c4043", border: "1px solid #dadce0", borderRadius: "4px", cursor: "pointer", fontWeight: 500, fontSize: "13px" }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  style={{ padding: "8px 16px", backgroundColor: "#1a73e8", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", fontWeight: 500, fontSize: "13px" }}
+                >
+                  Add Administrator
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
