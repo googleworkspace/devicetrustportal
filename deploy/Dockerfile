@@ -26,7 +26,7 @@ COPY frontend/ ./
 RUN npm run build
 
 # Stage 2: Python FastAPI Backend
-FROM python:3.11-slim
+FROM python:3.14-slim
 WORKDIR /app
 
 ENV LANG=C.UTF-8
