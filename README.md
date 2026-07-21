@@ -50,7 +50,7 @@ For complete documentation detailing supported Workspace editions, end-user flow
   - `https://www.googleapis.com/auth/admin.directory.group.member.readonly`
   - `https://www.googleapis.com/auth/admin.directory.rolemanagement.readonly`
   - `https://www.googleapis.com/auth/admin.directory.device.chromeos.readonly`
-- **Node.js (v18+)** and **Python (3.11+)** installed for local development.
+- **Node.js (v18+)** and **Python (3.11+)** installed for local development. *(Note: Node.js is only required if building the React frontend locally outside of Docker. The automated `./deploy.sh` script and Docker builds manage Node.js automatically inside container build stages).*
 
 > [!IMPORTANT]
 > **Pre-Deployment Billing Verification:** The automated `./deploy.sh` script actively inspects your GCP project's billing status before initiating setup. If billing is missing, it will provide direct links to the Google Cloud Billing Console (`https://console.cloud.google.com/billing`) so you can link an account and proceed without encountering API precondition failures.
@@ -297,7 +297,7 @@ docker-compose -f deploy/docker-compose.yml up --build -d
 
 1. Enable required Google Cloud APIs:
 ```bash
-gcloud services enable run.googleapis.com secretmanager.googleapis.com cloudidentity.googleapis.com cloudscheduler.googleapis.com pubsub.googleapis.com
+gcloud services enable run.googleapis.com secretmanager.googleapis.com cloudidentity.googleapis.com cloudbuild.googleapis.com cloudscheduler.googleapis.com pubsub.googleapis.com admin.googleapis.com iap.googleapis.com compute.googleapis.com accesscontextmanager.googleapis.com
 ```
 
 2. Create a Secret Manager secret to hold dynamic tenant configurations:
