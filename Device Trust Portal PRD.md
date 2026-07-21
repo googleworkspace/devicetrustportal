@@ -68,6 +68,11 @@ Organizations, particularly educational institutions, face constant threats from
 * **Description:** Scripted backend cleanup to prevent stale devices from retaining access indefinitely.  
 * **Flow:** A cron job evaluates the last sync/access time of BYOD devices. If last\_access \> X months, the device's approval status is revoked.
 
+### **Feature 5: Identity-Aware Proxy (IAP) Edge Defense**
+
+* **Description:** Gating the portal container itself at the network edge so that unauthenticated bad actors cannot access or scan the registration interface.
+* **Flow:** Google Cloud Run ingress is restricted to Internal and Load Balancer traffic. An External HTTP(S) Load Balancer with Identity-Aware Proxy (IAP) and Access Context Manager enforces corporate IP subnets and/or company-owned device posture rules before traffic reaches the portal.
+
 ## **7\. Technical Architecture**
 
 * **Identity & Access:** Google Workspace with Context-Aware Access (requires Cloud Identity Premium or Google Workspace Education Plus/Enterprise).  

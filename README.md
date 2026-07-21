@@ -42,7 +42,14 @@ For complete documentation detailing supported Workspace editions, end-user flow
 
 - **Google Cloud Project** with an **Active Billing Account** linked. *(Google Cloud Run, Cloud Build, Cloud Scheduler, and Secret Manager require billing to be enabled before APIs can be activated).*
 - **Google Workspace / Cloud Identity** tenant with Context-Aware Access (CAA) enabled.
-- **Service Account Credentials** with Domain-Wide Delegation (DWD) or appropriate OAuth scopes (`https://www.googleapis.com/auth/cloud-identity.devices`, `https://www.googleapis.com/auth/admin.directory.device.chromeos.readonly`).
+- **Service Account Credentials** with Domain-Wide Delegation (DWD) authorized in Google Workspace Admin Console (`https://admin.google.com/ac/owl/domainwidedelegation`) for the following 7 required OAuth scopes:
+  - `https://www.googleapis.com/auth/cloud-identity.devices`
+  - `https://www.googleapis.com/auth/cloud-identity`
+  - `https://www.googleapis.com/auth/admin.directory.user.readonly`
+  - `https://www.googleapis.com/auth/admin.directory.group.readonly`
+  - `https://www.googleapis.com/auth/admin.directory.group.member.readonly`
+  - `https://www.googleapis.com/auth/admin.directory.rolemanagement.readonly`
+  - `https://www.googleapis.com/auth/admin.directory.device.chromeos.readonly`
 - **Node.js (v18+)** and **Python (3.11+)** installed for local development.
 
 > [!IMPORTANT]
