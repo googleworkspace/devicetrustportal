@@ -30,7 +30,7 @@ export const Dashboard: React.FC = () => {
     getPublicConfig().then((data) => {
       if (data?.default_locale && !localStorage.getItem("userLocale")) {
         const browserLang = navigator.language?.slice(0, 2);
-        setLocale(["en", "es", "fr", "ja"].includes(browserLang) ? browserLang : data.default_locale);
+        setLocale(["en", "es", "fr", "ja", "de", "pt", "zh", "it"].includes(browserLang) ? browserLang : data.default_locale);
       }
     }).catch(() => {});
   }, []);
@@ -190,6 +190,10 @@ export const Dashboard: React.FC = () => {
             <option value="es">Español (es)</option>
             <option value="fr">Français (fr)</option>
             <option value="ja">日本語 (ja)</option>
+            <option value="de">Deutsch (de)</option>
+            <option value="pt">Português (pt)</option>
+            <option value="zh">简体中文 (zh)</option>
+            <option value="it">Italiano (it)</option>
           </select>
 
           {isAdmin && (

@@ -16,10 +16,12 @@
 
 import React, { useState, useEffect } from "react";
 import { getAdminConfig, updateAdminConfig, TenantConfig } from "../services/api";
+import { getTranslator } from "../i18n/translations";
 
 export const AdminConfig: React.FC = () => {
   const [config, setConfig] = useState<TenantConfig | null>(null);
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
@@ -31,6 +33,8 @@ export const AdminConfig: React.FC = () => {
   const [showAddAdminModal, setShowAddAdminModal] = useState(false);
 
   const userEmail = localStorage.getItem("userEmail") || "";
+  const userLocale = localStorage.getItem("userLocale") || defaultLocale || "en";
+  const t = getTranslator(userLocale);
 
   useEffect(() => {
     if (!userEmail) {
@@ -75,6 +79,7 @@ export const AdminConfig: React.FC = () => {
     e.preventDefault();
     setMessage("");
     setError("");
+    setSaving(true);
 
     const updatedConfig: TenantConfig = {
       customer_id: "customers/my_customer",
@@ -87,16 +92,20 @@ export const AdminConfig: React.FC = () => {
 
     try {
       await updateAdminConfig(updatedConfig);
-      setMessage("Configuration successfully updated in GCP Secret Manager / local .env!");
+      setMessage(t.configSaveSuccess);
+      setSaving(false);
     } catch (err: any) {
       setError(`Update failed: ${err.message}`);
+      setSaving(false);
     }
   };
 
   if (loading) {
     return (
       <div style={{ backgroundColor: "#f8f9fa", minHeight: "100vh", display: "flex", justifyContent: "center", alignItems: "center", fontFamily: "'Google Sans', Roboto, Arial, sans-serif" }}>
-        <div style={{ textAlign: "center", color: "#5f6368", fontSize: "15px", fontWeight: 500 }}>Loading Google Workspace Admin configurations...</div>
+        <div style={{ textAlign: "center", color: "#5f6368", fontSize: "15px", fontWeight: 500 }}>
+          {t.loadingAdminConfig}
+        </div>
       </div>
     );
   }
@@ -106,14 +115,14 @@ export const AdminConfig: React.FC = () => {
       <div style={{ backgroundColor: "#f8f9fa", minHeight: "100vh", fontFamily: "'Google Sans', Roboto, Arial, sans-serif", padding: "40px 20px" }}>
         <div style={{ maxWidth: "600px", margin: "0 auto", backgroundColor: "#ffffff", padding: "32px", borderRadius: "8px", border: "1px solid #dadce0", boxShadow: "0 1px 2px 0 rgba(60,64,67,0.3)" }}>
           <a href="#/" style={{ color: "#1a73e8", textDecoration: "none", fontWeight: 500, fontSize: "14px", display: "inline-flex", alignItems: "center", gap: "6px" }}>
-            &larr; Return to Dashboard
+            &larr; {t.returnToDashboard}
           </a>
-          <h1 style={{ color: "#d93025", marginTop: "20px", fontSize: "22px", fontWeight: 500 }}>Access Denied</h1>
+          <h1 style={{ color: "#d93025", marginTop: "20px", fontSize: "22px", fontWeight: 500 }}>{t.accessDeniedTitle}</h1>
           <p style={{ color: "#202124", fontSize: "15px", lineHeight: "1.5" }}>
             {error}
           </p>
           <div style={{ backgroundColor: "#f8f9fa", padding: "12px 16px", borderRadius: "6px", border: "1px solid #dadce0", fontSize: "13px", color: "#5f6368", marginTop: "20px" }}>
-            Active Session: <b style={{ color: "#202124" }}>{userEmail || "None"}</b>. Only authorized Google Workspace Super Administrators or delegated Portal Admins may manage tenant configurations.
+            {t.signedInAs}: <b style={{ color: "#202124" }}>{userEmail || "None"}</b>. {t.accessDeniedSessionNote}
           </div>
         </div>
       </div>
@@ -125,19 +134,19 @@ export const AdminConfig: React.FC = () => {
       {/* Google Cloud Console Top App Bar */}
       <header style={{ backgroundColor: "#ffffff", borderBottom: "1px solid #dadce0", padding: "12px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", position: "sticky", top: 0, zIndex: 1000, boxShadow: "0 1px 2px 0 rgba(60,64,67,0.1)" }}>
         <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
-          <a href="#/" style={{ color: "#5f6368", textDecoration: "none", display: "flex", alignItems: "center" }} aria-label="Return to Dashboard">
+          <a href="#/" style={{ color: "#5f6368", textDecoration: "none", display: "flex", alignItems: "center" }} aria-label={t.returnToDashboard}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
               <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/>
             </svg>
           </a>
           <div>
-            <h1 style={{ margin: 0, fontSize: "18px", fontWeight: 500, letterSpacing: "-0.2px", color: "#202124" }}>Google Workspace Tenant Settings</h1>
-            <div style={{ fontSize: "12px", color: "#5f6368", marginTop: "2px" }}>Device Trust Gateway Administration</div>
+            <h1 style={{ margin: 0, fontSize: "18px", fontWeight: 500, letterSpacing: "-0.2px", color: "#202124" }}>{t.adminTitle}</h1>
+            <div style={{ fontSize: "12px", color: "#5f6368", marginTop: "2px" }}>{t.adminSubHeader}</div>
           </div>
         </div>
         
         <a href="#/" style={{ padding: "6px 14px", backgroundColor: "#ffffff", color: "#1a73e8", border: "1px solid #dadce0", textDecoration: "none", borderRadius: "4px", fontWeight: 500, fontSize: "13px" }}>
-          Back to Portal
+          {t.backToPortal}
         </a>
       </header>
 
@@ -146,11 +155,11 @@ export const AdminConfig: React.FC = () => {
         {error && <div role="alert" style={{ padding: "14px 16px", backgroundColor: "#fce8e6", color: "#c5221f", border: "1px solid #fad2cf", borderRadius: "6px", marginBottom: "20px", fontWeight: 500 }}>{error}</div>}
 
         <form onSubmit={handleSubmit} style={{ border: "1px solid #dadce0", padding: "32px", borderRadius: "8px", backgroundColor: "#ffffff", boxShadow: "0 1px 2px 0 rgba(60,64,67,0.3)" }}>
-          <h2 style={{ margin: "0 0 8px 0", fontSize: "18px", fontWeight: 500, color: "#202124" }}>General Security Policies</h2>
-          <p style={{ fontSize: "13px", color: "#5f6368", margin: "0 0 24px 0" }}>Configure automated cleanup thresholds and client integration credentials.</p>
+          <h2 style={{ margin: "0 0 8px 0", fontSize: "18px", fontWeight: 500, color: "#202124" }}>{t.generalSecurityPolicies}</h2>
+          <p style={{ fontSize: "13px", color: "#5f6368", margin: "0 0 24px 0" }}>{t.generalSecurityPoliciesDesc}</p>
 
           <div style={{ marginBottom: "24px" }}>
-            <label htmlFor="inactivity-threshold" style={{ display: "block", fontWeight: 500, marginBottom: "6px", color: "#202124", fontSize: "14px" }}>Inactivity Threshold (Days):</label>
+            <label htmlFor="inactivity-threshold" style={{ display: "block", fontWeight: 500, marginBottom: "6px", color: "#202124", fontSize: "14px" }}>{t.inactivityThresholdLabel}</label>
             <input
               id="inactivity-threshold"
               type="number"
@@ -158,11 +167,11 @@ export const AdminConfig: React.FC = () => {
               onChange={(e) => setThreshold(Number(e.target.value))}
               style={{ padding: "10px 12px", width: "100%", boxSizing: "border-box", fontSize: "15px", borderRadius: "4px", border: "1px solid #dadce0", color: "#202124" }}
             />
-            <span style={{ fontSize: "12px", color: "#5f6368", display: "block", marginTop: "4px" }}>Automated cron revocation triggers for BYOD devices idle longer than this window.</span>
+            <span style={{ fontSize: "12px", color: "#5f6368", display: "block", marginTop: "4px" }}>{t.inactivityThresholdHint}</span>
           </div>
 
           <div style={{ marginBottom: "32px" }}>
-            <label htmlFor="default-locale-select" style={{ display: "block", fontWeight: 500, marginBottom: "6px", color: "#202124", fontSize: "14px" }}>Default Tenant UI Language (Localization Fallback):</label>
+            <label htmlFor="default-locale-select" style={{ display: "block", fontWeight: 500, marginBottom: "6px", color: "#202124", fontSize: "14px" }}>{t.defaultLocaleLabel}</label>
             <select
               id="default-locale-select"
               value={defaultLocale}
@@ -173,32 +182,36 @@ export const AdminConfig: React.FC = () => {
               <option value="es">Español (es) — Spanish Regionalization</option>
               <option value="fr">Français (fr) — French Regionalization</option>
               <option value="ja">日本語 (ja) — Japanese Regionalization</option>
+              <option value="de">Deutsch (de) — German Regionalization</option>
+              <option value="pt">Português (pt) — Portuguese Regionalization</option>
+              <option value="zh">简体中文 (zh) — Chinese Simplified Regionalization</option>
+              <option value="it">Italiano (it) — Italian Regionalization</option>
             </select>
             <span style={{ fontSize: "12px", color: "#5f6368", display: "block", marginTop: "4px" }}>
-              Sets the default fallback language for end users accessing the portal when their browser language is unsupported or unset.
+              {t.defaultLocaleHint}
             </span>
           </div>
 
           <hr style={{ border: "none", borderTop: "1px solid #dadce0", margin: "32px 0" }} />
 
-          <h2 style={{ margin: "0 0 8px 0", fontSize: "18px", fontWeight: 500, color: "#202124" }}>Delegated Access Management</h2>
-          <p style={{ fontSize: "13px", color: "#5f6368", margin: "0 0 20px 0" }}>Delegate portal configuration access without granting full Workspace Super Admin privileges.</p>
+          <h2 style={{ margin: "0 0 8px 0", fontSize: "18px", fontWeight: 500, color: "#202124" }}>{t.delegatedAccessTitle}</h2>
+          <p style={{ fontSize: "13px", color: "#5f6368", margin: "0 0 20px 0" }}>{t.delegatedAccessDesc}</p>
 
           <div style={{ marginBottom: "32px" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
-              <label style={{ display: "block", fontWeight: 500, color: "#202124", fontSize: "14px" }}>Authorized Portal Administrators (Emails):</label>
+              <label style={{ display: "block", fontWeight: 500, color: "#202124", fontSize: "14px" }}>{t.authorizedAdminsLabel}</label>
               <button
                 type="button"
                 onClick={() => setShowAddAdminModal(true)}
                 style={{ padding: "6px 14px", backgroundColor: "#ffffff", color: "#1a73e8", border: "1px solid #dadce0", borderRadius: "4px", cursor: "pointer", fontWeight: 500, fontSize: "13px", display: "inline-flex", alignItems: "center", gap: "6px", boxShadow: "0 1px 2px 0 rgba(60,64,67,0.1)" }}
               >
-                + Add Administrator
+                {t.addAdminButton}
               </button>
             </div>
 
             {portalAdmins.length === 0 ? (
               <div style={{ padding: "14px", backgroundColor: "#f8f9fa", color: "#5f6368", fontSize: "13px", borderRadius: "4px", border: "1px solid #dadce0" }}>
-                No delegated portal administrators configured. Only Workspace Super Administrators have access.
+                {t.noDelegatedAdmins}
               </div>
             ) : (
               <div style={{ border: "1px solid #dadce0", borderRadius: "6px", backgroundColor: "#fff", overflow: "hidden" }}>
@@ -207,11 +220,11 @@ export const AdminConfig: React.FC = () => {
                     <span style={{ fontFamily: "monospace", fontSize: "14px", color: "#202124" }}>{email}</span>
                     <button
                       type="button"
-                      aria-label={`Remove administrator ${email}`}
+                      aria-label={`${t.removeAdminButton} ${email}`}
                       onClick={() => handleRemoveAdmin(email)}
                       style={{ padding: "6px 12px", backgroundColor: "#ffffff", color: "#d93025", border: "1px solid #dadce0", borderRadius: "4px", cursor: "pointer", fontSize: "12px", fontWeight: 500 }}
                     >
-                      Remove
+                      {t.removeAdminButton}
                     </button>
                   </div>
                 ))}
@@ -221,9 +234,10 @@ export const AdminConfig: React.FC = () => {
 
           <button
             type="submit"
-            style={{ padding: "12px 24px", backgroundColor: "#1a73e8", color: "white", border: "none", borderRadius: "4px", fontWeight: 500, cursor: "pointer", fontSize: "14px", width: "100%", boxShadow: "0 1px 2px 0 rgba(60,64,67,0.3)" }}
+            disabled={saving}
+            style={{ padding: "12px 24px", backgroundColor: "#1a73e8", color: "white", border: "none", borderRadius: "4px", fontWeight: 500, cursor: saving ? "not-allowed" : "pointer", fontSize: "14px", width: "100%", boxShadow: "0 1px 2px 0 rgba(60,64,67,0.3)", opacity: saving ? 0.7 : 1 }}
           >
-            Save Configurations
+            {saving ? t.savingConfigsButton : t.saveConfigsButton}
           </button>
         </form>
       </main>
@@ -232,14 +246,14 @@ export const AdminConfig: React.FC = () => {
       {showAddAdminModal && (
         <div style={{ position: "fixed", top: 0, left: 0, width: "100vw", height: "100vh", backgroundColor: "rgba(0,0,0,0.5)", display: "flex", justifyContent: "center", alignItems: "center", zIndex: 9999 }}>
           <div style={{ backgroundColor: "#fff", padding: "28px", borderRadius: "8px", maxWidth: "450px", width: "90%", boxShadow: "0 4px 15px rgba(0,0,0,0.2)" }}>
-            <h3 style={{ margin: "0 0 12px 0", fontSize: "18px", fontWeight: 500, color: "#202124" }}>Add Portal Administrator</h3>
+            <h3 style={{ margin: "0 0 12px 0", fontSize: "18px", fontWeight: 500, color: "#202124" }}>{t.addAdminModalTitle}</h3>
             <p style={{ fontSize: "13px", color: "#5f6368", margin: "0 0 20px 0", lineHeight: "1.5" }}>
-              Enter the Google Workspace corporate email address to grant delegated configuration access.
+              {t.addAdminModalDesc}
             </p>
             
             <form onSubmit={handleAddAdmin}>
               <div style={{ marginBottom: "24px" }}>
-                <label htmlFor="modal-admin-email" style={{ display: "block", fontWeight: 500, marginBottom: "6px", color: "#202124", fontSize: "13px" }}>Email Address:</label>
+                <label htmlFor="modal-admin-email" style={{ display: "block", fontWeight: 500, marginBottom: "6px", color: "#202124", fontSize: "13px" }}>{t.emailAddressLabel}</label>
                 <input
                   id="modal-admin-email"
                   type="email"
@@ -260,13 +274,13 @@ export const AdminConfig: React.FC = () => {
                   }}
                   style={{ padding: "8px 16px", backgroundColor: "#ffffff", color: "#3c4043", border: "1px solid #dadce0", borderRadius: "4px", cursor: "pointer", fontWeight: 500, fontSize: "13px" }}
                 >
-                  Cancel
+                  {t.cancelAction}
                 </button>
                 <button
                   type="submit"
                   style={{ padding: "8px 16px", backgroundColor: "#1a73e8", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", fontWeight: 500, fontSize: "13px" }}
                 >
-                  Add Administrator
+                  {t.addAdminButton}
                 </button>
               </div>
             </form>
