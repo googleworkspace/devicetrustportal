@@ -50,6 +50,96 @@ For complete documentation detailing supported Workspace editions, end-user flow
 
 ---
 
+## 🐣 Beginner-Friendly Quickstart: Download & Deployment Guide
+
+This section is designed for administrators or users with **zero development experience**. Follow these 4 simple steps to download the code and deploy the gateway in under 10 minutes!
+
+---
+
+### Step 1: Install Required Tools
+
+You only need two free tools installed on your computer to run the automated installer:
+
+1. **Git** (Tool to download the repository):
+   - **Mac:** Open Terminal and type `xcode-select --install` (click Install when prompted).
+   - **Windows:** Download and run the installer from [git-scm.com](https://git-scm.com/download/win).
+   - **Linux (Ubuntu/Debian):** Run `sudo apt update && sudo apt install -y git`.
+
+2. **Google Cloud SDK (`gcloud` CLI)** (Tool to connect to your Google Cloud Project):
+   - Download the installer for your OS from [cloud.google.com/sdk/docs/install](https://cloud.google.com/sdk/docs/install) (or run `curl https://sdk.cloud.google.com | bash` in macOS/Linux terminal).
+   - Once installed, log into your Google Cloud account by running:
+     ```bash
+     gcloud auth login
+     ```
+
+---
+
+### Step 2: Download the Code from GitHub
+
+Open your Terminal (Mac/Linux) or Command Prompt / Git Bash (Windows) and run:
+
+```bash
+# 1. Download the code repository from GitHub
+git clone https://github.com/googleworkspace/devicetrustportal.git
+
+# 2. Change directory into the downloaded project folder
+cd devicetrustportal
+```
+
+---
+
+### Step 3: Run the Automated Deployment Wizard
+
+Run the interactive deployment wizard script:
+
+```bash
+# Make the script executable (macOS / Linux)
+chmod +x deploy.sh
+
+# Run the deployment wizard
+./deploy.sh
+```
+
+---
+
+### Step 4: Follow the On-Screen Prompts
+
+The deployment wizard will guide you through the setup automatically. Here is what to enter when prompted:
+
+1. **Select Deployment Target:**
+   - Type `1` for **Google Cloud (GCP Cloud Run + Secret Manager)** and press Enter.
+
+2. **Enter Google Cloud Project ID:**
+   - Enter your GCP Project ID (e.g., `my-company-device-trust`) and press Enter.
+   - Press Enter to accept the default region (`us-central1`).
+
+3. **Domain-Wide Delegation (DWD) Authorization (Google Workspace Admin Console):**
+   - The script creates a dedicated Service Account and displays a **Numeric Client ID** (e.g., `1083920194817263`).
+   - Open your browser to [admin.google.com > Security > Domain-wide Delegation](https://admin.google.com/ac/owl/domainwidedelegation).
+   - Click **Add new**, paste the **Numeric Client ID**, and copy-paste the scope string printed in your terminal into the **OAuth Scopes** field. Click **Authorize**.
+   - Return to your terminal, press **ENTER**, and enter your Workspace Administrator email address (e.g., `admin@yourdomain.com`).
+
+4. **OAuth Google Sign-In Authorization:**
+   - The script builds Phase 1 and prints your live Cloud Run HTTPS URL (e.g., `https://device-trust-gateway-xyz-uc.a.run.app`).
+   - Open [Google Cloud Credentials Console](https://console.cloud.google.com/apis/credentials).
+   - Click **Create Credentials > OAuth client ID > Web application**.
+   - Under **Authorized JavaScript origins** and **Authorized redirect URIs**, paste your live Cloud Run URL.
+   - Click **Create**, copy your **Client ID**, and paste it into the terminal prompt.
+
+5. **Access Control & IAP Edge Defense:**
+   - Select option `1` for **IP Subnet Gating AND (Company-Owned OR Admin-Approved BYOD Devices)**.
+   - Enter your corporate IP subnets (e.g., `10.0.0.0/8, 192.168.1.0/24`) or press Enter to allow any IP.
+
+6. **Activate Workspace Policy:**
+   - Open [Google Workspace Admin Console > Context-Aware Access](https://admin.google.com/ac/security/contextaware).
+   - Create Access Level named `Approved Devices Only` with CEL expression:
+     `device.is_corp_owned == true || device.is_admin_approved == true`
+   - Assign this level to Workspace apps (Gmail, Drive).
+
+🎉 **Done!** Your portal is now fully live and securing your enterprise workspace!
+
+---
+
 ## ⚡ Automated Interactive Deployer (Recommended)
 
 We have included a robust interactive deployment script (`deploy.sh`) that streamlines setup across all target environments.
