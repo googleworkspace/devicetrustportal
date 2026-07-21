@@ -13,7 +13,7 @@
 # limitations under the License.
 
 # Stage 1: Build React Static Frontend
-FROM node:18-alpine AS frontend-builder
+FROM node:22-alpine AS frontend-builder
 WORKDIR /app
 
 # Accept OAuth Client ID build arg and expose to Webpack
