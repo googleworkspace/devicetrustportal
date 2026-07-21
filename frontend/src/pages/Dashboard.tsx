@@ -191,7 +191,7 @@ export const Dashboard: React.FC = () => {
             <option value="fr">Français (fr)</option>
             <option value="ja">日本語 (ja)</option>
             <option value="de">Deutsch (de)</option>
-            <option value="pt">Português (pt)</option>
+            <option value="pt">Português (Brasil) (pt-BR)</option>
             <option value="zh">简体中文 (zh)</option>
             <option value="it">Italiano (it)</option>
           </select>

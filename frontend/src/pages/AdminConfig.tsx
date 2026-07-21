@@ -183,7 +183,7 @@ export const AdminConfig: React.FC = () => {
               <option value="fr">Français (fr) — French Regionalization</option>
               <option value="ja">日本語 (ja) — Japanese Regionalization</option>
               <option value="de">Deutsch (de) — German Regionalization</option>
-              <option value="pt">Português (pt) — Portuguese Regionalization</option>
+              <option value="pt">Português (Brasil) (pt-BR) — Brazilian Portuguese Regionalization</option>
               <option value="zh">简体中文 (zh) — Chinese Simplified Regionalization</option>
               <option value="it">Italiano (it) — Italian Regionalization</option>
             </select>
