@@ -272,6 +272,220 @@ configure_inventory_seeding() {
     fi
 }
 
+# Helper function for optional Identity-Aware Proxy (IAP) Edge Defense setup
+configure_iap_edge_defense() {
+    echo -e "\n${YELLOW}--- Identity-Aware Proxy (IAP) Edge Defense & Access Control Configuration ---${NC}"
+    echo "Would you like to enable Identity-Aware Proxy (IAP) Edge Defense to restrict portal access to corporate IP subnets or company-owned devices?"
+    read -p "Enable IAP Edge Defense? (y/n): " DO_IAP
+    
+    if [[ "$DO_IAP" =~ ^[Yy]$ ]]; then
+        local SERVICE_NAME="device-trust-gateway"
+        if [ -z "$GCP_PROJECT" ]; then
+            read -p "Enter your Google Cloud Project ID: " GCP_PROJECT
+        fi
+        if [ -z "$GCP_REGION" ]; then
+            read -p "Enter target Cloud Run region [us-central1]: " GCP_REGION
+            GCP_REGION=${GCP_REGION:-us-central1}
+        fi
+        
+        echo -e "\n${BLUE}--- Configured Access Control Parameters ---${NC}"
+        read -p "Enter corporate IP CIDR subnets allowed to access portal (comma-separated, e.g., 10.0.0.0/8, 192.168.1.0/24) [Leave blank to skip]: " USER_IP_INPUT
+        
+        echo ""
+        echo "Select Access Control & Posture restriction mode:"
+        echo "  1) IP Subnet Gating AND (Company-Owned OR Admin-Approved BYOD Devices) [Recommended]"
+        echo "  2) IP Subnet Gating AND Strictly Company-Owned Devices Only"
+        echo "  3) Company-Owned OR Admin-Approved BYOD Devices (Any IP)"
+        echo "  4) Strictly Company-Owned Devices Only (Any IP)"
+        echo "  5) IP Subnet Gating Only (Any Device)"
+        echo ""
+        read -p "Enter option [1-5] (default: 1): " POSTURE_OPTION
+        POSTURE_OPTION=${POSTURE_OPTION:-1}
+
+        # Format IP array for config update and CEL expression
+        IP_ARRAY_JSON="[]"
+        CEL_IP_LIST=""
+        if [ -n "$USER_IP_INPUT" ]; then
+            IFS=',' read -ra ADDR <<< "$USER_IP_INPUT"
+            JSON_ELEMENTS=""
+            CEL_ELEMENTS=""
+            for ip in "${ADDR[@]}"; do
+                trimmed=$(echo "$ip" | xargs)
+                if [ -n "$trimmed" ]; then
+                    if [ -n "$JSON_ELEMENTS" ]; then
+                        JSON_ELEMENTS="${JSON_ELEMENTS}, "
+                        CEL_ELEMENTS="${CEL_ELEMENTS}, "
+                    fi
+                    JSON_ELEMENTS="${JSON_ELEMENTS}\"${trimmed}\""
+                    CEL_ELEMENTS="${CEL_ELEMENTS}'${trimmed}'"
+                fi
+            done
+            IP_ARRAY_JSON="[${JSON_ELEMENTS}]"
+            CEL_IP_LIST="[${CEL_ELEMENTS}]"
+        fi
+
+        # Sync trusted IP ranges into Secret Manager config if enabled
+        SECRET_NAME="device_trust_gateway_config"
+        if gcloud secrets describe "$SECRET_NAME" --project="$GCP_PROJECT" &>/dev/null; then
+            echo -e "\n${BLUE}Updating Secret Manager configuration with trusted IP ranges...${NC}"
+            EXISTING_PAYLOAD=$(gcloud secrets versions access latest --secret="$SECRET_NAME" --project="$GCP_PROJECT" 2>/dev/null || echo "{}")
+            if command -v python3 &>/dev/null; then
+                UPDATED_PAYLOAD=$(python3 -c "
+import json, sys
+data = json.loads('''$EXISTING_PAYLOAD''') if '''$EXISTING_PAYLOAD''' != '{}' else {}
+data['trusted_ip_ranges'] = json.loads('''$IP_ARRAY_JSON''')
+print(json.dumps(data))
+")
+                echo -n "$UPDATED_PAYLOAD" | gcloud secrets versions add "$SECRET_NAME" --data-file=- --project="$GCP_PROJECT" --quiet
+                echo -e "${GREEN}✔ Secret Manager updated with trusted IP ranges: ${IP_ARRAY_JSON}${NC}"
+            fi
+        fi
+
+        echo -e "\n${BLUE}[1/5] Enabling IAP and Compute Engine APIs...${NC}"
+        gcloud services enable iap.googleapis.com compute.googleapis.com accesscontextmanager.googleapis.com --project="$GCP_PROJECT" --quiet
+        
+        echo -e "\n${BLUE}[2/5] Restricting Cloud Run service ingress to Load Balancer only...${NC}"
+        gcloud run services update "$SERVICE_NAME" \
+            --ingress=internal-and-cloud-load-balancing \
+            --region="$GCP_REGION" \
+            --project="$GCP_PROJECT" --quiet
+            
+        echo -e "\n${BLUE}[3/5] Creating Serverless Network Endpoint Group (NEG)...${NC}"
+        NEG_NAME="dtg-serverless-neg"
+        gcloud compute network-endpoint-groups create "$NEG_NAME" \
+            --region="$GCP_REGION" \
+            --network-endpoint-type=serverless \
+            --cloud-run-service="$SERVICE_NAME" \
+            --project="$GCP_PROJECT" --quiet 2>/dev/null || echo "Serverless NEG '$NEG_NAME' already exists."
+            
+        echo -e "\n${BLUE}[4/5] Creating Backend Service and attaching NEG...${NC}"
+        BACKEND_NAME="dtg-backend-service"
+        gcloud compute backend-services create "$BACKEND_NAME" \
+            --global \
+            --project="$GCP_PROJECT" --quiet 2>/dev/null || echo "Backend service '$BACKEND_NAME' already exists."
+            
+        gcloud compute backend-services add-backend "$BACKEND_NAME" \
+            --global \
+            --network-endpoint-group="$NEG_NAME" \
+            --network-endpoint-group-region="$GCP_REGION" \
+            --project="$GCP_PROJECT" --quiet 2>/dev/null || echo "Backend NEG already attached."
+            
+        echo -e "\n${BLUE}[5/5] Enabling Identity-Aware Proxy (IAP) on Backend Service...${NC}"
+        gcloud compute backend-services update "$BACKEND_NAME" \
+            --global \
+            --iap=enabled \
+            --project="$GCP_PROJECT" --quiet
+            
+        # Generate Access Level Spec File based on posture option
+        SPEC_FILE="dtg_access_level_spec.yaml"
+        CEL_EXPRESSION=""
+
+        case $POSTURE_OPTION in
+          1)
+            # IP Subnet Gating AND (Company-Owned OR Approved BYOD)
+            if [ -n "$CEL_IP_LIST" ]; then
+                CEL_EXPRESSION="inSubnetwork(origin.ip, ${CEL_IP_LIST}) && (device.is_corp_owned == true || device.is_admin_approved == true)"
+            else
+                CEL_EXPRESSION="device.is_corp_owned == true || device.is_admin_approved == true"
+            fi
+            cat <<EOF > "$SPEC_FILE"
+# Access Context Manager Access Level Spec (IP Subnets AND [Company-Owned OR Approved BYOD])
+title: Device Trust Gateway Access Policy
+expression: "$CEL_EXPRESSION"
+EOF
+            ;;
+          2)
+            # IP Subnet Gating AND Strictly Company-Owned Devices Only
+            cat <<EOF > "$SPEC_FILE"
+# Access Context Manager Access Level Spec (IP Subnets AND Strictly Company-Owned Devices Only)
+- ipSubnetworks:
+EOF
+            if [ -n "$USER_IP_INPUT" ]; then
+                IFS=',' read -ra ADDR <<< "$USER_IP_INPUT"
+                for ip in "${ADDR[@]}"; do
+                    trimmed=$(echo "$ip" | xargs)
+                    if [ -n "$trimmed" ]; then echo "    - $trimmed" >> "$SPEC_FILE"; fi
+                done
+            else
+                echo "    - 0.0.0.0/0" >> "$SPEC_FILE"
+            fi
+            cat <<EOF >> "$SPEC_FILE"
+  devicePolicy:
+    allowedDeviceManagementLevels:
+      - COMPLETE
+    requireCorpOwned: true
+EOF
+            ;;
+          3)
+            # Company-Owned OR Admin-Approved BYOD (Any IP)
+            CEL_EXPRESSION="device.is_corp_owned == true || device.is_admin_approved == true"
+            cat <<EOF > "$SPEC_FILE"
+# Access Context Manager Access Level Spec (Company-Owned OR Approved BYOD - Any IP)
+title: Device Trust Gateway Access Policy
+expression: "$CEL_EXPRESSION"
+EOF
+            ;;
+          4)
+            # Strictly Company-Owned Devices Only (Any IP)
+            cat <<EOF > "$SPEC_FILE"
+# Access Context Manager Access Level Spec (Strictly Company-Owned Devices Only - Any IP)
+- ipSubnetworks:
+    - 0.0.0.0/0
+  devicePolicy:
+    allowedDeviceManagementLevels:
+      - COMPLETE
+    requireCorpOwned: true
+EOF
+            ;;
+          5)
+            # IP Subnet Gating Only (Any Device)
+            cat <<EOF > "$SPEC_FILE"
+# Access Context Manager Access Level Spec (IP Subnet Gating Only - Any Device)
+- ipSubnetworks:
+EOF
+            if [ -n "$USER_IP_INPUT" ]; then
+                IFS=',' read -ra ADDR <<< "$USER_IP_INPUT"
+                for ip in "${ADDR[@]}"; do
+                    trimmed=$(echo "$ip" | xargs)
+                    if [ -n "$trimmed" ]; then echo "    - $trimmed" >> "$SPEC_FILE"; fi
+                done
+            else
+                echo "    - 0.0.0.0/0" >> "$SPEC_FILE"
+            fi
+            ;;
+        esac
+
+        echo -e "\n${GREEN}===================================================================================================${NC}"
+        echo -e "${GREEN}✔ Identity-Aware Proxy (IAP) & Access Control Parameters Configured!                              ${NC}"
+        echo -e "${GREEN}===================================================================================================${NC}"
+        echo -e "Generated Access Context Manager Access Level spec file: ${YELLOW}${SPEC_FILE}${NC}"
+        if [ -n "$CEL_EXPRESSION" ]; then
+            echo -e "CEL Rule Expression: ${GREEN}${CEL_EXPRESSION}${NC}"
+        fi
+        echo ""
+        echo -e "${YELLOW}🔑 ACCESS LEVEL CREATION & IAP BINDING STEPS:${NC}"
+        if [ -n "$CEL_EXPRESSION" ]; then
+            echo -e "  1. To create the Custom CEL Access Level via gcloud:"
+            echo -e "     ${GREEN}gcloud access-context-manager levels create dtg_gateway_access_level \\${NC}"
+            echo -e "     ${GREEN}  --title=\"Device Trust Gateway Access Policy\" \\${NC}"
+            echo -e "     ${GREEN}  --custom-level-spec=${SPEC_FILE} \\${NC}"
+            echo -e "     ${GREEN}  --policy=YOUR_ORGANIZATION_POLICY_ID${NC}"
+        else
+            echo -e "  1. To create the Basic Access Level via gcloud:"
+            echo -e "     ${GREEN}gcloud access-context-manager levels create dtg_gateway_access_level \\${NC}"
+            echo -e "     ${GREEN}  --title=\"Device Trust Gateway Access Policy\" \\${NC}"
+            echo -e "     ${GREEN}  --basic-level-spec=${SPEC_FILE} \\${NC}"
+            echo -e "     ${GREEN}  --policy=YOUR_ORGANIZATION_POLICY_ID${NC}"
+        fi
+        echo -e "  2. In GCP Console Security > Identity-Aware Proxy (https://console.cloud.google.com/security/iap?project=${GCP_PROJECT}):"
+        echo -e "     • Locate ${YELLOW}'dtg-backend-service'${NC}."
+        echo -e "     • Select your newly generated Access Level to restrict edge access."
+        echo -e "${GREEN}===================================================================================================${NC}\n"
+    else
+        echo -e "${BLUE}Skipping IAP Edge Defense configuration.${NC}"
+    fi
+}
+
 # Helper function for printing final completion summary banner
 print_final_summary() {
     local PORTAL_URL="$1"
@@ -427,6 +641,7 @@ case $OPTION in
     
     execute_mass_revocation_prompt
     configure_inventory_seeding "$SERVICE_URL"
+    configure_iap_edge_defense
     print_final_summary "$SERVICE_URL"
     ;;
     

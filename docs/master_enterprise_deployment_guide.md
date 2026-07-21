@@ -204,6 +204,7 @@ The repository includes an interactive deployment script (`deploy.sh`) that auto
 3. **Phase 2 (OAuth Origin Registration):** Prompts you to paste your live Cloud Run URL into Google Cloud Console as an Authorized JavaScript Origin, collecting your Client ID string.
 4. **Phase 3 (Final Revision Build):** Re-compiles the React frontend bundle with your Client ID and deploys the final Cloud Run revision.
 5. **Phase 4 (Domain-Wide Delegation Setup):** Creates the service account `device-trust-gateway-sa`, exports `dwd_key.json`, and displays client ID authorization links for the Workspace Admin Console.
+6. **Phase 5 (Identity-Aware Proxy / IAP Edge Defense):** Prompts to automatically restrict Cloud Run ingress to Internal/Load Balancer traffic, creates the Serverless NEG and Backend Service, and enables Google Cloud IAP.
 
 ---
 
