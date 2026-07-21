@@ -128,7 +128,7 @@ The deployment wizard will guide you through the setup automatically. Here is wh
 
 5. **Access Control & IAP Edge Defense:**
    - Select option `1` for **IP Subnet Gating AND (Company-Owned OR Admin-Approved BYOD Devices)**.
-   - Enter your corporate IP subnets (e.g., `10.0.0.0/8, 192.168.1.0/24`) or press Enter to allow any IP.
+   - Enter your corporate Public Egress IP ranges (e.g., `203.0.113.0/24`) or internal subnets if using Cloud VPN/Interconnect, or press Enter to allow any IP.
 
 6. **Activate Workspace Policy:**
    - Open [Google Workspace Admin Console > Context-Aware Access](https://admin.google.com/ac/security/contextaware).

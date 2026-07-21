@@ -289,7 +289,8 @@ configure_iap_edge_defense() {
         fi
         
         echo -e "\n${BLUE}--- Configured Access Control Parameters ---${NC}"
-        read -p "Enter corporate IP CIDR subnets allowed to access portal (comma-separated, e.g., 10.0.0.0/8, 192.168.1.0/24) [Leave blank to skip]: " USER_IP_INPUT
+        echo -e "${YELLOW}Note for GCP Cloud Run / IAP:${NC} IAP inspects the client's ${YELLOW}Public Egress IP address${NC} (or internal RFC1918 CIDR if connecting via Cloud VPN/Interconnect)."
+        read -p "Enter corporate Public Egress IP CIDR subnets allowed to access portal (comma-separated, e.g., 203.0.113.0/24, 10.0.0.0/8) [Leave blank to skip]: " USER_IP_INPUT
         
         echo ""
         echo "Select Access Control & Posture restriction mode:"
