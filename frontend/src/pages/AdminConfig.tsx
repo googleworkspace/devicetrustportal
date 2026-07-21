@@ -186,6 +186,13 @@ export const AdminConfig: React.FC = () => {
               <option value="pt">Português (Brasil) (pt-BR) — Brazilian Portuguese Regionalization</option>
               <option value="zh">简体中文 (zh) — Chinese Simplified Regionalization</option>
               <option value="it">Italiano (it) — Italian Regionalization</option>
+              <option value="ko">한국어 (ko) — Korean Regionalization</option>
+              <option value="ar">العربية (ar) — Arabic Regionalization</option>
+              <option value="hi">हिन्दी (hi) — Hindi Regionalization</option>
+              <option value="nl">Nederlands (nl) — Dutch Regionalization</option>
+              <option value="pl">Polski (pl) — Polish Regionalization</option>
+              <option value="sv">Svenska (sv) — Swedish Regionalization</option>
+              <option value="tr">Türkçe (tr) — Turkish Regionalization</option>
             </select>
             <span style={{ fontSize: "12px", color: "#5f6368", display: "block", marginTop: "4px" }}>
               {t.defaultLocaleHint}

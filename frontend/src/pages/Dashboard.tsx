@@ -30,7 +30,7 @@ export const Dashboard: React.FC = () => {
     getPublicConfig().then((data) => {
       if (data?.default_locale && !localStorage.getItem("userLocale")) {
         const browserLang = navigator.language?.slice(0, 2);
-        setLocale(["en", "es", "fr", "ja", "de", "pt", "zh", "it"].includes(browserLang) ? browserLang : data.default_locale);
+        setLocale(["en", "es", "fr", "ja", "de", "pt", "zh", "it", "ko", "ar", "hi", "nl", "pl", "sv", "tr"].includes(browserLang) ? browserLang : data.default_locale);
       }
     }).catch(() => {});
   }, []);
@@ -194,6 +194,13 @@ export const Dashboard: React.FC = () => {
             <option value="pt">Português (Brasil) (pt-BR)</option>
             <option value="zh">简体中文 (zh)</option>
             <option value="it">Italiano (it)</option>
+            <option value="ko">한국어 (ko)</option>
+            <option value="ar">العربية (ar)</option>
+            <option value="hi">हिन्दी (hi)</option>
+            <option value="nl">Nederlands (nl)</option>
+            <option value="pl">Polski (pl)</option>
+            <option value="sv">Svenska (sv)</option>
+            <option value="tr">Türkçe (tr)</option>
           </select>
 
           {isAdmin && (
