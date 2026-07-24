@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 from typing import Optional
 from pydantic import BaseModel
 from fastapi import APIRouter, Header, HTTPException, Depends
@@ -27,12 +28,15 @@ class AdminStatusResponse(BaseModel):
 
 def get_current_user_email(
     authorization: Optional[str] = Header(None),
-    x_goog_authenticated_user_email: Optional[str] = Header(None)
+    x_goog_authenticated_user_email: Optional[str] = Header(None),
+    x_goog_iap_jwt_assertion: Optional[str] = Header(None)
 ) -> str:
     if authorization and authorization.startswith("Bearer "):
         token = authorization.split("Bearer ")[-1]
         try:
-            id_info = id_token.verify_oauth2_token(token, requests.Request())
+            config = config_service.get_tenant_config()
+            audience = config.google_client_id if config.google_client_id else None
+            id_info = id_token.verify_oauth2_token(token, requests.Request(), audience=audience)
             email = id_info.get("email")
             if email:
                 return email
@@ -40,9 +44,12 @@ def get_current_user_email(
             print(f"Google ID token validation failed: {e}")
 
     if x_goog_authenticated_user_email:
-        if ":" in x_goog_authenticated_user_email:
-            return x_goog_authenticated_user_email.split(":")[-1]
-        return x_goog_authenticated_user_email
+        if x_goog_iap_jwt_assertion or os.getenv("TRUST_IAP_HEADERS", "false").lower() == "true":
+            if ":" in x_goog_authenticated_user_email:
+                return x_goog_authenticated_user_email.split(":")[-1]
+            return x_goog_authenticated_user_email
+        else:
+            print("WARNING [admin.py]: Ignored X-Goog-Authenticated-User-Email because X-Goog-Iap-Jwt-Assertion header was missing and TRUST_IAP_HEADERS is not set.")
 
     raise HTTPException(status_code=401, detail="Authentication required: Invalid or missing Google ID token.")
 

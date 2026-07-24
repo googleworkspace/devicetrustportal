@@ -23,9 +23,7 @@ class DirectoryService:
     def __init__(self):
         self.scopes = [
             "https://www.googleapis.com/auth/admin.directory.user.readonly",
-            "https://www.googleapis.com/auth/admin.directory.group.readonly",
-            "https://www.googleapis.com/auth/admin.directory.group.member.readonly",
-            "https://www.googleapis.com/auth/admin.directory.rolemanagement.readonly"
+            "https://www.googleapis.com/auth/admin.directory.group.member.readonly"
         ]
         key_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
         admin_email = os.getenv("WORKSPACE_ADMIN_EMAIL")

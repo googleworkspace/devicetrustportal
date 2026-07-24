@@ -29,8 +29,7 @@ from googleapiclient.errors import HttpError
 
 SCOPES = [
     "https://www.googleapis.com/auth/admin.directory.device.chromeos.readonly",
-    "https://www.googleapis.com/auth/cloud-identity.devices",
-    "https://www.googleapis.com/auth/cloud-identity"
+    "https://www.googleapis.com/auth/cloud-identity.devices"
 ]
 
 class InventorySeeder:

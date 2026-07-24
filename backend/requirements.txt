@@ -5,6 +5,7 @@ pydantic-settings
 google-api-python-client
 google-auth
 google-cloud-secret-manager
+google-cloud-firestore
 pyjwt
 python-dotenv
 pytest

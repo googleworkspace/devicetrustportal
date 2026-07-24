@@ -22,6 +22,13 @@ from backend.services.directory_service import directory_service
 from backend.services.cloud_identity import cloud_identity_service
 from backend.routes.admin import get_current_user_email
 
+try:
+    from google.cloud import firestore
+    db = firestore.Client()
+except Exception as e:
+    print(f"INFO [chaining.py]: Firestore client not available ({e}). Using in-memory PAIRING_CODE_CACHE.")
+    db = None
+
 router = APIRouter(prefix="/api/chaining", tags=["Chaining"])
 
 # Lightweight in-memory cache for pairing codes (code -> {user_email, expires_at})
@@ -35,6 +42,65 @@ class VerifyRequest(BaseModel):
     pairing_code: str
     raw_device_id: Optional[str] = None
     ev_header: Optional[str] = None
+
+def store_pairing_code(code: str, user_email: str, expires_at: datetime.datetime):
+    if db:
+        try:
+            db.collection("pairing_codes").document(code).set({
+                "user_email": user_email,
+                "expires_at": expires_at.isoformat()
+            })
+            return
+        except Exception as e:
+            print(f"WARNING [chaining.py]: Firestore write failed ({e}). Falling back to in-memory cache.")
+            
+    PAIRING_CODE_CACHE[code] = {
+        "user_email": user_email,
+        "expires_at": expires_at
+    }
+
+def consume_pairing_code(code: str) -> str:
+    if db:
+        try:
+            doc_ref = db.collection("pairing_codes").document(code)
+            
+            @firestore.transactional
+            def atomic_consume(transaction, ref):
+                snapshot = ref.get(transaction=transaction)
+                if not snapshot.exists:
+                    return None
+                data = snapshot.to_dict()
+                transaction.delete(ref)
+                return data
+                
+            data = atomic_consume(db.transaction(), doc_ref)
+            if not data:
+                raise HTTPException(status_code=400, detail="Invalid or expired pairing code")
+                
+            expires_str = data.get("expires_at")
+            expires_at = datetime.datetime.fromisoformat(expires_str) if isinstance(expires_str, str) else data.get("expires_at")
+            if datetime.datetime.utcnow() > expires_at:
+                raise HTTPException(status_code=400, detail="Pairing code has expired")
+                
+            return data["user_email"]
+        except HTTPException:
+            raise
+        except Exception as e:
+            print(f"WARNING [chaining.py]: Firestore transaction failed ({e}). Checking in-memory cache.")
+
+    code_data = PAIRING_CODE_CACHE.get(code)
+    if not code_data:
+        raise HTTPException(status_code=400, detail="Invalid or expired pairing code")
+        
+    if datetime.datetime.utcnow() > code_data["expires_at"]:
+        if code in PAIRING_CODE_CACHE:
+            del PAIRING_CODE_CACHE[code]
+        raise HTTPException(status_code=400, detail="Pairing code has expired")
+        
+    user_email = code_data["user_email"]
+    if code in PAIRING_CODE_CACHE:
+        del PAIRING_CODE_CACHE[code]
+    return user_email
 
 @router.post("/generate", response_model=GenerateResponse)
 def generate_pairing_code(user_email: str = Depends(get_current_user_email)):
@@ -58,25 +124,14 @@ def generate_pairing_code(user_email: str = Depends(get_current_user_email)):
     code = f"{random.randint(100000, 999999)}"
     expires_at = datetime.datetime.utcnow() + datetime.timedelta(minutes=10)
     
-    PAIRING_CODE_CACHE[code] = {
-        "user_email": user_email,
-        "expires_at": expires_at
-    }
+    store_pairing_code(code, user_email, expires_at)
     
     return GenerateResponse(pairing_code=code, expires_in_seconds=600)
 
 @router.post("/verify")
 def verify_pairing_code(request: VerifyRequest):
     """Verifies pairing code and approves target device."""
-    code_data = PAIRING_CODE_CACHE.get(request.pairing_code)
-    if not code_data:
-        raise HTTPException(status_code=400, detail="Invalid or expired pairing code")
-    
-    if datetime.datetime.utcnow() > code_data["expires_at"]:
-        del PAIRING_CODE_CACHE[request.pairing_code]
-        raise HTTPException(status_code=400, detail="Pairing code has expired")
-    
-    user_email = code_data["user_email"]
+    user_email = consume_pairing_code(request.pairing_code)
     config = config_service.get_tenant_config()
     
     # Resolve device user resource name (Option A vs Option B)
@@ -100,8 +155,6 @@ def verify_pairing_code(request: VerifyRequest):
             device_user_name=device_user_name, 
             customer_id=config.customer_id
         )
-        # Invalidate used code
-        del PAIRING_CODE_CACHE[request.pairing_code]
         return {"status": "SUCCESS", "operation": operation}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

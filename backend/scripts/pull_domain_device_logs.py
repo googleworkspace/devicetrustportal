@@ -38,8 +38,7 @@ def pull_device_audit_logs():
 
     scopes = [
         "https://www.googleapis.com/auth/admin.reports.audit.readonly",
-        "https://www.googleapis.com/auth/cloud-identity.devices",
-        "https://www.googleapis.com/auth/cloud-identity"
+        "https://www.googleapis.com/auth/cloud-identity.devices"
     ]
 
     try:

@@ -17,9 +17,20 @@ from pydantic import BaseModel
 from fastapi import APIRouter, HTTPException, Depends
 from backend.services.config_service import config_service
 from backend.services.cloud_identity import cloud_identity_service
+from backend.services.directory_service import directory_service
 from backend.routes.admin import get_current_user_email
 
 router = APIRouter(prefix="/api/devices", tags=["Devices"])
+
+def verify_device_user_ownership(device_user_name: str, user_email: str, customer_id: str, is_admin: bool):
+    if is_admin:
+        return
+    du_info = cloud_identity_service.get_device_user(device_user_name, customer_id)
+    if not du_info:
+        raise HTTPException(status_code=404, detail=f"Target device binding '{device_user_name}' not found.")
+    owner_email = du_info.get("userEmail", "").lower().strip()
+    if owner_email != user_email.lower().strip():
+        raise HTTPException(status_code=403, detail="Access denied: You can only modify your own device bindings.")
 
 class DeviceUserItem(BaseModel):
     device_user_name: str
@@ -168,12 +179,16 @@ def approve_device(request: DeviceActionRequest, user_email: str = Depends(get_c
         return {"status": "SUCCESS", "message": "Simulated device approval complete."}
 
     config = config_service.get_tenant_config()
+    is_admin = directory_service.verify_user_is_admin(user_email, portal_admins=config.portal_admins)
+    verify_device_user_ownership(request.device_user_name, user_email, config.customer_id, is_admin)
     try:
         operation = cloud_identity_service.approve_device_user(
             device_user_name=request.device_user_name,
             customer_id=config.customer_id
         )
         return {"status": "SUCCESS", "operation": operation}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -183,6 +198,8 @@ def revoke_device(request: DeviceActionRequest, user_email: str = Depends(get_cu
         return {"status": "SUCCESS", "message": "Simulated device revocation complete."}
 
     config = config_service.get_tenant_config()
+    is_admin = directory_service.verify_user_is_admin(user_email, portal_admins=config.portal_admins)
+    verify_device_user_ownership(request.device_user_name, user_email, config.customer_id, is_admin)
     try:
         parent_device = request.device_user_name.split("/deviceUsers/")[0]
         dev_req = cloud_identity_service.service.devices().get(name=parent_device, customer=config.customer_id)
@@ -208,6 +225,9 @@ def revoke_device_bulk(request: BulkRevokeRequest, user_email: str = Depends(get
         return {"status": "SUCCESS", "revoked_count": len(request.device_user_names)}
 
     config = config_service.get_tenant_config()
+    is_admin = directory_service.verify_user_is_admin(user_email, portal_admins=config.portal_admins)
+    for du_name in request.device_user_names:
+        verify_device_user_ownership(du_name, user_email, config.customer_id, is_admin)
     try:
         # Filter out company anchors before batch execution
         bulk_targets = []
@@ -227,5 +247,7 @@ def revoke_device_bulk(request: BulkRevokeRequest, user_email: str = Depends(get
             action=config.revocation_action
         )
         return res
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

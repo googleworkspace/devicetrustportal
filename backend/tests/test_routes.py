@@ -16,6 +16,7 @@ import pytest
 import base64
 import json
 from unittest.mock import MagicMock, patch
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from backend.main import app
 from backend.routes.chaining import PAIRING_CODE_CACHE
@@ -33,6 +34,7 @@ def mock_services():
          patch("backend.services.cloud_identity.CloudIdentityService.approve_device_user") as mock_app, \
          patch("backend.services.cloud_identity.CloudIdentityService.list_inactive_devices") as mock_inact, \
          patch("backend.services.cloud_identity.CloudIdentityService.revoke_device_user") as mock_rev, \
+         patch("backend.services.cloud_identity.CloudIdentityService.get_device_user") as mock_get_du, \
          patch("backend.services.config_service.ConfigService.get_tenant_config") as mock_conf, \
          patch("backend.services.cloud_identity.cloud_identity_service.service") as mock_service:
         
@@ -49,6 +51,7 @@ def mock_services():
         
         mock_ev.return_value = "devices/dev-1/deviceUsers/du-1"
         mock_lookup.return_value = "devices/dev-1/deviceUsers/du-1"
+        mock_get_du.side_effect = lambda du_name, cid: {"name": du_name, "userEmail": "ceo@example.com"} if "du-CEO" in du_name else {"name": du_name, "userEmail": "student@example.com"}
         mock_app.return_value = {"done": True, "response": {"status": "APPROVED"}}
         mock_inact.return_value = [{"name": "devices/dev-1/deviceUsers/du-1"}]
         mock_rev.return_value = {"status": "REVOKED"}
@@ -252,3 +255,53 @@ def test_get_public_config():
     response = client.get("/api/config/public")
     assert response.status_code == 200
     assert "google_client_id" in response.json()
+
+def test_approve_device_success_own_device():
+    app.dependency_overrides[get_current_user_email] = lambda: "student@example.com"
+    response = client.post("/api/devices/approve", json={"device_user_name": "devices/dev-1/deviceUsers/du-1"})
+    assert response.status_code == 200
+    assert response.json()["status"] == "SUCCESS"
+
+def test_approve_device_forbidden_other_user_device():
+    app.dependency_overrides[get_current_user_email] = lambda: "student@example.com"
+    response = client.post("/api/devices/approve", json={"device_user_name": "devices/dev-1/deviceUsers/du-CEO"})
+    assert response.status_code == 403
+    assert "Access denied" in response.json()["detail"]
+
+def test_approve_device_admin_can_approve_any_device():
+    app.dependency_overrides[get_current_user_email] = lambda: "admin@example.com"
+    response = client.post("/api/devices/approve", json={"device_user_name": "devices/dev-1/deviceUsers/du-CEO"})
+    assert response.status_code == 200
+    assert response.json()["status"] == "SUCCESS"
+
+def test_get_current_user_email_iap_spoofing_rejected(monkeypatch):
+    monkeypatch.delenv("TRUST_IAP_HEADERS", raising=False)
+    with pytest.raises(HTTPException) as exc_info:
+        get_current_user_email(authorization=None, x_goog_authenticated_user_email="accounts.google.com:attacker@example.com", x_goog_iap_jwt_assertion=None)
+    assert exc_info.value.status_code == 401
+
+def test_get_current_user_email_iap_jwt_accepted(monkeypatch):
+    monkeypatch.delenv("TRUST_IAP_HEADERS", raising=False)
+    email = get_current_user_email(authorization=None, x_goog_authenticated_user_email="accounts.google.com:admin@example.com", x_goog_iap_jwt_assertion="mock.jwt.token")
+    assert email == "admin@example.com"
+
+def test_get_current_user_email_trust_iap_env_override(monkeypatch):
+    monkeypatch.setenv("TRUST_IAP_HEADERS", "true")
+    email = get_current_user_email(authorization=None, x_goog_authenticated_user_email="accounts.google.com:dev@example.com", x_goog_iap_jwt_assertion=None)
+    assert email == "dev@example.com"
+
+@patch("backend.routes.admin.id_token.verify_oauth2_token")
+def test_get_current_user_email_bearer_token_audience(mock_verify):
+    mock_verify.return_value = {"email": "user@example.com"}
+    email = get_current_user_email(authorization="Bearer mock_token_123")
+    assert email == "user@example.com"
+    assert "audience" in mock_verify.call_args.kwargs
+
+def test_webhook_enrollment_invalid_oidc_token_rejected():
+    push_body = {
+        "message": {"data": "e30="},
+        "subscription": "projects/my-proj/subscriptions/chrome-enroll-sub"
+    }
+    response = client.post("/api/webhook/chrome-enrollment", headers={"Authorization": "Bearer invalid_oidc_token"}, json=push_body)
+    assert response.status_code == 401
+    assert "Invalid Pub/Sub push authentication token" in response.json()["detail"]

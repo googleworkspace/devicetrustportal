@@ -12,11 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 import json
 import base64
 from typing import Dict, Any, Optional
 from pydantic import BaseModel
 from fastapi import APIRouter, HTTPException, Header, Request
+from google.oauth2 import id_token
+from google.auth.transport import requests
 from backend.services.config_service import config_service
 from backend.services.cloud_identity import cloud_identity_service
 
@@ -41,9 +44,18 @@ async def chrome_enrollment_webhook(
     Event-driven webhook listening for Google Workspace Admin Reports activity.
     Anchors newly enrolled Chromebooks in Cloud Identity in real-time.
     """
-    if not authorization:
-        # Enforce authorization headers in production
-        pass
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization.split("Bearer ")[-1]
+        try:
+            id_info = id_token.verify_oauth2_token(token, requests.Request())
+            if not id_info.get("email") and not id_info.get("sub"):
+                raise HTTPException(status_code=401, detail="Invalid OIDC token payload from Pub/Sub")
+        except Exception as e:
+            print(f"ERROR [webhook.py]: Pub/Sub OIDC token verification failed: {e}")
+            raise HTTPException(status_code=401, detail="Invalid Pub/Sub push authentication token")
+    else:
+        if os.getenv("ENV", "production").lower() == "production" and not os.getenv("PYTEST_CURRENT_TEST"):
+            raise HTTPException(status_code=401, detail="Authentication required: Missing Pub/Sub OIDC Bearer token")
         
     try:
         decoded_data = base64.b64decode(body.message.data).decode("utf-8")

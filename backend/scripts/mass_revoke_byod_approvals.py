@@ -27,8 +27,7 @@ def execute_mass_byod_revocation():
     print("It permanently revokes approval for all personal (BYOD) devices while preserving company anchors.\n")
 
     scopes = [
-        "https://www.googleapis.com/auth/cloud-identity.devices",
-        "https://www.googleapis.com/auth/cloud-identity"
+        "https://www.googleapis.com/auth/cloud-identity.devices"
     ]
     key_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "dwd_key.json")
     admin_email = os.getenv("WORKSPACE_ADMIN_EMAIL")

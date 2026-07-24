@@ -1,0 +1,10 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Deny all external/client-side access.
+    // Only backend server containers authenticated via GCP IAM / Application Default Credentials can read or write pairing codes.
+    match /pairing_codes/{code} {
+      allow read, write: if false;
+    }
+  }
+}

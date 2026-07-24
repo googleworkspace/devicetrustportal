@@ -92,7 +92,7 @@ setup_domain_wide_delegation() {
     echo -e "  3. In the ${YELLOW}'Client ID'${NC} field, copy and paste this exact numeric ID:"
     echo -e "     ${GREEN}${CLIENT_ID}${NC}"
     echo -e "  4. In the ${YELLOW}'OAuth Scopes'${NC} field, copy and paste this exact comma-separated string:"
-    echo -e "     ${GREEN}https://www.googleapis.com/auth/cloud-identity.devices,https://www.googleapis.com/auth/cloud-identity,https://www.googleapis.com/auth/admin.directory.user.readonly,https://www.googleapis.com/auth/admin.directory.group.readonly,https://www.googleapis.com/auth/admin.directory.group.member.readonly,https://www.googleapis.com/auth/admin.directory.rolemanagement.readonly,https://www.googleapis.com/auth/admin.directory.device.chromeos.readonly${NC}"
+    echo -e "     ${GREEN}https://www.googleapis.com/auth/cloud-identity.devices,https://www.googleapis.com/auth/admin.directory.user.readonly,https://www.googleapis.com/auth/admin.directory.group.member.readonly,https://www.googleapis.com/auth/admin.directory.device.chromeos.readonly${NC}"
     echo -e "  5. Click ${YELLOW}'Authorize'${NC}."
     echo -e "${RED}===================================================================================================${NC}\n"
     
@@ -241,15 +241,35 @@ configure_inventory_seeding() {
             echo "Verifying Pub/Sub topic '$TOPIC_NAME'..."
             gcloud pubsub topics create "$TOPIC_NAME" --project="$GCP_PROJECT" --quiet 2>/dev/null || echo "Topic already exists."
             
+            SA_NAME="device-trust-gateway-sa"
+            SA_EMAIL="${SA_NAME}@${GCP_PROJECT}.iam.gserviceaccount.com"
+            if ! gcloud iam service-accounts describe "$SA_EMAIL" --project="$GCP_PROJECT" &>/dev/null; then
+                gcloud iam service-accounts create "$SA_NAME" --display-name="Device Trust Gateway Service Account" --project="$GCP_PROJECT" --quiet 2>/dev/null || true
+            fi
+
+            echo "Granting Cloud Run Invoker role to '$SA_EMAIL' for push authentication..."
+            gcloud run services add-iam-policy-binding device-trust-gateway \
+                --region="$GCP_REGION" \
+                --member="serviceAccount:$SA_EMAIL" \
+                --role="roles/run.invoker" \
+                --project="$GCP_PROJECT" --quiet 2>/dev/null || true
+            
             SUB_NAME="chrome-enrollment-webhook-sub"
             WEBHOOK_URI="${GATEWAY_URL}/api/webhook/chrome-enrollment"
             
-            echo "Creating Pub/Sub Push Subscription targeting '$WEBHOOK_URI'..."
+            echo "Creating Pub/Sub Push Subscription with OIDC authentication targeting '$WEBHOOK_URI'..."
             gcloud pubsub subscriptions create "$SUB_NAME" \
                 --topic="$TOPIC_NAME" \
                 --push-endpoint="$WEBHOOK_URI" \
+                --push-auth-service-account="$SA_EMAIL" \
+                --push-auth-token-audience="$GATEWAY_URL" \
                 --ack-deadline=60 \
-                --project="$GCP_PROJECT" --quiet 2>/dev/null || echo "Subscription already configured."
+                --project="$GCP_PROJECT" --quiet 2>/dev/null || \
+            gcloud pubsub subscriptions update "$SUB_NAME" \
+                --push-endpoint="$WEBHOOK_URI" \
+                --push-auth-service-account="$SA_EMAIL" \
+                --push-auth-token-audience="$GATEWAY_URL" \
+                --project="$GCP_PROJECT" --quiet 2>/dev/null || echo "Subscription configured."
                 
             echo "Configuring Weekly Cloud Scheduler safety net..."
             gcloud scheduler jobs create http seed-chromebook-inventory-weekly \
@@ -549,7 +569,7 @@ case $OPTION in
     fi
     
     echo -e "\n${BLUE}[3/7] Enabling required Google Cloud APIs...${NC}"
-    gcloud services enable run.googleapis.com secretmanager.googleapis.com cloudidentity.googleapis.com cloudbuild.googleapis.com cloudscheduler.googleapis.com pubsub.googleapis.com admin.googleapis.com --quiet
+    gcloud services enable run.googleapis.com secretmanager.googleapis.com cloudidentity.googleapis.com cloudbuild.googleapis.com cloudscheduler.googleapis.com pubsub.googleapis.com firestore.googleapis.com admin.googleapis.com --quiet
     
     # Ensure DWD credentials and Admin Email are established before initializing config
     if [ -z "$WORKSPACE_ADMIN_EMAIL" ]; then

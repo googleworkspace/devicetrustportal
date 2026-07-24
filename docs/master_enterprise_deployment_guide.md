@@ -234,7 +234,7 @@ To deploy manually via Google Cloud CLI:
 
 ```bash
 # 1. Enable required APIs
-gcloud services enable run.googleapis.com secretmanager.googleapis.com cloudidentity.googleapis.com cloudscheduler.googleapis.com pubsub.googleapis.com
+gcloud services enable run.googleapis.com secretmanager.googleapis.com cloudidentity.googleapis.com cloudscheduler.googleapis.com pubsub.googleapis.com firestore.googleapis.com
 
 # 2. Create Secret Manager secret for configuration
 gcloud secrets create device_trust_gateway_config --replication-policy="automatic"

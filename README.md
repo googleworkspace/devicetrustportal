@@ -42,13 +42,10 @@ For complete documentation detailing supported Workspace editions, end-user flow
 
 - **Google Cloud Project** with an **Active Billing Account** linked. *(Google Cloud Run, Cloud Build, Cloud Scheduler, and Secret Manager require billing to be enabled before APIs can be activated).*
 - **Google Workspace / Cloud Identity** tenant with Context-Aware Access (CAA) enabled.
-- **Service Account Credentials** with Domain-Wide Delegation (DWD) authorized in Google Workspace Admin Console (`https://admin.google.com/ac/owl/domainwidedelegation`) for the following 7 required OAuth scopes:
+- **Service Account Credentials** with Domain-Wide Delegation (DWD) authorized in Google Workspace Admin Console (`https://admin.google.com/ac/owl/domainwidedelegation`) for the following 4 required OAuth scopes:
   - `https://www.googleapis.com/auth/cloud-identity.devices`
-  - `https://www.googleapis.com/auth/cloud-identity`
   - `https://www.googleapis.com/auth/admin.directory.user.readonly`
-  - `https://www.googleapis.com/auth/admin.directory.group.readonly`
   - `https://www.googleapis.com/auth/admin.directory.group.member.readonly`
-  - `https://www.googleapis.com/auth/admin.directory.rolemanagement.readonly`
   - `https://www.googleapis.com/auth/admin.directory.device.chromeos.readonly`
 - **Node.js (v26+)** and **Python (3.14+)** installed for local development. *(Note: Node.js is only required if building the React frontend locally outside of Docker. The automated `./deploy.sh` script and Docker builds manage Node.js 26 and Python 3.14 automatically inside container build stages).*
 
@@ -246,7 +243,7 @@ This tool is seamlessly integrated into `./deploy.sh` and supports four executio
 1. **One-Time Execution:** Runs the crawl immediately from your terminal, paginating through the Directory API and executing batch registration requests against Cloud Identity.
 2. **Daily Recurring Schedule:** Configures a Google Cloud Scheduler cron job to run daily at 2:00 AM.
 3. **Weekly Recurring Schedule:** Configures a Google Cloud Scheduler cron job to run every Sunday at 3:00 AM.
-4. **Event-Driven Real-Time Webhook (Pub/Sub Push) + Weekly Safety Net:** Establishes a real-time Google Cloud Pub/Sub push subscription listening for Google Workspace Reports API enrollment events (`ENTERPRISE_ENROLLMENT`), anchoring newly enrolled Chromebooks instantly while maintaining a weekly recurring sync as a reliable safety net.
+4. **Event-Driven Real-Time Webhook (Pub/Sub Push) + Weekly Safety Net:** Establishes a real-time Google Cloud Pub/Sub push subscription with native OIDC push authentication listening for Google Workspace Reports API enrollment events (`ENTERPRISE_ENROLLMENT`), anchoring newly enrolled Chromebooks instantly while maintaining a weekly recurring sync as a reliable safety net.
 
 ---
 
@@ -297,7 +294,7 @@ docker-compose -f deploy/docker-compose.yml up --build -d
 
 1. Enable required Google Cloud APIs:
 ```bash
-gcloud services enable run.googleapis.com secretmanager.googleapis.com cloudidentity.googleapis.com cloudbuild.googleapis.com cloudscheduler.googleapis.com pubsub.googleapis.com admin.googleapis.com iap.googleapis.com compute.googleapis.com accesscontextmanager.googleapis.com
+gcloud services enable run.googleapis.com secretmanager.googleapis.com cloudidentity.googleapis.com cloudbuild.googleapis.com cloudscheduler.googleapis.com pubsub.googleapis.com firestore.googleapis.com admin.googleapis.com iap.googleapis.com compute.googleapis.com accesscontextmanager.googleapis.com
 ```
 
 2. Create a Secret Manager secret to hold dynamic tenant configurations:

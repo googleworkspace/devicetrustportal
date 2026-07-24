@@ -24,8 +24,7 @@ from googleapiclient.http import BatchHttpRequest
 class CloudIdentityService:
     def __init__(self):
         self.scopes = [
-            "https://www.googleapis.com/auth/cloud-identity.devices",
-            "https://www.googleapis.com/auth/cloud-identity"
+            "https://www.googleapis.com/auth/cloud-identity.devices"
         ]
         key_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
         admin_email = os.getenv("WORKSPACE_ADMIN_EMAIL")
@@ -42,6 +41,18 @@ class CloudIdentityService:
         except Exception as e:
             print(f"Error initializing Cloud Identity service: {e}")
             self.service = None
+
+    def get_device_user(self, device_user_name: str, customer_id: str) -> Optional[Dict[str, Any]]:
+        if not self.service:
+            return {"name": device_user_name, "userEmail": "student@example.com", "approvalState": "APPROVED"}
+
+        try:
+            request = self.service.devices().deviceUsers().get(name=device_user_name, customer=customer_id)
+            response = request.execute()
+            return response
+        except HttpError as e:
+            print(f"Cloud Identity API error during get_device_user: {e}")
+            return None
 
     def approve_device_user(self, device_user_name: str, customer_id: str) -> Dict[str, Any]:
         if not self.service:

@@ -103,6 +103,7 @@ The Gateway server/container host must be permitted outbound access to the follo
   - **Admin Verification:** Verifies if the logged-in user possesses Workspace Super Admin or delegated Administrator roles.
   - **Chaining Policy Gating:** Inspects user membership in designated Google Groups and Organizational Units (OUs) to verify if they are authorized to perform trust chaining.
 
-### Google Cloud Secret Manager & Pub/Sub
+### Google Cloud Secret Manager, Pub/Sub & Firestore
 * `secretmanager.googleapis.com`: Required if the backend is configured to sync dynamic admin configurations with Google Cloud Secret Manager (`USE_SECRET_MANAGER=true`).
-* `pubsub.googleapis.com`: Required for real-time event-driven Chromebook enrollment push webhooks.
+* `pubsub.googleapis.com`: Required for real-time event-driven Chromebook enrollment push webhooks with OIDC Bearer token authentication.
+* `firestore.googleapis.com`: Required for distributed, concurrency-safe pairing code caching with atomic transaction validation.
