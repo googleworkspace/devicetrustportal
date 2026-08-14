@@ -148,9 +148,14 @@ verify_billing_account() {
     temp_err=$(mktemp)
     local billing_output=""
     
-    # Try standard billing command first, fallback to beta if needed
-    log_debug "Executing: gcloud billing projects describe \"$project_id\" --format=\"value(billingEnabled,billingAccountName)\""
-    billing_output=$(gcloud billing projects describe "$project_id" --format="value(billingEnabled,billingAccountName)" 2>"$temp_err" || gcloud beta billing projects describe "$project_id" --format="value(billingEnabled,billingAccountName)" 2>"$temp_err" || true)
+    # Run with --quiet and a safety timeout so gcloud never hangs on interactive prompts or network delays
+    log_debug "Executing: gcloud billing projects describe \"$project_id\" --quiet --format=\"value(billingEnabled,billingAccountName)\""
+    
+    if command -v timeout &>/dev/null; then
+        billing_output=$(timeout 10s gcloud billing projects describe "$project_id" --quiet --format="value(billingEnabled,billingAccountName)" 2>"$temp_err" || timeout 10s gcloud beta billing projects describe "$project_id" --quiet --format="value(billingEnabled,billingAccountName)" 2>"$temp_err" || true)
+    else
+        billing_output=$(gcloud billing projects describe "$project_id" --quiet --format="value(billingEnabled,billingAccountName)" 2>"$temp_err" || gcloud beta billing projects describe "$project_id" --quiet --format="value(billingEnabled,billingAccountName)" 2>"$temp_err" || true)
+    fi
     local billing_err
     billing_err=$(cat "$temp_err")
     rm -f "$temp_err"
