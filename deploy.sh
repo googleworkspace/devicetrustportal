@@ -374,6 +374,49 @@ setup_domain_wide_delegation() {
     echo -e "\n${GREEN}✔ DWD Setup Complete! Credentials exported for live API execution.${NC}"
 }
 
+# Helper function to ensure a valid Python runtime and execute a python script safely
+run_python_script() {
+    local script_path="$1"
+    
+    if ! command -v python3 &>/dev/null; then
+        log_error "Python 3 could not be found. Please install python3 to run '$script_path'."
+        return 1
+    fi
+    
+    local python_bin="python3"
+    
+    # Check if a valid virtual environment exists with working activate/python
+    if [ -f "backend/venv/bin/activate" ] && [ -x "backend/venv/bin/python" ]; then
+        python_bin="backend/venv/bin/python"
+    elif [ -f "venv/bin/activate" ] && [ -x "venv/bin/python" ]; then
+        python_bin="venv/bin/python"
+    else
+        # Remove corrupted / empty / partial venv directory if bin/activate is missing
+        if [ -d "backend/venv" ] && [ ! -f "backend/venv/bin/activate" ]; then
+            log_debug "Removing incomplete or corrupted venv directory 'backend/venv'..."
+            rm -rf "backend/venv"
+        fi
+        
+        log_info "Initializing Python virtual environment in 'backend/venv'..."
+        if python3 -m venv backend/venv 2>/dev/null && [ -f "backend/venv/bin/activate" ] && [ -x "backend/venv/bin/python" ]; then
+            python_bin="backend/venv/bin/python"
+            log_info "Installing backend dependencies into virtual environment..."
+            "$python_bin" -m pip install --quiet --upgrade pip 2>/dev/null || true
+            "$python_bin" -m pip install --quiet -r backend/requirements.txt --index-url https://pypi.org/simple 2>/dev/null || \
+            "$python_bin" -m pip install -r backend/requirements.txt || true
+        else
+            log_warn "Virtual environment creation skipped. Falling back to system python3 runtime..."
+            python_bin="python3"
+            if python3 -m pip --version &>/dev/null; then
+                python3 -m pip install --quiet -r backend/requirements.txt --index-url https://pypi.org/simple 2>/dev/null || true
+            fi
+        fi
+    fi
+    
+    log_debug "Executing: PYTHONPATH=. $python_bin $script_path"
+    PYTHONPATH=. "$python_bin" "$script_path"
+}
+
 # Helper function for executing mass BYOD revocation sweep
 execute_mass_revocation_prompt() {
     echo -e "\n${YELLOW}--- Mass BYOD Approval Revocation (Pristine Zero-Trust Baseline) ---${NC}"
@@ -387,15 +430,7 @@ execute_mass_revocation_prompt() {
         fi
         
         echo -e "\n${BLUE}Launching live mass revocation script...${NC}"
-        if [ -d "backend/venv" ]; then
-            source backend/venv/bin/activate
-        elif [ -d "venv" ]; then
-            source venv/bin/activate
-        else
-            python3 -m venv backend/venv && source backend/venv/bin/activate
-            pip install --quiet -r backend/requirements.txt --index-url https://pypi.org/simple
-        fi
-        python3 backend/scripts/mass_revoke_byod_approvals.py
+        run_python_script "backend/scripts/mass_revoke_byod_approvals.py"
     else
         echo -e "${BLUE}Skipping mass revocation sweep.${NC}"
     fi
@@ -441,15 +476,7 @@ configure_inventory_seeding() {
             fi
             
             echo -e "\n${BLUE}Launching live inventory seeding script...${NC}"
-            if [ -d "backend/venv" ]; then
-                source backend/venv/bin/activate
-            elif [ -d "venv" ]; then
-                source venv/bin/activate
-            else
-                python3 -m venv backend/venv && source backend/venv/bin/activate
-                pip install --quiet -r backend/requirements.txt --index-url https://pypi.org/simple
-            fi
-            python3 backend/scripts/seed_company_inventory.py
+            run_python_script "backend/scripts/seed_company_inventory.py"
             ;;
           2)
             echo -e "\n${BLUE}Configuring Daily GCP Cloud Scheduler Job...${NC}"
