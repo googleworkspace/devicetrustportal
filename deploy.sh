@@ -837,34 +837,8 @@ print_final_summary() {
     echo -e "${GREEN}===================================================================================================${NC}\n"
 }
 
-# --- Main Entry Point ---
-
-echo -e "${BLUE}=========================================================${NC}"
-echo -e "${BLUE}      Device Trust Gateway - Interactive Deployer        ${NC}"
-echo -e "${BLUE}=========================================================${NC}"
-
-if [ "$VERBOSE" = "true" ]; then
-    log_info "Verbose logging mode enabled."
-fi
-if [ "$SKIP_BILLING_CHECK" = "true" ]; then
-    log_warn "Pre-flight billing check bypass enabled."
-fi
-
-# Select target option if not passed via CLI flag
-if [ -z "$DEPLOY_TARGET" ]; then
-    echo ""
-    echo "Please select your desired deployment target:"
-    echo "  1) Google Cloud (GCP Cloud Run + Secret Manager)"
-    echo "  2) On-Premise (Docker Compose + Local .env)"
-    echo "  3) Exit"
-    echo ""
-    read -p "Enter option [1-3]: " OPTION
-else
-    OPTION="$DEPLOY_TARGET"
-fi
-
-case $OPTION in
-  1)
+# Helper function for Google Cloud Run deployment workflow
+deploy_gcp_cloud_run() {
     echo -e "\n${YELLOW}--- Starting GCP Cloud Run Deployment ---${NC}"
     
     if ! command -v gcloud &> /dev/null; then
@@ -1104,9 +1078,10 @@ case $OPTION in
     configure_inventory_seeding "$SERVICE_URL"
     configure_iap_edge_defense
     print_final_summary "$SERVICE_URL"
-    ;;
-    
-  2)
+}
+
+# Helper function for On-Premise Docker Compose deployment workflow
+deploy_on_premise_docker() {
     echo -e "\n${YELLOW}--- Starting On-Premise Docker Compose Deployment ---${NC}"
     
     if ! command -v docker &> /dev/null; then
@@ -1146,6 +1121,41 @@ EOF
     execute_mass_revocation_prompt
     configure_inventory_seeding "http://localhost:8080"
     print_final_summary "http://localhost:8080"
+}
+
+# --- Main Entry Point ---
+
+echo -e "${BLUE}=========================================================${NC}"
+echo -e "${BLUE}      Device Trust Gateway - Interactive Deployer        ${NC}"
+echo -e "${BLUE}=========================================================${NC}"
+
+if [ "$VERBOSE" = "true" ]; then
+    log_info "Verbose logging mode enabled."
+fi
+if [ "$SKIP_BILLING_CHECK" = "true" ]; then
+    log_warn "Pre-flight billing check bypass enabled."
+fi
+
+# Select target option if not passed via CLI flag
+if [ -z "$DEPLOY_TARGET" ]; then
+    echo ""
+    echo "Please select your desired deployment target:"
+    echo "  1) Google Cloud (GCP Cloud Run + Secret Manager)"
+    echo "  2) On-Premise (Docker Compose + Local .env)"
+    echo "  3) Exit"
+    echo ""
+    read -p "Enter option [1-3]: " OPTION
+else
+    OPTION="$DEPLOY_TARGET"
+fi
+
+case $OPTION in
+  1)
+    deploy_gcp_cloud_run
+    ;;
+    
+  2)
+    deploy_on_premise_docker
     ;;
     
   3)
