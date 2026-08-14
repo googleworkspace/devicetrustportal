@@ -188,18 +188,30 @@ WORKSPACE_ADMIN_EMAIL=claycodes@gwfe.org backend/venv/bin/python backend/scripts
 
 ## 5. Deployment Walkthrough
 
-The Device Trust Gateway supports multiple deployment targets.
-
 ### Target 1: Automated Interactive Deployer (`./deploy.sh`) — Recommended
 
 The repository includes an interactive deployment script (`deploy.sh`) that automates setup:
 
 ```bash
+# Standard interactive deployment
 ./deploy.sh
+
+# Verbose mode with real-time build streaming and detailed CLI command traces
+./deploy.sh --verbose
+
+# Bypass billing verification check if billing is managed centrally
+./deploy.sh --skip-billing-check
 ```
 
+**CLI Flags & Environment Variables:**
+* `-v`, `--verbose` (`VERBOSE=true`): Enables real-time Cloud Build streaming, Cloud Run deployment outputs, and verbose CLI command tracing.
+* `--skip-billing-check` (`SKIP_BILLING_CHECK=true`): Bypasses the pre-flight billing verification step if the deploying user lacks `roles/billing.viewer` IAM rights on the billing account object.
+* `--project <ID>` (`GCP_PROJECT=<ID>`): Pre-specifies target Google Cloud Project ID.
+* `--region <REGION>` (`GCP_REGION=<REGION>`): Pre-specifies target Cloud Run and Cloud Scheduler region (default: `us-central1`).
+* `--target <1|2>` (`DEPLOY_TARGET=<1|2>`): Pre-selects deployment target (`1` for Cloud Run, `2` for Docker Compose).
+
 **Automated Deployment Phases:**
-1. **Pre-flight Billing Check:** Verifies GCP billing enablement before creating resources.
+1. **Pre-flight Billing Check & Diagnostics:** Verifies GCP billing enablement before creating resources. If verification fails (e.g. missing IAM permissions or disabled Cloud Billing API), the script prints the exact `gcloud` error message and diagnostic remedies directly to the console.
 2. **Phase 1 (Baseline Container Build):** Deploys the initial FastAPI/React container to Cloud Run to generate your live HTTPS domain (`https://device-trust-gateway-HASH-uc.a.run.app`).
 3. **Phase 2 (OAuth Origin Registration):** Prompts you to paste your live Cloud Run URL into Google Cloud Console as an Authorized JavaScript Origin, collecting your Client ID string.
 4. **Phase 3 (Final Revision Build):** Re-compiles the React frontend bundle with your Client ID and deploys the final Cloud Run revision.
@@ -293,6 +305,8 @@ WORKSPACE_ADMIN_EMAIL=admin@yourdomain.com backend/venv/bin/python backend/scrip
 
 | Issue | Cause | Fix |
 | :--- | :--- | :--- |
+| **Deployment stuck at billing check or fails with permission error** | Deploying account lacks `roles/billing.viewer` or `cloudbilling.googleapis.com` is disabled | Run with `./deploy.sh --verbose` to view exact CLI error details. If billing is managed centrally, run with `./deploy.sh --skip-billing-check` to bypass the verification. |
+| **Cloud Build or Cloud Run deployment failure during script run** | Container build error, IAM role shortage, or service quota issue | Run `./deploy.sh --verbose` (or `-v`) to stream real-time container build logs and Cloud Run service revision error messages. |
 | **New Mac auto-approves upon sign-in** | User is in a sub-OU (e.g. `/Admin`) with inherited auto-approval | Open `Devices > Universal settings > Security`, select the `/Admin` OU on the left, and check **Require admin approval**. |
 | **User sees duplicate Mac entries in Portal** | Hardware serial asset vs. Extension virtual cert vs. Legacy browser profile | The portal backend automatically deduplicates rows, prioritizing physical serial assets (`Serial: C02F30BV0KPF`). Instruct users to approve the physical serial row. |
 | **Context-Aware Access not blocking unapproved devices** | CAA Access Level is not assigned to apps | Go to `Security > Context-Aware Access > Assign to apps` and assign `Approved Devices Only` to Google Workspace. |

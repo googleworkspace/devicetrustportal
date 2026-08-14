@@ -50,7 +50,10 @@ For complete documentation detailing supported Workspace editions, end-user flow
 - **Node.js (v26+)** and **Python (3.14+)** installed for local development. *(Note: Node.js is only required if building the React frontend locally outside of Docker. The automated `./deploy.sh` script and Docker builds manage Node.js 26 and Python 3.14 automatically inside container build stages).*
 
 > [!IMPORTANT]
-> **Pre-Deployment Billing Verification:** The automated `./deploy.sh` script actively inspects your GCP project's billing status before initiating setup. If billing is missing, it will provide direct links to the Google Cloud Billing Console (`https://console.cloud.google.com/billing`) so you can link an account and proceed without encountering API precondition failures.
+> **Pre-Deployment Billing Verification & Diagnostic Reporting:** The automated `./deploy.sh` script actively inspects your GCP project's billing status before creating cloud resources. 
+> - **Actionable CLI Diagnostics:** If billing verification encounters an issue, the CLI prints the exact underlying `gcloud` error message (such as missing `roles/billing.viewer` IAM permissions or disabled `cloudbilling.googleapis.com` API) alongside direct resolution links.
+> - **Verbose Mode (`--verbose` / `-v`):** Run `./deploy.sh --verbose` to stream live Cloud Build logs, Cloud Run deploy events, and comprehensive command debug traces.
+> - **Bypass Option (`--skip-billing-check`):** If billing is managed centrally by an organization administrator and your deployment account lacks `roles/billing.viewer`, pass `--skip-billing-check` or confirm the on-screen prompt to proceed.
 
 ---
 
@@ -100,9 +103,35 @@ Run the interactive deployment wizard script:
 # Make the script executable (macOS / Linux)
 chmod +x deploy.sh
 
-# Run the deployment wizard
+# Run the deployment wizard (Standard Interactive Mode)
 ./deploy.sh
 ```
+
+#### Optional Deployment Flags & Command-Line Options:
+You can pass command-line flags to customize execution or troubleshoot deployment:
+
+```bash
+# Run with verbose logging for real-time build streaming and detailed diagnostics
+./deploy.sh --verbose               # or -v
+
+# Bypass GCP billing account verification (if billing is managed centrally by an org admin)
+./deploy.sh --skip-billing-check
+
+# Pre-specify Project ID, Region, and Deployment Target
+./deploy.sh --project my-gcp-project-id --region us-central1 --target 1
+
+# View all available CLI options
+./deploy.sh --help
+```
+
+| Flag | Env Variable | Description |
+| :--- | :--- | :--- |
+| `-v`, `--verbose` | `VERBOSE=true` | Streams real-time container build logs, Cloud Run deploy events, and debug command output. |
+| `--skip-billing-check` | `SKIP_BILLING_CHECK=true` | Bypasses the GCP billing verification check if you lack `roles/billing.viewer`. |
+| `--project <PROJECT_ID>` | `GCP_PROJECT=<PROJECT_ID>` | Sets the Google Cloud Project ID directly from the CLI. |
+| `--region <REGION>` | `GCP_REGION=<REGION>` | Sets the target GCP region (default: `us-central1`). |
+| `--target <1\|2>` | `DEPLOY_TARGET=<1\|2>` | Pre-selects deployment target (`1`: Google Cloud Run, `2`: On-Premise Docker). |
+| `-h`, `--help` | — | Displays the help and options menu. |
 
 ---
 
@@ -152,6 +181,32 @@ To launch the deployer from your terminal, run:
 ```bash
 ./deploy.sh
 ```
+
+### CLI Flags & Options:
+You can pass command-line flags or environment variables to customize the deployment workflow or diagnose issues:
+
+```bash
+# Enable verbose logging and live Cloud Build streaming
+./deploy.sh --verbose   # or -v
+
+# Bypass GCP billing account verification (useful if billing is managed centrally)
+./deploy.sh --skip-billing-check
+
+# Provide Project ID and Region directly
+./deploy.sh --project my-gcp-project-id --region us-central1 --target 1
+
+# View full CLI help
+./deploy.sh --help
+```
+
+| Flag | Env Variable | Description |
+| :--- | :--- | :--- |
+| `-v`, `--verbose` | `VERBOSE=true` | Enables verbose logging, debug command output, and live Cloud Build streaming. |
+| `--skip-billing-check` | `SKIP_BILLING_CHECK=true` | Bypasses pre-flight billing verification if your account lacks billing viewer IAM rights. |
+| `--project <ID>` | `GCP_PROJECT=<ID>` | Pre-configures Google Cloud Project ID. |
+| `--region <REGION>` | `GCP_REGION=<REGION>` | Pre-configures Cloud Run / Scheduler target region (default: `us-central1`). |
+| `--target <1\|2>` | `DEPLOY_TARGET=<1\|2>` | Pre-selects deployment target (`1`: Google Cloud Run, `2`: On-Premise Docker). |
+| `-h`, `--help` | — | Displays the CLI help and options menu. |
 
 You will be presented with a simplified interactive menu:
 ```text

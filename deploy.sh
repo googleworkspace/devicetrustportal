@@ -25,7 +25,213 @@ GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 YELLOW='\033[1;33m'
 RED='\033[0;31m'
+CYAN='\033[0;36m'
 NC='\033[0m' # No Color
+
+# Default configurations & flags
+VERBOSE="${VERBOSE:-false}"
+SKIP_BILLING_CHECK="${SKIP_BILLING_CHECK:-false}"
+GCP_PROJECT="${GCP_PROJECT:-}"
+GCP_REGION="${GCP_REGION:-us-central1}"
+DEPLOY_TARGET="${DEPLOY_TARGET:-}"
+WORKSPACE_ADMIN_EMAIL="${WORKSPACE_ADMIN_EMAIL:-}"
+
+# Help / Usage function
+show_help() {
+    cat <<EOF
+Device Trust Gateway - Deployment Wizard
+
+Usage: ./deploy.sh [OPTIONS]
+
+Options:
+  -v, --verbose               Enable verbose logging, debug output, and live build streaming
+  --skip-billing-check        Bypass the GCP billing account verification check
+  --project <PROJECT_ID>      Specify the Google Cloud Project ID
+  --region <REGION>           Specify the GCP Cloud Run / Scheduler region (default: us-central1)
+  --target <1|2>              Specify deployment target (1: Google Cloud Run, 2: On-Premise Docker)
+  -h, --help                  Show this help message and exit
+
+Environment Variables:
+  VERBOSE                     Set to 'true' or '1' to enable verbose output
+  SKIP_BILLING_CHECK          Set to 'true' or '1' to bypass billing verification
+  GCP_PROJECT                 Google Cloud Project ID
+  GCP_REGION                  Google Cloud Region (default: us-central1)
+  WORKSPACE_ADMIN_EMAIL       Workspace Super Administrator email for Domain-Wide Delegation
+
+Examples:
+  ./deploy.sh --verbose
+  ./deploy.sh -v --project my-gcp-project-id
+  ./deploy.sh --skip-billing-check
+  VERBOSE=true ./deploy.sh
+EOF
+}
+
+# Parse command line arguments
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -v|--verbose)
+            VERBOSE=true
+            shift
+            ;;
+        --skip-billing-check|--bypass-billing-check)
+            SKIP_BILLING_CHECK=true
+            shift
+            ;;
+        --project)
+            GCP_PROJECT="$2"
+            shift 2
+            ;;
+        --region)
+            GCP_REGION="$2"
+            shift 2
+            ;;
+        --target)
+            DEPLOY_TARGET="$2"
+            shift 2
+            ;;
+        -h|--help)
+            show_help
+            exit 0
+            ;;
+        *)
+            echo -e "${RED}Unknown option: $1${NC}"
+            show_help
+            exit 1
+            ;;
+    esac
+done
+
+# Normalize environment variable boolean flags
+if [ "$VERBOSE" = "1" ] || [ "$VERBOSE" = "True" ] || [ "$VERBOSE" = "TRUE" ]; then
+    VERBOSE=true
+fi
+if [ "$SKIP_BILLING_CHECK" = "1" ] || [ "$SKIP_BILLING_CHECK" = "True" ] || [ "$SKIP_BILLING_CHECK" = "TRUE" ]; then
+    SKIP_BILLING_CHECK=true
+fi
+
+# Logging & Diagnostic Helper Functions
+log_info() {
+    echo -e "${BLUE}[INFO]${NC} $1"
+}
+
+log_success() {
+    echo -e "${GREEN}✔ $1${NC}"
+}
+
+log_warn() {
+    echo -e "${YELLOW}⚠️ $1${NC}"
+}
+
+log_error() {
+    echo -e "${RED}❌ $1${NC}"
+}
+
+log_debug() {
+    if [ "$VERBOSE" = "true" ]; then
+        echo -e "${CYAN}[DEBUG]${NC} $1"
+    fi
+}
+
+# Helper function for verifying project billing account status with diagnostic error reporting
+verify_billing_account() {
+    local project_id="$1"
+    echo -e "\n${BLUE}[2/7] Verifying project billing account status...${NC}"
+    
+    if [ "$SKIP_BILLING_CHECK" = "true" ]; then
+        log_warn "Billing account verification skipped via --skip-billing-check flag."
+        return 0
+    fi
+    
+    log_debug "Checking billing status for project: '$project_id'"
+    
+    local temp_err
+    temp_err=$(mktemp)
+    local billing_output=""
+    
+    # Try standard billing command first, fallback to beta if needed
+    log_debug "Executing: gcloud billing projects describe \"$project_id\" --format=\"value(billingEnabled,billingAccountName)\""
+    billing_output=$(gcloud billing projects describe "$project_id" --format="value(billingEnabled,billingAccountName)" 2>"$temp_err" || gcloud beta billing projects describe "$project_id" --format="value(billingEnabled,billingAccountName)" 2>"$temp_err" || true)
+    local billing_err
+    billing_err=$(cat "$temp_err")
+    rm -f "$temp_err"
+    
+    log_debug "Billing check raw output: '$billing_output'"
+    if [ -n "$billing_err" ]; then
+        log_debug "Billing check raw stderr: '$billing_err'"
+    fi
+    
+    local is_enabled
+    local account_name
+    is_enabled=$(echo "$billing_output" | awk '{print $1}')
+    account_name=$(echo "$billing_output" | awk '{print $2}')
+    
+    # Success Case: billingEnabled == True / true
+    if [ "$is_enabled" = "True" ] || [ "$is_enabled" = "true" ]; then
+        if [ -n "$account_name" ]; then
+            log_success "Active billing account verified: ${account_name}"
+        else
+            log_success "Active billing account verified."
+        fi
+        return 0
+    fi
+    
+    # Error Case 1: Explicitly False (billing is confirmed disabled or unlinked)
+    if [ "$is_enabled" = "False" ] || [ "$is_enabled" = "false" ]; then
+        echo -e "\n${RED}===================================================================================================${NC}"
+        echo -e "${RED}❌ ERROR: Billing is disabled or no billing account is linked for project '$project_id'.${NC}"
+        echo -e "${RED}Google Cloud Run, Cloud Build, and Secret Manager require an active billing account to be linked.${NC}"
+        echo ""
+        echo -e "${YELLOW}Instructions to resolve:${NC}"
+        echo -e "  1. Open the Google Cloud Console Billing page:"
+        echo -e "     ${GREEN}https://console.cloud.google.com/billing/linked-account?project=${project_id}${NC}"
+        echo -e "  2. Link an active billing account to project '${project_id}'."
+        echo -e "  3. Re-run this deployment script (use ${GREEN}--verbose${NC} / ${GREEN}-v${NC} for diagnostic output)."
+        echo -e "${RED}===================================================================================================${NC}\n"
+        exit 1
+    fi
+    
+    # Error Case 2: Command failed (Permission denied, API disabled, auth failure, project not found)
+    echo -e "\n${YELLOW}===================================================================================================${NC}"
+    echo -e "${YELLOW}⚠️ WARNING: Unable to automatically verify billing status for project '$project_id'.${NC}"
+    echo -e "${YELLOW}===================================================================================================${NC}"
+    echo -e "The gcloud CLI command returned an error when querying billing information:"
+    echo ""
+    echo -e "  ${BLUE}Command Executed:${NC} gcloud billing projects describe \"$project_id\""
+    echo -e "  ${RED}Error Output from CLI:${NC}"
+    if [ -n "$billing_err" ]; then
+        echo -e "${RED}${billing_err}${NC}"
+    else
+        echo -e "${RED}(Command exited with non-zero status without stderr output)${NC}"
+    fi
+    echo ""
+    echo -e "${YELLOW}Common Causes & Diagnostic Actions:${NC}"
+    
+    if echo "$billing_err" | grep -qi "PERMISSION_DENIED\|does not have permission"; then
+        echo -e "  • ${YELLOW}IAM Permission:${NC} Your current gcloud user may lack ${GREEN}'roles/billing.viewer'${NC} or ${GREEN}'roles/resourcemanager.projectViewer'${NC}."
+        echo -e "    If your organization manages billing centrally and you have Cloud Run/Build admin permissions, you may bypass this check."
+    elif echo "$billing_err" | grep -qi "SERVICE_DISABLED\|not enabled\|cloudbilling.googleapis.com"; then
+        echo -e "  • ${YELLOW}Cloud Billing API Disabled:${NC} The Cloud Billing API is not enabled on this project."
+        echo -e "    You can enable it with: ${GREEN}gcloud services enable cloudbilling.googleapis.com --project=${project_id}${NC}"
+    elif echo "$billing_err" | grep -qi "NOT_FOUND\|not exist"; then
+        echo -e "  • ${YELLOW}Project Not Found:${NC} Project '${project_id}' could not be located. Please verify the Project ID."
+    else
+        echo -e "  • Check project billing status directly in Cloud Console: ${GREEN}https://console.cloud.google.com/billing/linked-account?project=${project_id}${NC}"
+    fi
+    echo ""
+    
+    # Interactive prompt to bypass if desired
+    if [ -t 0 ]; then
+        read -p "If you know billing is actively enabled for this project, would you like to proceed anyway? (y/N): " PROCEED_ANYWAY
+        if [[ "$PROCEED_ANYWAY" =~ ^[Yy]$ ]]; then
+            log_warn "Proceeding with deployment despite unverified billing status upon administrator confirmation."
+            return 0
+        fi
+    fi
+    
+    echo -e "\n${RED}Deployment aborted due to unverified billing status.${NC}"
+    echo -e "Tip: You can rerun with ${GREEN}--verbose${NC} (or ${GREEN}-v${NC}) for debug output, or ${GREEN}--skip-billing-check${NC} to bypass."
+    exit 1
+}
 
 # Helper function for interactive Domain-Wide Delegation (DWD) Setup
 setup_domain_wide_delegation() {
@@ -44,45 +250,91 @@ setup_domain_wide_delegation() {
     SA_EMAIL="${SA_NAME}@${GCP_PROJECT}.iam.gserviceaccount.com"
     
     echo -e "\n${BLUE}[1/5] Verifying Service Account '$SA_EMAIL'...${NC}"
-    if ! gcloud iam service-accounts describe "$SA_EMAIL" --project="$GCP_PROJECT" &>/dev/null; then
+    log_debug "Checking if service account '$SA_EMAIL' exists..."
+    local sa_check_err
+    sa_check_err=$(mktemp)
+    if ! gcloud iam service-accounts describe "$SA_EMAIL" --project="$GCP_PROJECT" 2>"$sa_check_err" >/dev/null; then
+        log_debug "Service account does not exist or describe returned: $(cat "$sa_check_err")"
         echo "Creating new Service Account '$SA_NAME'..."
-        gcloud iam service-accounts create "$SA_NAME" \
-            --display-name="Device Trust Gateway Service Account for DWD" \
-            --project="$GCP_PROJECT" --quiet
+        if [ "$VERBOSE" = "true" ]; then
+            gcloud iam service-accounts create "$SA_NAME" \
+                --display-name="Device Trust Gateway Service Account for DWD" \
+                --project="$GCP_PROJECT"
+        else
+            gcloud iam service-accounts create "$SA_NAME" \
+                --display-name="Device Trust Gateway Service Account for DWD" \
+                --project="$GCP_PROJECT" --quiet
+        fi
+        log_success "Service Account '$SA_NAME' created."
     else
-        echo -e "${GREEN}✔ Service Account exists.${NC}"
+        log_success "Service Account exists."
     fi
+    rm -f "$sa_check_err"
     
     echo -e "\n${BLUE}[2/5] Generating JSON Private Key...${NC}"
     KEY_FILE="dwd_key.json"
     if [ ! -f "$KEY_FILE" ]; then
-        gcloud iam service-accounts keys create "$KEY_FILE" \
-            --iam-account="$SA_EMAIL" \
-            --project="$GCP_PROJECT" --quiet
-        echo -e "${GREEN}✔ JSON key downloaded to '$(pwd)/$KEY_FILE'.${NC}"
+        log_debug "Generating private key file: $KEY_FILE"
+        if [ "$VERBOSE" = "true" ]; then
+            gcloud iam service-accounts keys create "$KEY_FILE" \
+                --iam-account="$SA_EMAIL" \
+                --project="$GCP_PROJECT"
+        else
+            gcloud iam service-accounts keys create "$KEY_FILE" \
+                --iam-account="$SA_EMAIL" \
+                --project="$GCP_PROJECT" --quiet
+        fi
+        log_success "JSON key downloaded to '$(pwd)/$KEY_FILE'."
     else
-        echo -e "${GREEN}✔ Existing key file '$KEY_FILE' detected.${NC}"
+        log_success "Existing key file '$KEY_FILE' detected."
     fi
     
     echo -e "\n${BLUE}[3/5] Securing DWD Private Key in Secret Manager...${NC}"
     KEY_SECRET_NAME="device_trust_gateway_dwd_key"
-    if ! gcloud secrets describe "$KEY_SECRET_NAME" --project="$GCP_PROJECT" &>/dev/null; then
-        echo "Creating Secret Manager secret '$KEY_SECRET_NAME'..."
-        gcloud secrets create "$KEY_SECRET_NAME" --replication-policy="automatic" --project="$GCP_PROJECT" --quiet
-        gcloud secrets versions add "$KEY_SECRET_NAME" --data-file="$KEY_FILE" --project="$GCP_PROJECT" --quiet
+    log_debug "Checking Secret Manager secret '$KEY_SECRET_NAME'..."
+    local secret_check_err
+    secret_check_err=$(mktemp)
+    if ! gcloud secrets describe "$KEY_SECRET_NAME" --project="$GCP_PROJECT" 2>"$secret_check_err" >/dev/null; then
+        log_debug "Secret does not exist. Creating '$KEY_SECRET_NAME'..."
+        if [ "$VERBOSE" = "true" ]; then
+            gcloud secrets create "$KEY_SECRET_NAME" --replication-policy="automatic" --project="$GCP_PROJECT"
+            gcloud secrets versions add "$KEY_SECRET_NAME" --data-file="$KEY_FILE" --project="$GCP_PROJECT"
+        else
+            gcloud secrets create "$KEY_SECRET_NAME" --replication-policy="automatic" --project="$GCP_PROJECT" --quiet
+            gcloud secrets versions add "$KEY_SECRET_NAME" --data-file="$KEY_FILE" --project="$GCP_PROJECT" --quiet
+        fi
+        log_success "Secret '$KEY_SECRET_NAME' created and version added."
     else
-        echo -e "${GREEN}✔ Secret '$KEY_SECRET_NAME' already securely stored.${NC}"
+        log_success "Secret '$KEY_SECRET_NAME' already securely stored."
     fi
+    rm -f "$secret_check_err"
     
     # Explicitly grant Secret Manager Accessor permissions to our dedicated DWD service account for DWD Key
     echo "Granting Secret Accessor IAM binding to '$SA_EMAIL' for DWD Key..."
-    gcloud secrets add-iam-policy-binding "$KEY_SECRET_NAME" \
+    log_debug "Executing: gcloud secrets add-iam-policy-binding $KEY_SECRET_NAME --member=serviceAccount:$SA_EMAIL --role=roles/secretmanager.secretAccessor"
+    local iam_bind_err
+    iam_bind_err=$(mktemp)
+    if ! gcloud secrets add-iam-policy-binding "$KEY_SECRET_NAME" \
         --member="serviceAccount:$SA_EMAIL" \
         --role="roles/secretmanager.secretAccessor" \
-        --project="$GCP_PROJECT" --quiet > /dev/null 2>&1 || echo "IAM binding already configured."
+        --project="$GCP_PROJECT" --quiet 2>"$iam_bind_err" >/dev/null; then
+        log_debug "IAM binding output/error: $(cat "$iam_bind_err")"
+        echo "IAM binding already configured or updated."
+    else
+        log_success "IAM policy binding configured for '$SA_EMAIL'."
+    fi
+    rm -f "$iam_bind_err"
         
     echo -e "\n${BLUE}[4/5] Retrieving Service Account Client ID...${NC}"
-    CLIENT_ID=$(gcloud iam service-accounts describe "$SA_EMAIL" --project="$GCP_PROJECT" --format="value(oauth2ClientId)" 2>/dev/null || gcloud iam service-accounts describe "$SA_EMAIL" --project="$GCP_PROJECT" --format="value(uniqueId)")
+    log_debug "Retrieving oauth2ClientId / uniqueId for '$SA_EMAIL'..."
+    CLIENT_ID=$(gcloud iam service-accounts describe "$SA_EMAIL" --project="$GCP_PROJECT" --format="value(oauth2ClientId)" 2>/dev/null || gcloud iam service-accounts describe "$SA_EMAIL" --project="$GCP_PROJECT" --format="value(uniqueId)" 2>/dev/null || true)
+    
+    if [ -z "$CLIENT_ID" ]; then
+        log_warn "Could not automatically retrieve Client ID via gcloud CLI."
+        read -p "Enter your Service Account Numeric Client ID manually (or press Enter to retry): " CLIENT_ID
+    else
+        log_debug "Retrieved Client ID: $CLIENT_ID"
+    fi
     
     echo -e "\n${RED}===================================================================================================${NC}"
     echo -e "${YELLOW}🔑 REQUIRED WORKSPACE ADMIN CONSOLE ACTION:${NC}"
@@ -100,15 +352,18 @@ setup_domain_wide_delegation() {
     
     echo ""
     CURRENT_EMAIL=$(gcloud config get-value account 2>/dev/null || true)
-    if [ -n "$CURRENT_EMAIL" ] && [[ "$CURRENT_EMAIL" != *"gserviceaccount.com"* ]]; then
-        read -p "Enter the email address of a Workspace Super Administrator to impersonate [${CURRENT_EMAIL}]: " ADMIN_EMAIL
-        ADMIN_EMAIL=${ADMIN_EMAIL:-$CURRENT_EMAIL}
-    else
-        read -p "Enter the email address of a Workspace Super Administrator to impersonate (e.g., admin@yourdomain.com): " ADMIN_EMAIL
+    if [ -z "$WORKSPACE_ADMIN_EMAIL" ]; then
+        if [ -n "$CURRENT_EMAIL" ] && [[ "$CURRENT_EMAIL" != *"gserviceaccount.com"* ]]; then
+            read -p "Enter the email address of a Workspace Super Administrator to impersonate [${CURRENT_EMAIL}]: " ADMIN_EMAIL
+            ADMIN_EMAIL=${ADMIN_EMAIL:-$CURRENT_EMAIL}
+        else
+            read -p "Enter the email address of a Workspace Super Administrator to impersonate (e.g., admin@yourdomain.com): " ADMIN_EMAIL
+        fi
+        WORKSPACE_ADMIN_EMAIL="$ADMIN_EMAIL"
     fi
     
     export GOOGLE_APPLICATION_CREDENTIALS="$(pwd)/$KEY_FILE"
-    export WORKSPACE_ADMIN_EMAIL="$ADMIN_EMAIL"
+    export WORKSPACE_ADMIN_EMAIL="$WORKSPACE_ADMIN_EMAIL"
     export DWD_SA_EMAIL="$SA_EMAIL"
     
     echo -e "\n${GREEN}✔ DWD Setup Complete! Credentials exported for live API execution.${NC}"
@@ -167,7 +422,7 @@ configure_inventory_seeding() {
                 GATEWAY_URL="$CUSTOM_URL"
             fi
             if [ -z "$GATEWAY_URL" ]; then
-                echo -e "${RED}Error: Public Gateway URL is required for this option. Skipping seeding configuration.${NC}"
+                log_error "Public Gateway URL is required for this option. Skipping seeding configuration."
                 return
             fi
             # Remove trailing slash if present
@@ -196,49 +451,70 @@ configure_inventory_seeding() {
             if [ -z "$GCP_PROJECT" ]; then
                 read -p "Enter your Google Cloud Project ID: " GCP_PROJECT
             fi
-            read -p "Enter target Cloud Scheduler region [us-central1]: " GCP_REGION
-            GCP_REGION=${GCP_REGION:-us-central1}
+            read -p "Enter target Cloud Scheduler region [${GCP_REGION}]: " SCHEDULER_REGION
+            SCHEDULER_REGION=${SCHEDULER_REGION:-$GCP_REGION}
             
-            gcloud scheduler jobs create http seed-chromebook-inventory-daily \
+            log_debug "Creating Daily Cloud Scheduler job 'seed-chromebook-inventory-daily' in region '$SCHEDULER_REGION'..."
+            local sched_err
+            sched_err=$(mktemp)
+            if ! gcloud scheduler jobs create http seed-chromebook-inventory-daily \
                 --schedule="0 2 * * *" \
                 --uri="${GATEWAY_URL}/api/cron/cleanup" \
                 --http-method=POST \
                 --headers="X-Cloudscheduler=true" \
-                --location="$GCP_REGION" \
+                --location="$SCHEDULER_REGION" \
                 --project="$GCP_PROJECT" \
-                --description="Daily crawl of active Chromebooks for Cloud Identity anchoring" --quiet 2>/dev/null || echo "Scheduler job already configured."
+                --description="Daily crawl of active Chromebooks for Cloud Identity anchoring" --quiet 2>"$sched_err"; then
+                if grep -qi "ALREADY_EXISTS" "$sched_err"; then
+                    echo "Scheduler job already configured."
+                else
+                    log_warn "Scheduler creation notice: $(cat "$sched_err")"
+                fi
+            fi
+            rm -f "$sched_err"
                 
-            echo -e "${GREEN}✔ Daily Cloud Scheduler Job configured successfully! (Runs at 2:00 AM daily)${NC}"
+            log_success "Daily Cloud Scheduler Job configured successfully! (Runs at 2:00 AM daily)"
             ;;
           3)
             echo -e "\n${BLUE}Configuring Weekly GCP Cloud Scheduler Job...${NC}"
             if [ -z "$GCP_PROJECT" ]; then
                 read -p "Enter your Google Cloud Project ID: " GCP_PROJECT
             fi
-            read -p "Enter target Cloud Scheduler region [us-central1]: " GCP_REGION
-            GCP_REGION=${GCP_REGION:-us-central1}
+            read -p "Enter target Cloud Scheduler region [${GCP_REGION}]: " SCHEDULER_REGION
+            SCHEDULER_REGION=${SCHEDULER_REGION:-$GCP_REGION}
             
-            gcloud scheduler jobs create http seed-chromebook-inventory-weekly \
+            log_debug "Creating Weekly Cloud Scheduler job 'seed-chromebook-inventory-weekly' in region '$SCHEDULER_REGION'..."
+            local sched_err
+            sched_err=$(mktemp)
+            if ! gcloud scheduler jobs create http seed-chromebook-inventory-weekly \
                 --schedule="0 3 * * 0" \
                 --uri="${GATEWAY_URL}/api/cron/cleanup" \
                 --http-method=POST \
                 --headers="X-Cloudscheduler=true" \
-                --location="$GCP_REGION" \
+                --location="$SCHEDULER_REGION" \
                 --project="$GCP_PROJECT" \
-                --description="Weekly crawl of active Chromebooks for Cloud Identity anchoring" --quiet 2>/dev/null || echo "Scheduler job already configured."
+                --description="Weekly crawl of active Chromebooks for Cloud Identity anchoring" --quiet 2>"$sched_err"; then
+                if grep -qi "ALREADY_EXISTS" "$sched_err"; then
+                    echo "Scheduler job already configured."
+                else
+                    log_warn "Scheduler creation notice: $(cat "$sched_err")"
+                fi
+            fi
+            rm -f "$sched_err"
                 
-            echo -e "${GREEN}✔ Weekly Cloud Scheduler Job configured successfully! (Runs at 3:00 AM every Sunday)${NC}"
+            log_success "Weekly Cloud Scheduler Job configured successfully! (Runs at 3:00 AM every Sunday)"
             ;;
           4)
             echo -e "\n${BLUE}Configuring Event-Driven Pub/Sub Push Webhook & Weekly Cron Safety Net...${NC}"
             if [ -z "$GCP_PROJECT" ]; then
                 read -p "Enter your Google Cloud Project ID: " GCP_PROJECT
             fi
-            read -p "Enter target GCP region [us-central1]: " GCP_REGION
-            GCP_REGION=${GCP_REGION:-us-central1}
+            read -p "Enter target GCP region [${GCP_REGION}]: " SCHEDULER_REGION
+            SCHEDULER_REGION=${SCHEDULER_REGION:-$GCP_REGION}
             
             TOPIC_NAME="chrome-enrollment-events"
             echo "Verifying Pub/Sub topic '$TOPIC_NAME'..."
+            log_debug "Creating Pub/Sub topic '$TOPIC_NAME'..."
             gcloud pubsub topics create "$TOPIC_NAME" --project="$GCP_PROJECT" --quiet 2>/dev/null || echo "Topic already exists."
             
             SA_NAME="device-trust-gateway-sa"
@@ -249,7 +525,7 @@ configure_inventory_seeding() {
 
             echo "Granting Cloud Run Invoker role to '$SA_EMAIL' for push authentication..."
             gcloud run services add-iam-policy-binding device-trust-gateway \
-                --region="$GCP_REGION" \
+                --region="$SCHEDULER_REGION" \
                 --member="serviceAccount:$SA_EMAIL" \
                 --role="roles/run.invoker" \
                 --project="$GCP_PROJECT" --quiet 2>/dev/null || true
@@ -277,14 +553,14 @@ configure_inventory_seeding() {
                 --uri="${GATEWAY_URL}/api/cron/cleanup" \
                 --http-method=POST \
                 --headers="X-Cloudscheduler=true" \
-                --location="$GCP_REGION" \
+                --location="$SCHEDULER_REGION" \
                 --project="$GCP_PROJECT" \
                 --description="Weekly safety net crawl of active Chromebooks for Cloud Identity anchoring" --quiet 2>/dev/null || echo "Weekly cron already configured."
                 
-            echo -e "${GREEN}✔ Real-Time Event-Driven Seeding configured successfully!${NC}"
+            log_success "Real-Time Event-Driven Seeding configured successfully!"
             ;;
           *)
-            echo -e "${RED}Invalid scheduling option. Skipping seeding configuration.${NC}"
+            log_error "Invalid scheduling option. Skipping seeding configuration."
             ;;
         esac
     else
@@ -358,12 +634,17 @@ data['trusted_ip_ranges'] = json.loads('''$IP_ARRAY_JSON''')
 print(json.dumps(data))
 ")
                 echo -n "$UPDATED_PAYLOAD" | gcloud secrets versions add "$SECRET_NAME" --data-file=- --project="$GCP_PROJECT" --quiet
-                echo -e "${GREEN}✔ Secret Manager updated with trusted IP ranges: ${IP_ARRAY_JSON}${NC}"
+                log_success "Secret Manager updated with trusted IP ranges: ${IP_ARRAY_JSON}"
             fi
         fi
 
         echo -e "\n${BLUE}[1/5] Enabling IAP and Compute Engine APIs...${NC}"
-        gcloud services enable iap.googleapis.com compute.googleapis.com accesscontextmanager.googleapis.com --project="$GCP_PROJECT" --quiet
+        log_debug "Enabling iap.googleapis.com compute.googleapis.com accesscontextmanager.googleapis.com..."
+        if [ "$VERBOSE" = "true" ]; then
+            gcloud services enable iap.googleapis.com compute.googleapis.com accesscontextmanager.googleapis.com --project="$GCP_PROJECT"
+        else
+            gcloud services enable iap.googleapis.com compute.googleapis.com accesscontextmanager.googleapis.com --project="$GCP_PROJECT" --quiet
+        fi
         
         echo -e "\n${BLUE}[2/5] Restricting Cloud Run service ingress to Load Balancer only...${NC}"
         gcloud run services update "$SERVICE_NAME" \
@@ -524,52 +805,87 @@ print_final_summary() {
     echo -e "${GREEN}===================================================================================================${NC}\n"
 }
 
+# --- Main Entry Point ---
+
 echo -e "${BLUE}=========================================================${NC}"
 echo -e "${BLUE}      Device Trust Gateway - Interactive Deployer        ${NC}"
 echo -e "${BLUE}=========================================================${NC}"
-echo ""
-echo "Please select your desired deployment target:"
-echo "  1) Google Cloud (GCP Cloud Run + Secret Manager)"
-echo "  2) On-Premise (Docker Compose + Local .env)"
-echo "  3) Exit"
-echo ""
-read -p "Enter option [1-3]: " OPTION
+
+if [ "$VERBOSE" = "true" ]; then
+    log_info "Verbose logging mode enabled."
+fi
+if [ "$SKIP_BILLING_CHECK" = "true" ]; then
+    log_warn "Pre-flight billing check bypass enabled."
+fi
+
+# Select target option if not passed via CLI flag
+if [ -z "$DEPLOY_TARGET" ]; then
+    echo ""
+    echo "Please select your desired deployment target:"
+    echo "  1) Google Cloud (GCP Cloud Run + Secret Manager)"
+    echo "  2) On-Premise (Docker Compose + Local .env)"
+    echo "  3) Exit"
+    echo ""
+    read -p "Enter option [1-3]: " OPTION
+else
+    OPTION="$DEPLOY_TARGET"
+fi
 
 case $OPTION in
   1)
     echo -e "\n${YELLOW}--- Starting GCP Cloud Run Deployment ---${NC}"
     
     if ! command -v gcloud &> /dev/null; then
-        echo -e "${RED}Error: gcloud CLI could not be found. Please install the Google Cloud SDK.${NC}"
+        log_error "gcloud CLI could not be found. Please install the Google Cloud SDK (https://cloud.google.com/sdk)."
         exit 1
     fi
     
-    read -p "Enter your Google Cloud Project ID: " GCP_PROJECT
-    read -p "Enter target Cloud Run region [us-central1]: " GCP_REGION
-    GCP_REGION=${GCP_REGION:-us-central1}
-    
-    echo -e "\n${BLUE}[1/7] Setting active GCP project...${NC}"
-    gcloud config set project "$GCP_PROJECT" --quiet
-    
-    echo -e "\n${BLUE}[2/7] Verifying project billing account status...${NC}"
-    BILLING_ENABLED=$(gcloud beta billing projects describe "$GCP_PROJECT" --format="value(billingEnabled)" 2>/dev/null || echo "false")
-    
-    if [ "$BILLING_ENABLED" != "True" ] && [ "$BILLING_ENABLED" != "true" ]; then
-        echo -e "\n${RED}===================================================================================================${NC}"
-        echo -e "${RED}❌ ERROR: Active billing account not found for project '$GCP_PROJECT'.${NC}"
-        echo -e "${RED}Google Cloud Run, Cloud Build, and Secret Manager require an active billing account to be linked.${NC}"
-        echo -e "${YELLOW}Instructions:${NC}"
-        echo -e "  1. Open the Google Cloud Console: https://console.cloud.google.com/billing"
-        echo -e "  2. Link an active billing account to project '$GCP_PROJECT'."
-        echo -e "  3. Re-run this deployment script."
-        echo -e "${RED}===================================================================================================${NC}\n"
-        exit 1
-    else
-        echo -e "${GREEN}✔ Active billing account verified.${NC}"
+    if [ -z "$GCP_PROJECT" ]; then
+        read -p "Enter your Google Cloud Project ID: " GCP_PROJECT
     fi
+    if [ -z "$GCP_PROJECT" ]; then
+        log_error "Google Cloud Project ID is required."
+        exit 1
+    fi
+    
+    if [ -z "$GCP_REGION" ] || [ "$GCP_REGION" = "us-central1" ]; then
+        read -p "Enter target Cloud Run region [${GCP_REGION}]: " INPUT_REGION
+        GCP_REGION=${INPUT_REGION:-$GCP_REGION}
+    fi
+    
+    echo -e "\n${BLUE}[1/7] Setting active GCP project to '$GCP_PROJECT'...${NC}"
+    log_debug "Executing: gcloud config set project \"$GCP_PROJECT\""
+    local proj_set_err
+    proj_set_err=$(mktemp)
+    if ! gcloud config set project "$GCP_PROJECT" 2>"$proj_set_err" >/dev/null; then
+        log_error "Failed to set active GCP project to '$GCP_PROJECT':"
+        cat "$proj_set_err"
+        rm -f "$proj_set_err"
+        exit 1
+    fi
+    rm -f "$proj_set_err"
+    log_success "Active GCP project set."
+    
+    # Run robust pre-flight billing verification
+    verify_billing_account "$GCP_PROJECT"
     
     echo -e "\n${BLUE}[3/7] Enabling required Google Cloud APIs...${NC}"
-    gcloud services enable run.googleapis.com secretmanager.googleapis.com cloudidentity.googleapis.com cloudbuild.googleapis.com cloudscheduler.googleapis.com pubsub.googleapis.com firestore.googleapis.com admin.googleapis.com --quiet
+    REQUIRED_APIS="run.googleapis.com secretmanager.googleapis.com cloudidentity.googleapis.com cloudbuild.googleapis.com cloudscheduler.googleapis.com pubsub.googleapis.com firestore.googleapis.com admin.googleapis.com"
+    log_debug "Executing: gcloud services enable $REQUIRED_APIS --project=\"$GCP_PROJECT\""
+    local api_err
+    api_err=$(mktemp)
+    if [ "$VERBOSE" = "true" ]; then
+        gcloud services enable $REQUIRED_APIS --project="$GCP_PROJECT"
+    else
+        if ! gcloud services enable $REQUIRED_APIS --project="$GCP_PROJECT" --quiet 2>"$api_err"; then
+            log_error "Failed to enable required Google Cloud APIs:"
+            cat "$api_err"
+            rm -f "$api_err"
+            exit 1
+        fi
+    fi
+    rm -f "$api_err"
+    log_success "Required Google Cloud APIs enabled."
     
     # Ensure DWD credentials and Admin Email are established before initializing config
     if [ -z "$WORKSPACE_ADMIN_EMAIL" ]; then
@@ -578,9 +894,16 @@ case $OPTION in
     
     echo -e "\n${BLUE}[4/7] Initializing Secret Manager for dynamic admin configuration...${NC}"
     SECRET_NAME="device_trust_gateway_config"
-    if ! gcloud secrets describe "$SECRET_NAME" --project="$GCP_PROJECT" &>/dev/null; then
+    log_debug "Checking Secret Manager secret '$SECRET_NAME'..."
+    local sec_desc_err
+    sec_desc_err=$(mktemp)
+    if ! gcloud secrets describe "$SECRET_NAME" --project="$GCP_PROJECT" 2>"$sec_desc_err" >/dev/null; then
         echo "Creating new Secret Manager secret: $SECRET_NAME"
-        gcloud secrets create "$SECRET_NAME" --replication-policy="automatic" --project="$GCP_PROJECT" --quiet
+        if [ "$VERBOSE" = "true" ]; then
+            gcloud secrets create "$SECRET_NAME" --replication-policy="automatic" --project="$GCP_PROJECT"
+        else
+            gcloud secrets create "$SECRET_NAME" --replication-policy="automatic" --project="$GCP_PROJECT" --quiet
+        fi
         
         INIT_ADMINS='[]'
         if [ -n "$WORKSPACE_ADMIN_EMAIL" ]; then
@@ -588,33 +911,97 @@ case $OPTION in
         fi
         DEFAULT_CONFIG="{\"customer_id\": \"customers/my_customer\", \"inactivity_threshold_days\": 90, \"revocation_action\": \"DELETE\", \"default_locale\": \"en\", \"portal_admins\": ${INIT_ADMINS}, \"trusted_ip_ranges\": [], \"chaining_allowed_groups\": [], \"chaining_allowed_ous\": []}"
         echo -n "$DEFAULT_CONFIG" | gcloud secrets versions add "$SECRET_NAME" --data-file=- --project="$GCP_PROJECT" --quiet
+        log_success "Secret '$SECRET_NAME' created with initial default configuration."
     else
-        echo -e "${GREEN}Secret '$SECRET_NAME' already exists in project.${NC}"
+        log_success "Secret '$SECRET_NAME' already exists in project."
     fi
+    rm -f "$sec_desc_err"
     
     # Explicitly grant Secret Manager Accessor permissions to our dedicated DWD service account for Admin Config Secret
     echo "Granting Secret Accessor IAM binding to '$DWD_SA_EMAIL' for Admin Config Secret..."
-    gcloud secrets add-iam-policy-binding "$SECRET_NAME" \
+    log_debug "Executing: gcloud secrets add-iam-policy-binding $SECRET_NAME --member=serviceAccount:$DWD_SA_EMAIL --role=roles/secretmanager.secretAccessor"
+    local sec_iam_err
+    sec_iam_err=$(mktemp)
+    if ! gcloud secrets add-iam-policy-binding "$SECRET_NAME" \
         --member="serviceAccount:$DWD_SA_EMAIL" \
         --role="roles/secretmanager.secretAccessor" \
-        --project="$GCP_PROJECT" --quiet > /dev/null 2>&1 || echo "IAM binding already configured."
+        --project="$GCP_PROJECT" --quiet 2>"$sec_iam_err" >/dev/null; then
+        log_debug "Secret IAM binding output/notice: $(cat "$sec_iam_err")"
+        echo "IAM binding already configured or updated."
+    else
+        log_success "Secret Accessor IAM policy binding verified."
+    fi
+    rm -f "$sec_iam_err"
     
     echo -e "\n${BLUE}[5/7] Phase 1: Executing baseline container build to establish live Cloud Run URL...${NC}"
     IMAGE_TAG="gcr.io/$GCP_PROJECT/device-trust-gateway"
     
-    gcloud builds submit --config cloudbuild.yaml . --project="$GCP_PROJECT" --substitutions=_GOOGLE_CLIENT_ID="" --suppress-logs
+    log_debug "Executing Cloud Build for baseline image '$IMAGE_TAG'..."
+    local build_err
+    build_err=$(mktemp)
+    if [ "$VERBOSE" = "true" ]; then
+        echo -e "${CYAN}Streaming live Cloud Build logs...${NC}"
+        if ! gcloud builds submit --config cloudbuild.yaml . --project="$GCP_PROJECT" --substitutions=_GOOGLE_CLIENT_ID=""; then
+            log_error "Cloud Build failed. Check the output above for build errors."
+            exit 1
+        fi
+    else
+        if ! gcloud builds submit --config cloudbuild.yaml . --project="$GCP_PROJECT" --substitutions=_GOOGLE_CLIENT_ID="" --suppress-logs 2>"$build_err"; then
+            log_error "Cloud Build submission failed:"
+            cat "$build_err"
+            rm -f "$build_err"
+            echo -e "${YELLOW}Tip: Run with --verbose (-v) to view live container build logs.${NC}"
+            exit 1
+        fi
+    fi
+    rm -f "$build_err"
+    log_success "Baseline container build succeeded."
     
-    SERVICE_URL=$(gcloud run deploy device-trust-gateway \
-        --image "$IMAGE_TAG" \
-        --platform managed \
-        --region "$GCP_REGION" \
-        --project "$GCP_PROJECT" \
-        --allow-unauthenticated \
-        --service-account="$DWD_SA_EMAIL" \
-        --format="value(status.url)" \
-        --quiet \
-        --set-secrets="/secrets/dwd_key.json=device_trust_gateway_dwd_key:latest" \
-        --set-env-vars="USE_SECRET_MANAGER=true,SECRET_NAME=$SECRET_NAME,GOOGLE_CLOUD_PROJECT=$GCP_PROJECT,WORKSPACE_ADMIN_EMAIL=$WORKSPACE_ADMIN_EMAIL,GOOGLE_APPLICATION_CREDENTIALS=/secrets/dwd_key.json" 2>/dev/null || echo "https://device-trust-gateway-${GCP_PROJECT}.us-central1.run.app")
+    log_debug "Deploying baseline Cloud Run service..."
+    local deploy_err
+    deploy_err=$(mktemp)
+    local raw_service_url=""
+    
+    if [ "$VERBOSE" = "true" ]; then
+        echo -e "${CYAN}Executing live Cloud Run deployment...${NC}"
+        gcloud run deploy device-trust-gateway \
+            --image "$IMAGE_TAG" \
+            --platform managed \
+            --region "$GCP_REGION" \
+            --project "$GCP_PROJECT" \
+            --allow-unauthenticated \
+            --service-account="$DWD_SA_EMAIL" \
+            --set-secrets="/secrets/dwd_key.json=device_trust_gateway_dwd_key:latest" \
+            --set-env-vars="USE_SECRET_MANAGER=true,SECRET_NAME=$SECRET_NAME,GOOGLE_CLOUD_PROJECT=$GCP_PROJECT,WORKSPACE_ADMIN_EMAIL=$WORKSPACE_ADMIN_EMAIL,GOOGLE_APPLICATION_CREDENTIALS=/secrets/dwd_key.json"
+        
+        raw_service_url=$(gcloud run services describe device-trust-gateway --platform managed --region "$GCP_REGION" --project "$GCP_PROJECT" --format="value(status.url)" 2>/dev/null || true)
+    else
+        raw_service_url=$(gcloud run deploy device-trust-gateway \
+            --image "$IMAGE_TAG" \
+            --platform managed \
+            --region "$GCP_REGION" \
+            --project "$GCP_PROJECT" \
+            --allow-unauthenticated \
+            --service-account="$DWD_SA_EMAIL" \
+            --format="value(status.url)" \
+            --quiet \
+            --set-secrets="/secrets/dwd_key.json=device_trust_gateway_dwd_key:latest" \
+            --set-env-vars="USE_SECRET_MANAGER=true,SECRET_NAME=$SECRET_NAME,GOOGLE_CLOUD_PROJECT=$GCP_PROJECT,WORKSPACE_ADMIN_EMAIL=$WORKSPACE_ADMIN_EMAIL,GOOGLE_APPLICATION_CREDENTIALS=/secrets/dwd_key.json" 2>"$deploy_err" || true)
+    fi
+    
+    if [ -z "$raw_service_url" ]; then
+        log_error "Cloud Run baseline deployment failed:"
+        if [ -s "$deploy_err" ]; then
+            cat "$deploy_err"
+        else
+            echo "Cloud Run did not return a valid service URL."
+        fi
+        rm -f "$deploy_err"
+        echo -e "${YELLOW}Tip: Run with --verbose (-v) for detailed Cloud Run deployment logs.${NC}"
+        exit 1
+    fi
+    rm -f "$deploy_err"
+    SERVICE_URL="$raw_service_url"
         
     echo -e "${GREEN}✔ Baseline service established at: ${SERVICE_URL}${NC}"
     
@@ -644,17 +1031,38 @@ case $OPTION in
     read -p "Enter your authorized Google OAuth 2.0 Client ID: " GOOGLE_CLIENT_ID
     
     echo -e "\n${BLUE}[7/7] Phase 3: Updating Cloud Run configuration with authorized OAuth Client ID (Zero container rebuild required!)...${NC}"
+    log_debug "Updating Cloud Run service with GOOGLE_CLIENT_ID..."
+    local final_deploy_err
+    final_deploy_err=$(mktemp)
     
-    gcloud run deploy device-trust-gateway \
-        --image "$IMAGE_TAG" \
-        --platform managed \
-        --region "$GCP_REGION" \
-        --project "$GCP_PROJECT" \
-        --allow-unauthenticated \
-        --service-account="$DWD_SA_EMAIL" \
-        --quiet \
-        --set-secrets="/secrets/dwd_key.json=device_trust_gateway_dwd_key:latest" \
-        --set-env-vars="USE_SECRET_MANAGER=true,SECRET_NAME=$SECRET_NAME,GOOGLE_CLOUD_PROJECT=$GCP_PROJECT,WORKSPACE_ADMIN_EMAIL=$WORKSPACE_ADMIN_EMAIL,GOOGLE_CLIENT_ID=$GOOGLE_CLIENT_ID,GOOGLE_APPLICATION_CREDENTIALS=/secrets/dwd_key.json"
+    if [ "$VERBOSE" = "true" ]; then
+        gcloud run deploy device-trust-gateway \
+            --image "$IMAGE_TAG" \
+            --platform managed \
+            --region "$GCP_REGION" \
+            --project "$GCP_PROJECT" \
+            --allow-unauthenticated \
+            --service-account="$DWD_SA_EMAIL" \
+            --set-secrets="/secrets/dwd_key.json=device_trust_gateway_dwd_key:latest" \
+            --set-env-vars="USE_SECRET_MANAGER=true,SECRET_NAME=$SECRET_NAME,GOOGLE_CLOUD_PROJECT=$GCP_PROJECT,WORKSPACE_ADMIN_EMAIL=$WORKSPACE_ADMIN_EMAIL,GOOGLE_CLIENT_ID=$GOOGLE_CLIENT_ID,GOOGLE_APPLICATION_CREDENTIALS=/secrets/dwd_key.json"
+    else
+        if ! gcloud run deploy device-trust-gateway \
+            --image "$IMAGE_TAG" \
+            --platform managed \
+            --region "$GCP_REGION" \
+            --project "$GCP_PROJECT" \
+            --allow-unauthenticated \
+            --service-account="$DWD_SA_EMAIL" \
+            --quiet \
+            --set-secrets="/secrets/dwd_key.json=device_trust_gateway_dwd_key:latest" \
+            --set-env-vars="USE_SECRET_MANAGER=true,SECRET_NAME=$SECRET_NAME,GOOGLE_CLOUD_PROJECT=$GCP_PROJECT,WORKSPACE_ADMIN_EMAIL=$WORKSPACE_ADMIN_EMAIL,GOOGLE_CLIENT_ID=$GOOGLE_CLIENT_ID,GOOGLE_APPLICATION_CREDENTIALS=/secrets/dwd_key.json" 2>"$final_deploy_err"; then
+            log_error "Phase 3 Cloud Run configuration update failed:"
+            cat "$final_deploy_err"
+            rm -f "$final_deploy_err"
+            exit 1
+        fi
+    fi
+    rm -f "$final_deploy_err"
         
     echo -e "\n${GREEN}=========================================================${NC}"
     echo -e "${GREEN}✔ GCP Deployment & OAuth Authorization Complete!${NC}"
@@ -670,7 +1078,7 @@ case $OPTION in
     echo -e "\n${YELLOW}--- Starting On-Premise Docker Compose Deployment ---${NC}"
     
     if ! command -v docker &> /dev/null; then
-        echo -e "${RED}Error: Docker could not be found. Please install Docker and Docker Compose.${NC}"
+        log_error "Docker could not be found. Please install Docker and Docker Compose."
         exit 1
     fi
     
@@ -686,12 +1094,18 @@ TENANT_TRUSTED_IPS=[]
 TENANT_CHAINING_GROUPS=[]
 TENANT_CHAINING_OUS=[]
 EOF
+        log_success "Baseline .env created."
     else
-        echo -e "${GREEN}Existing .env file detected.${NC}"
+        log_success "Existing .env file detected."
     fi
     
     echo -e "\n${BLUE}Building and launching Docker containers in background...${NC}"
-    docker-compose -f deploy/docker-compose.yml up --build -d
+    log_debug "Executing: docker-compose -f deploy/docker-compose.yml up --build -d"
+    if [ "$VERBOSE" = "true" ]; then
+        docker-compose -f deploy/docker-compose.yml up --build -d
+    else
+        docker-compose -f deploy/docker-compose.yml up --build -d
+    fi
     
     echo -e "\n${GREEN}=========================================================${NC}"
     echo -e "${GREEN}✔ On-Premise Deployment Complete! Backend running on port 8080.${NC}"
@@ -708,7 +1122,7 @@ EOF
     ;;
     
   *)
-    echo -e "${RED}Invalid option selected. Exiting.${NC}"
+    log_error "Invalid option selected. Exiting."
     exit 1
     ;;
 esac
