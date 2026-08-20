@@ -55,9 +55,9 @@ describe("Dashboard Page", () => {
 
   test("renders logged out state by default", () => {
     render(<Dashboard />);
-    expect(screen.getByText("Device Trust Gateway")).toBeInTheDocument();
-    expect(screen.getByText("Google Authentication")).toBeInTheDocument();
-    expect(screen.getByText("Please sign in with Google above to view your registered enterprise hardware assets.")).toBeInTheDocument();
+    expect(screen.getByText("Device Trust Gateway Portal")).toBeInTheDocument();
+    expect(screen.getByText("Google Workspace Authentication")).toBeInTheDocument();
+    expect(screen.getAllByText("Please sign in with your Google Workspace corporate account to manage device access:").length).toBeGreaterThan(0);
     expect(screen.queryByText("Active Session")).not.toBeInTheDocument();
   });
 
@@ -79,7 +79,7 @@ describe("Dashboard Page", () => {
     expect(localStorage.getItem("googleIdToken")).toBe("mock-token");
   });
 
-  test("renders logged in state with devices for regular user", async () => {
+  test("renders logged in state with personal BYOD devices", async () => {
     localStorage.setItem("userEmail", "user@example.com");
     localStorage.setItem("googleIdToken", "mock-token");
     
@@ -99,7 +99,7 @@ describe("Dashboard Page", () => {
 
     render(<Dashboard />);
 
-    expect(screen.getByText("Device Trust Gateway")).toBeInTheDocument();
+    expect(screen.getByText("Device Trust Gateway Portal")).toBeInTheDocument();
     expect(screen.getByText("Active Session")).toBeInTheDocument();
     expect(screen.getAllByText("user@example.com").length).toBeGreaterThan(0);
     
@@ -108,12 +108,61 @@ describe("Dashboard Page", () => {
       expect(screen.getByText("MacBook Pro")).toBeInTheDocument();
     });
 
+    expect(screen.getByText("Personal BYOD Devices")).toBeInTheDocument();
     expect(screen.getByText("macOS 14.0 (DESKTOP)")).toBeInTheDocument();
     expect(screen.getByText("Serial/IMEI: C02XX123XX")).toBeInTheDocument();
     expect(screen.getByText("APPROVED")).toBeInTheDocument();
+    expect(screen.getByText("✕ Revoke")).toBeInTheDocument();
     
     // Admin config should NOT be visible
     expect(screen.queryByText(/Admin Configurations/)).not.toBeInTheDocument();
+  });
+
+  test("renders separated company-owned devices table without checkboxes or action buttons", async () => {
+    localStorage.setItem("userEmail", "user@example.com");
+    localStorage.setItem("googleIdToken", "mock-token");
+
+    mockCheckIsAdmin.mockResolvedValue(false);
+    mockGetMyDevices.mockResolvedValue([
+      {
+        device_user_name: "devices/1/deviceUsers/1",
+        device_type: "DESKTOP",
+        model: "MacBook Pro BYOD",
+        os_version: "macOS 14.0",
+        serial_number: "C02XX123XX",
+        approval_state: "APPROVED",
+        owner_type: "BYOD",
+        last_sync_time: "2026-06-15T12:00:00Z",
+      },
+      {
+        device_user_name: "devices/2/deviceUsers/2",
+        device_type: "CHROME_OS",
+        model: "Lenovo 300e Chromebook",
+        os_version: "ChromeOS 120",
+        serial_number: "LR00ABCD",
+        approval_state: "APPROVED",
+        owner_type: "COMPANY",
+        last_sync_time: "2026-06-16T08:30:00Z",
+      },
+    ]);
+
+    render(<Dashboard />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Personal BYOD Devices")).toBeInTheDocument();
+      expect(screen.getByText("Company-Owned Devices")).toBeInTheDocument();
+    });
+
+    // Check personal BYOD device has checkbox & revoke button
+    expect(screen.getByText("MacBook Pro BYOD")).toBeInTheDocument();
+    expect(screen.getByLabelText("Select device MacBook Pro BYOD")).toBeInTheDocument();
+    expect(screen.getByText("✕ Revoke")).toBeInTheDocument();
+
+    // Check company-owned device renders in separate table with badge, NO checkbox, NO revoke button
+    expect(screen.getByText("Lenovo 300e Chromebook")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Select device Lenovo 300e Chromebook")).not.toBeInTheDocument();
+    expect(screen.getAllByText("🏢 Company Owned Device").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Immutable Anchor")).not.toBeInTheDocument();
   });
 
   test("renders admin configurations link for admin user", async () => {
@@ -126,7 +175,7 @@ describe("Dashboard Page", () => {
     render(<Dashboard />);
 
     await waitFor(() => {
-      expect(screen.getByText("⚙️ Admin Configurations")).toBeInTheDocument();
+      expect(screen.getByText("Admin Configurations")).toBeInTheDocument();
     });
   });
 });

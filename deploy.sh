@@ -602,9 +602,21 @@ configure_inventory_seeding() {
 
 # Helper function for optional Identity-Aware Proxy (IAP) Edge Defense setup
 configure_iap_edge_defense() {
-    echo -e "\n${YELLOW}--- Identity-Aware Proxy (IAP) Edge Defense & Access Control Configuration ---${NC}"
-    echo "Would you like to enable Identity-Aware Proxy (IAP) Edge Defense to restrict portal access to corporate IP subnets or company-owned devices?"
-    read -p "Enable IAP Edge Defense? (y/n): " DO_IAP
+    echo -e "\n${YELLOW}===================================================================================================${NC}"
+    echo -e "${YELLOW}      Identity-Aware Proxy (IAP) Edge Defense & Access Control Configuration                      ${NC}"
+    echo -e "${YELLOW}===================================================================================================${NC}"
+    echo -e "${BLUE}💡 Important Architectural Decision for Schools & Hybrid Workplaces:${NC}"
+    echo -e "  • ${GREEN}Standard Mode [Recommended for Schools / Higher Ed / Hybrid Work - Default 'N']:${NC}"
+    echo -e "    Keeps the Gateway Portal accessible over public HTTPS, protected by Google OAuth 2.0 and"
+    echo -e "    ${YELLOW}Trust Chaining (6-digit pairing code)${NC}. This allows students and staff at home to approve"
+    echo -e "    their personal home computers for homework/remote work using their school-issued Chromebook."
+    echo -e "  • ${RED}Strict IAP Mode [High-Security / On-Premise-Only Corporate - 'Y']:${NC}"
+    echo -e "    Places Cloud Run behind Identity-Aware Proxy and restricts access strictly to campus/office IP"
+    echo -e "    subnets or company-owned devices. ${RED}WARNING:${NC} Students/staff at home will NOT be able to"
+    echo -e "    reach the portal or approve personal devices outside campus unless connected to school VPN."
+    echo ""
+    read -p "Enable Strict IAP Edge Defense? (y/N) [Default: N]: " DO_IAP
+    DO_IAP=${DO_IAP:-n}
     
     if [[ "$DO_IAP" =~ ^[Yy]$ ]]; then
         local SERVICE_NAME="device-trust-gateway"
@@ -622,7 +634,7 @@ configure_iap_edge_defense() {
         
         echo ""
         echo "Select Access Control & Posture restriction mode:"
-        echo "  1) IP Subnet Gating AND (Company-Owned OR Admin-Approved BYOD Devices) [Recommended]"
+        echo "  1) IP Subnet Gating AND (Company-Owned OR Admin-Approved BYOD Devices)"
         echo "  2) IP Subnet Gating AND Strictly Company-Owned Devices Only"
         echo "  3) Company-Owned OR Admin-Approved BYOD Devices (Any IP)"
         echo "  4) Strictly Company-Owned Devices Only (Any IP)"

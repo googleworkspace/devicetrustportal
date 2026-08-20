@@ -46,10 +46,34 @@ device.is_corp_owned == true || device.is_admin_approved == true
 
 ---
 
-## 🔒 2. Gating the Gateway Portal at the Edge (Google Cloud IAP)
+## 🔒 2. Gating the Gateway Portal at the Edge: Standard Mode vs. IAP Edge Defense
 
-While CAA protects your Workspace applications, how do you protect the Gateway portal itself from being accessed by unauthorized external attackers? 
-You can restrict access to the Gateway UI so that it can **only** be reached from company-owned hardware or trusted corporate IP ranges by placing Cloud Run behind **Identity-Aware Proxy (IAP)**.
+Organizations can deploy the Gateway in one of two distinct ingress architectures based on their organizational policy and remote access requirements:
+
+### Architectural Comparison:
+
+| Dimension | Standard Mode (Default / Recommended for Schools) | Strict IAP Edge Defense Mode (On-Premise / Corporate) |
+| :--- | :--- | :--- |
+| **Ingress Point** | Direct Cloud Run HTTPS Service URL | Cloud HTTPS Load Balancer + Identity-Aware Proxy (IAP) |
+| **Authentication** | Google Workspace OAuth 2.0 Sign-In + Trust Chaining | Google Cloud Identity-Aware Proxy (IAP) Edge Gating |
+| **Remote Access** | Accessible anywhere with valid Google credentials | Restricted to configured corporate IP CIDRs / VPN |
+| **BYOD Homework Flow** | **Seamless:** Students at home generate a 6-digit pairing code on their school Chromebook to approve their home PC | **Blocked:** Personal devices at home cannot reach the portal or approve hardware without a district VPN |
+| **Ideal For** | K-12 School Districts, Higher Ed, Hybrid Workplaces | Financial Services, Defense, Strict On-Premise Only |
+
+---
+
+### Understanding the School & Homework Trade-Off:
+> [!IMPORTANT]
+> **Why Schools Default to Standard Mode (No IAP):**
+> In K-12 and university environments, students frequently need to access Google Classroom, Drive, and Workspace apps from personal home desktops/laptops in the evening to complete homework.
+> 
+> * **With Standard Mode:** The student signs into the portal on their managed school Chromebook, clicks **Generate Pairing Code**, and enters the 6-digit code on their home laptop. The home laptop is approved immediately and securely.
+> * **With Strict IAP Edge Defense:** Because the home IP address is not part of the school district's campus network, IAP blocks the student at the network edge with a `403 Forbidden` error. The student cannot get their device approved and is locked out of their homework until they return to school the next day.
+
+---
+
+### Step-by-Step IAP Configuration Blueprint (For Strict On-Premise Deployments):
+If your security policy mandates that BYOD device approvals must occur exclusively while connected to the campus network or an enterprise VPN:
 
 ```
 +-----------------------------------------------------------------------------------+
@@ -76,7 +100,6 @@ You can restrict access to the Gateway UI so that it can **only** be reached fro
 +-----------------------------------------------------------------------------------+
 ```
 
-### Step-by-Step IAP Configuration Blueprint:
 1. **Remove Public Access:** Ensure your Cloud Run service does not allow unauthenticated access (`gcloud run services remove-iam-policy-binding device-trust-gateway --member="allUsers" --role="roles/run.invoker"`).
 2. **Deploy External Load Balancer:** Configure a GCP External HTTP(S) Load Balancer with a Serverless Network Endpoint Group (NEG) pointing to your Cloud Run service.
 3. **Enable IAP:** In the GCP Console (**Security > Identity-Aware Proxy**), enable IAP on your Load Balancer backend service.

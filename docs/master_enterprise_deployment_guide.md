@@ -266,17 +266,38 @@ gcloud run deploy device-trust-gateway \
 
 ### Target 4: Optional Portal Edge Defense (Identity-Aware Proxy / IAP)
 
-To protect the Device Trust Gateway portal itself from being scanned or accessed by unauthenticated internet bad actors, place Cloud Run behind Google Cloud **Identity-Aware Proxy (IAP)**:
+> [!IMPORTANT]
+> **Architectural Decision Guide: Education & Hybrid Work vs. Strict On-Premise Enterprise**
+>
+> When configuring portal access, organizations must choose between two distinct security architectures:
+>
+> 1. **Standard Mode (Recommended for K-12, Higher Ed, and Hybrid Workplaces — Default):**
+>    - **How it Works:** The Gateway portal is hosted directly on Cloud Run over public HTTPS, protected by **Google Workspace OAuth 2.0 Sign-In** and **Trust Chaining (6-digit pairing code)**.
+>    - **The Student/Homework Workflow:** A student at home working on a personal PC/Mac opens the portal on their school-issued Chromebook, clicks **Generate Pairing Code**, and enters the code on their home PC to approve it.
+>    - **User Impact:** **Zero friction.** Students can approve home computers in the evening to complete homework and assignments without IT helpdesk intervention.
+>
+> 2. **Strict IAP Edge Defense Mode (Strict Corporate / On-Premise Only):**
+>    - **How it Works:** Places Cloud Run behind Google Cloud **Identity-Aware Proxy (IAP)** and an External HTTP(S) Load Balancer, restricting traffic strictly to corporate egress IP subnets or company-owned hardware.
+>    - **User Impact:** **External Access Blocked.** Students or staff at home attempting to access the portal from a personal device are blocked at the edge with a `403 Forbidden` screen. Personal devices **cannot** be approved while off-campus unless the user connects through an enterprise VPN.
+>    - **When to Use:** Only enable IAP Edge Defense if district/organization policy mandates that BYOD device approvals must occur exclusively while physically present on campus Wi-Fi or inside an administrative office.
 
 ```
-External Internet ──> HTTP(S) Load Balancer ──> IAP Edge Gating ──> Cloud Run (Gateway Backend)
-                                                 [Rule: Corporate IP or Corp Device]
++---------------------------------------------------------------------------------------------------+
+| STANDARD MODE (Recommended for Schools)   | STRICT IAP MODE (On-Premise / Strict Corporate)      |
++-------------------------------------------+-------------------------------------------------------+
+| • Public Cloud Run URL over HTTPS         | • Ingress restricted to Load Balancer + IAP Gating    |
+| • Protected by Google OAuth 2.0           | • Restricted to Campus IP CIDRs or Corp Hardware      |
+| • Remote self-service via Pairing Codes   | • No access from home internet without VPN            |
+| • Students can do homework on home PCs    | • Blocks student home approvals (locks until on-site) |
++---------------------------------------------------------------------------------------------------+
 ```
 
+#### Step-by-Step IAP Setup (If Mandated by Organization Policy):
+If your security policy mandates strict on-campus-only gating:
 1. **Restrict Cloud Run Ingress:** Set Cloud Run ingress control to **Internal and Cloud Load Balancing only**.
 2. **Deploy HTTPS Load Balancer:** Create a GCP Load Balancer with a Serverless Network Endpoint Group (NEG) pointing to Cloud Run.
 3. **Enable IAP:** In **GCP Console > Security > Identity-Aware Proxy**, enable IAP on the backend service.
-4. **Configure Access Level:** Bind an Access Level requiring corporate IP subnets (`10.0.0.0/8`) or corporate device posture to the IAP resource. External bad actors attempting to reach the portal URL are blocked at the edge with a 403 screen.
+4. **Configure Access Level:** In **Access Context Manager**, create an Access Level requiring corporate IP subnets (`10.0.0.0/8`) or corporate device posture. External users attempting to reach the portal from home internet will be blocked at the edge.
 
 ---
 

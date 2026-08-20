@@ -160,8 +160,8 @@ The deployment wizard will guide you through the setup automatically. Here is wh
    - Click **Create**, copy your **Client ID**, and paste it into the terminal prompt.
 
 5. **Access Control & IAP Edge Defense:**
-   - Select option `1` for **IP Subnet Gating AND (Company-Owned OR Admin-Approved BYOD Devices)**.
-   - Enter your corporate Public Egress IP ranges (e.g., `203.0.113.0/24`) or internal subnets if using Cloud VPN/Interconnect, or press Enter to allow any IP.
+   - **Recommended for Schools & Hybrid Work (Default: N):** Press **N** (or Enter) to skip IAP Edge Defense. The portal runs in Standard Mode over public HTTPS, secured by Google Sign-In and **Trust Chaining (6-digit pairing codes)**. This ensures students and staff at home can approve personal devices to do homework using their school Chromebook.
+   - **Strict Corporate Mode (Option Y):** Places Cloud Run behind Google Cloud IAP and an HTTPS Load Balancer, restricting portal access to campus IP subnets or company hardware. Only use this if your organization strictly requires device approvals to happen on-premises.
 
 6. **Activate Workspace Policy:**
    - Open [Google Workspace Admin Console > Context-Aware Access](https://admin.google.com/ac/security/contextaware).
@@ -390,9 +390,18 @@ For the complete, detailed specification covering exact ports, protocols, revers
 
 ---
 
-## 🔒 Identity-Aware Proxy (IAP) Edge Gating
+## 🔒 Identity-Aware Proxy (IAP) Edge Gating: Standard Mode vs. Strict Gating
 
-To ensure the Gateway portal itself can **only** be reached from company-owned hardware or trusted corporate IP ranges, organizations can place Cloud Run behind an External HTTP(S) Load Balancer and enable **Identity-Aware Proxy (IAP)**.
+When deploying the Device Trust Gateway, administrators must decide how the portal itself is accessed:
 
-For the complete, step-by-step IAP architecture and Access Context Manager configuration blueprint, please refer to our dedicated zero-trust guide:
-👉 **[docs/caa_architecture_overview.md](docs/caa_architecture_overview.md)**
+### 1. Standard Mode (Default — Strongly Recommended for K-12, Higher Ed & Hybrid Teams)
+* **How it works:** Cloud Run is hosted over public HTTPS and secured by **Google Workspace OAuth 2.0 Sign-In** and **Trust Chaining (6-digit pairing codes)**.
+* **Why it's essential for Schools & Homework:** Students at home working on a personal PC or Mac can open the portal on their school-issued Chromebook, generate a 6-digit pairing code, and approve their home computer in seconds. They are never locked out of doing evening homework or accessing Google Classroom/Drive.
+
+### 2. Strict IAP Edge Defense Mode (For High-Security On-Premise-Only Corporate Networks)
+* **How it works:** Cloud Run is placed behind an External HTTP(S) Load Balancer and Google Cloud **Identity-Aware Proxy (IAP)**, restricting ingress strictly to corporate egress IP CIDRs or company-owned hardware.
+* **⚠️ Warning for Schools:** If enabled, students attempting to access the portal from home internet will receive a `403 Forbidden` error. They will **not** be able to approve personal devices or complete assignments until they physically connect to the school network or VPN.
+
+For full architectural blueprints, diagrams, and Access Context Manager setup guides:
+👉 **[docs/caa_architecture_overview.md](docs/caa_architecture_overview.md)** — Comprehensive Zero-Trust & IAP Architecture Whitepaper
+👉 **[docs/master_enterprise_deployment_guide.md](docs/master_enterprise_deployment_guide.md)** — Master Enterprise Deployment Guide
