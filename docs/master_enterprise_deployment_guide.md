@@ -28,7 +28,7 @@ The **Device Trust Gateway** is a zero-trust bridge application that decouples a
 +-----------------------------------------------------------------------------------+
 |                     Google Workspace Context-Aware Access (CAA)                   |
 |                                                                                   |
-|   [ RULE: device.is_corp_owned == true || device.is_admin_approved == true ]      |
+| [ RULE: device.is_corp_owned_device == true || device.is_admin_approved_device == true ] |
 +-----------------------------------------+-----------------------------------------+
                                           |
                      +--------------------+--------------------+
@@ -42,8 +42,8 @@ The **Device Trust Gateway** is a zero-trust bridge application that decouples a
 +-----------------------------------------+ +-----------------------------------------+
 ```
 
-* **Company-Owned Devices:** Managed hardware (such as Chromebooks enrolled via zero-touch or manual CSV upload) are automatically trusted as Company-Owned (`is_corp_owned == true`).
-* **Personal BYOD Devices:** Employees install the privacy-preserving **Google Endpoint Verification** extension. Devices report telemetry without MDM control. When a user approves a personal device via the self-service Gateway portal, the backend updates its state to `APPROVED` in Cloud Identity (`is_admin_approved == true`), satisfying CAA rules and granting access.
+* **Company-Owned Devices:** Managed hardware (such as Chromebooks enrolled via zero-touch or manual CSV upload) are automatically trusted as Company-Owned (`is_corp_owned_device == true`).
+* **Personal BYOD Devices:** Employees install the privacy-preserving **Google Endpoint Verification** extension. Devices report telemetry without MDM control. When a user approves a personal device via the self-service Gateway portal, the backend updates its state to `APPROVED` in Cloud Identity (`is_admin_approved_device == true`), satisfying CAA rules and granting access.
 
 ---
 
@@ -82,9 +82,9 @@ Here is the exact step-by-step experience for an end-user connecting from a new 
 2. The force-installed Endpoint Verification extension transmits device telemetry to Google Cloud Identity.
 3. Google Workspace Context-Aware Access evaluates the incoming request against your tenant's Access Level rule:
    ```text
-   device.is_corp_owned == true || device.is_admin_approved == true
+   device.is_corp_owned_device == true || device.is_admin_approved_device == true
    ```
-4. Because the personal device is unapproved (`is_admin_approved == false`) and not company inventory (`is_corp_owned == false`), Context-Aware Access blocks the request and displays a **403 Access Denied** screen with a link to your Device Trust Gateway portal.
+4. Because the personal device is unapproved (`is_admin_approved_device == false`) and not company inventory (`is_corp_owned_device == false`), Context-Aware Access blocks the request and displays a **403 Access Denied** screen with a link to your Device Trust Gateway portal.
 
 ### Step 2: Self-Service Device Registration
 The user can approve their new personal device using one of two self-service authorization models:
@@ -107,7 +107,7 @@ The user can approve their new personal device using one of two self-service aut
 
 ### Step 3: Access Restored
 1. The user reloads Gmail or Google Drive on their personal device.
-2. Context-Aware Access re-evaluates the device posture. Because `device.is_admin_approved` is now `true`, access is instantly granted.
+2. Context-Aware Access re-evaluates the device posture. Because `device.is_admin_approved_device` is now `true`, access is instantly granted.
 
 ---
 
@@ -170,12 +170,16 @@ To prevent data access inside unmanaged personal Chrome browser profiles:
 1. Go to **Security > Access and data control > Context-Aware Access** (`https://admin.google.com/ac/security/contextaware`).
 2. Click **Create Access Level**.
 3. Name: `Approved Devices Only`.
-4. Switch to **Advanced mode** and paste this CEL expression:
+4. Switch to **Advanced mode** and paste this exact CEL expression:
    ```text
-   device.is_corp_owned == true || device.is_admin_approved == true
+   device.is_corp_owned_device == true || device.is_admin_approved_device == true
    ```
 5. Click **Save**.
-6. Click **Assign to apps** and bind this Access Level to **Google Workspace** (Gmail, Google Drive, Google Calendar, Admin Console, etc.).
+6. Navigate to **Assign to apps** to configure policy enforcement:
+   * ⚠️ **Critical: Target Organizational Unit (OU) Selection:** In the left Organizational Unit tree, **do NOT leave this policy assigned to the Root Organizational Unit (`/`)**. The Admin Console defaults to the Root OU, which will immediately apply the access level domain-wide to all user accounts (including Super Admins, faculty, and IT staff). If left at the Root OU without widespread pre-approval, administrators and staff can be locked out. Instead, explicitly select a specific target OU (such as **`Students` OU** or a dedicated **`Test / Pilot OU`**) to isolate policy enforcement.
+   * **App Assignment:** Assign this level to the Workspace Apps of your choice (eg. Gmail, Drive…).
+   * **Enforcement Policy:** Set policies to **Block** when policies / access levels are not met.
+   * **Desktop & Mobile Apps:** Ensure policy is set to Enable for **Apply to Google desktop and mobile apps** (to enforce policy across native clients like Gmail mobile and Google Drive for Desktop in addition to web browsers).
 
 ### Step 7: Execute the Zero-Trust Baseline Revocation Sweep
 Because initial Chrome browser profile sign-ins tag new desktop assets as `APPROVED` by default before revocation, execute the mass revocation script to reset unapproved BYOD hardware to `BLOCKED`:
@@ -330,5 +334,5 @@ WORKSPACE_ADMIN_EMAIL=admin@yourdomain.com backend/venv/bin/python backend/scrip
 | **Cloud Build or Cloud Run deployment failure during script run** | Container build error, IAM role shortage, or service quota issue | Run `./deploy.sh --verbose` (or `-v`) to stream real-time container build logs and Cloud Run service revision error messages. |
 | **New Mac auto-approves upon sign-in** | User is in a sub-OU (e.g. `/Admin`) with inherited auto-approval | Open `Devices > Universal settings > Security`, select the `/Admin` OU on the left, and check **Require admin approval**. |
 | **User sees duplicate Mac entries in Portal** | Hardware serial asset vs. Extension virtual cert vs. Legacy browser profile | The portal backend automatically deduplicates rows, prioritizing physical serial assets (`Serial: C02F30BV0KPF`). Instruct users to approve the physical serial row. |
-| **Context-Aware Access not blocking unapproved devices** | CAA Access Level is not assigned to apps | Go to `Security > Context-Aware Access > Assign to apps` and assign `Approved Devices Only` to Google Workspace. |
+| **Context-Aware Access not blocking unapproved devices** | CAA Access Level is not assigned to apps, or policy is not set to Block | Go to `Security > Access and data control > Context-Aware Access > Assign to apps`. Select your target OU (e.g. `Students`), assign `Approved Devices Only` to the Workspace Apps of your choice (eg. Gmail, Drive…), set policy enforcement to **Block**, and enable **Apply to Google desktop and mobile apps**. |
 | **Endpoint Verification telemetry missing** | Extension lacks key/challenge permissions | Ensure **Allow access to keys** and **Allow enterprise challenge** are set to **ON** in extension policy. |

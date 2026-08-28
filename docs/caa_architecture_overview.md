@@ -21,7 +21,7 @@ When the employee successfully authorizes their device on our Gateway, our backe
 +-----------------------------------------------------------------------------------+
 |                     Google Workspace Context-Aware Access (CAA)                   |
 |                                                                                   |
-|   [ RULE: device.is_corp_owned == true || device.is_admin_approved == true ]      |
+| [ RULE: device.is_corp_owned_device == true || device.is_admin_approved_device == true ] |
 +-----------------------------------------+-----------------------------------------+
                                           |
                      +--------------------+--------------------+
@@ -39,10 +39,16 @@ When the employee successfully authorizes their device on our Gateway, our backe
 To enforce this across your tenant, navigate to **Google Workspace Admin Console > Security > Access and data control > Context-Aware Access** (`https://admin.google.com/ac/security/contextaware`) and create a Custom Access Level using this exact Common Expression Language (CEL) rule:
 
 ```text
-device.is_corp_owned == true || device.is_admin_approved == true
+device.is_corp_owned_device == true || device.is_admin_approved_device == true
 ```
-* **`device.is_corp_owned == true`:** Automatically permits access from corporate hardware trust anchors (e.g., zero-touch Chromebooks, company-owned Macs).
-* **`device.is_admin_approved == true`:** Automatically permits access from personal BYOD hardware that has been vetted and approved via our Gateway portal!
+* **`device.is_corp_owned_device == true`:** Automatically permits access from corporate hardware trust anchors (e.g., zero-touch Chromebooks, company-owned Macs).
+* **`device.is_admin_approved_device == true`:** Automatically permits access from personal BYOD hardware that has been vetted and approved via our Gateway portal!
+
+#### Best Practices for Policy Assignment & Scoping:
+1. **Target Organizational Unit (OU) Selection:** In **Assign to apps**, **do NOT leave this policy assigned to the Root Organizational Unit (`/`)**. The Admin Console defaults to the Root OU, which will immediately enforce the rule domain-wide on all users (including Super Admins and faculty) and can result in severe lockouts. Instead, explicitly select a specific target OU (such as **`Students` OU** or a dedicated **`Test / Pilot OU`**) to isolate policy enforcement.
+2. **App Assignment:** Assign this level to the Workspace Apps of your choice (eg. Gmail, Drive…).
+3. **Enforcement Policy:** Set policies to **Block** when policies / access levels are not met (ensures access is restricted rather than just audited in Monitor Mode).
+4. **Desktop & Mobile Apps:** Ensure policy is set to Enable for **Apply to Google desktop and mobile apps** (ensuring native desktop clients like Google Drive for Desktop and mobile apps like Gmail iOS/Android are evaluated alongside web browsers).
 
 ---
 
@@ -90,7 +96,7 @@ If your security policy mandates that BYOD device approvals must occur exclusive
 +-----------------------------------------------------------------------------------+
 |                     Identity-Aware Proxy (IAP) Edge Gating                        |
 |                                                                                   |
-|  [ ACCESS LEVEL: ip_subnetworks: ["10.0.0.0/8"] OR device.is_corp_owned ]         |
+|  [ ACCESS LEVEL: ip_subnetworks: ["10.0.0.0/8"] OR device.is_corp_owned_device ]  |
 |  [ RESULT: Blocks external attacker with 403 Access Denied at edge ]              |
 +-----------------------------------------+-----------------------------------------+
                                           |

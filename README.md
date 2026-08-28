@@ -164,10 +164,16 @@ The deployment wizard will guide you through the setup automatically. Here is wh
    - **Strict Corporate Mode (Option Y):** Places Cloud Run behind Google Cloud IAP and an HTTPS Load Balancer, restricting portal access to campus IP subnets or company hardware. Only use this if your organization strictly requires device approvals to happen on-premises.
 
 6. **Activate Workspace Policy:**
-   - Open [Google Workspace Admin Console > Context-Aware Access](https://admin.google.com/ac/security/contextaware).
-   - Create Access Level named `Approved Devices Only` with CEL expression:
-     `device.is_corp_owned == true || device.is_admin_approved == true`
-   - Assign this level to Workspace apps (Gmail, Drive).
+   - Open [Google Workspace Admin Console > Security > Access and data control > Context-Aware Access](https://admin.google.com/ac/security/contextaware).
+   - Click **Create Access Level**, switch to **Advanced mode**, and create an Access Level named `Approved Devices Only` with CEL expression:
+     ```text
+     device.is_corp_owned_device == true || device.is_admin_approved_device == true
+     ```
+   - Click **Assign to apps**:
+     - ⚠️ **Important (Target Organizational Unit Selection):** In the left Organizational Unit tree, **do NOT leave this policy assigned to the Root Organizational Unit (`/`)**. The Admin Console defaults to the Root OU, which will immediately apply the policy domain-wide to all users (including Super Admins and faculty) and can cause catastrophic lockouts. Instead, explicitly select your target OU (e.g., **`Students` OU** or a dedicated **`Test / Pilot OU`**).
+     - **App Assignment:** Assign this level to the Workspace Apps of your choice (eg. Gmail, Drive…).
+     - **Enforcement Policy:** Set policies to **Block** when policies / access levels are not met.
+     - **Desktop & Mobile Apps:** Ensure policy is set to Enable for **Apply to Google desktop and mobile apps** (to enforce policy across native clients like Gmail mobile and Google Drive for Desktop in addition to web browsers).
 
 🎉 **Done!** Your portal is now fully live and securing your enterprise workspace!
 
@@ -255,7 +261,7 @@ To successfully deploy Context-Aware Access (CAA) policies that mandate device a
 +-----------------------------------------------------------------------------------+
 |                   Google Workspace Context-Aware Access (CAA)                     |
 |                                                                                   |
-|     [ RULE: device.is_corp_owned == true || device.is_admin_approved == true ]    |
+| [ RULE: device.is_corp_owned_device == true || device.is_admin_approved_device == true ] |
 |     [ RESULT: Blocks unapproved BYOD laptop with 403 Access Denied screen ]       |
 +-----------------------------------------+-----------------------------------------+
                                           |
@@ -274,7 +280,7 @@ To successfully deploy Context-Aware Access (CAA) policies that mandate device a
 |                          Google Cloud Identity Catalog                            |
 |                                                                                   |
 |     [ UPDATED STATE: managementState == APPROVED ]                                |
-|     [ CAA RESULT: Evaluates is_admin_approved == true. Access Granted! ]          |
+|     [ CAA RESULT: Evaluates is_admin_approved_device == true. Access Granted! ]   |
 +-----------------------------------------------------------------------------------+
 ```
 
@@ -282,11 +288,11 @@ To successfully deploy Context-Aware Access (CAA) policies that mandate device a
 1. **Endpoint Verification Enrollment:** Employees install the lightweight Google Endpoint Verification browser extension (or Google Smart Lock app on mobile). The extension collects hardware identifiers, OS version, and cryptographic certificates, registering the device in Cloud Identity as an unmanaged asset. By default, its device user binding initializes with `managementState` set to `PENDING_APPROVAL` or `UNMANAGED`.
 2. **CAA Guardrail Interception:** The Workspace Administrator activates a Custom Access Level in the Workspace Admin Console (`https://admin.google.com/ac/security/contextaware`) enforcing:
    ```text
-   device.is_corp_owned == true || device.is_admin_approved == true
+   device.is_corp_owned_device == true || device.is_admin_approved_device == true
    ```
-   When the employee attempts to open Gmail, Google evaluates their personal laptop. Because it is not company owned (`is_corp_owned == false`) and its Cloud Identity binding is still pending (`is_admin_approved == false`), CAA blocks them instantly at the edge with a `403 Access Denied` screen.
+   When the employee attempts to open Gmail, Google evaluates their personal laptop. Because it is not company owned (`is_corp_owned_device == false`) and its Cloud Identity binding is still pending (`is_admin_approved_device == false`), CAA blocks them instantly at the edge with a `403 Access Denied` screen.
 3. **Gateway Self-Service Approval:** The employee navigates to the Gateway portal (`https://device-trust-gateway-...`), authenticating securely via Google Sign-In. Our backend executes a filtered query (`service.devices().list(filter=f"email:{user_email}")`) and surfaces their pending laptop.
-4. **Instant Policy Resolution:** The employee clicks `[✓ Approve]`. The Gateway backend invokes Cloud Identity (`service.devices().deviceUsers().approve(...)`), immediately shifting the binding's `managementState` to `APPROVED`. The employee reloads Gmail, CAA evaluates `device.is_admin_approved` as `true`, and enterprise access is instantly restored!
+4. **Instant Policy Resolution:** The employee clicks `[✓ Approve]`. The Gateway backend invokes Cloud Identity (`service.devices().deviceUsers().approve(...)`), immediately shifting the binding's `managementState` to `APPROVED`. The employee reloads Gmail, CAA evaluates `device.is_admin_approved_device` as `true`, and enterprise access is instantly restored!
 
 ---
 

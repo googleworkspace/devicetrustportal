@@ -730,9 +730,9 @@ print(json.dumps(data))
           1)
             # IP Subnet Gating AND (Company-Owned OR Approved BYOD)
             if [ -n "$CEL_IP_LIST" ]; then
-                CEL_EXPRESSION="inSubnetwork(origin.ip, ${CEL_IP_LIST}) && (device.is_corp_owned == true || device.is_admin_approved == true)"
+                CEL_EXPRESSION="inSubnetwork(origin.ip, ${CEL_IP_LIST}) && (device.is_corp_owned_device == true || device.is_admin_approved_device == true)"
             else
-                CEL_EXPRESSION="device.is_corp_owned == true || device.is_admin_approved == true"
+                CEL_EXPRESSION="device.is_corp_owned_device == true || device.is_admin_approved_device == true"
             fi
             cat <<EOF > "$SPEC_FILE"
 # Access Context Manager Access Level Spec (IP Subnets AND [Company-Owned OR Approved BYOD])
@@ -764,7 +764,7 @@ EOF
             ;;
           3)
             # Company-Owned OR Admin-Approved BYOD (Any IP)
-            CEL_EXPRESSION="device.is_corp_owned == true || device.is_admin_approved == true"
+            CEL_EXPRESSION="device.is_corp_owned_device == true || device.is_admin_approved_device == true"
             cat <<EOF > "$SPEC_FILE"
 # Access Context Manager Access Level Spec (Company-Owned OR Approved BYOD - Any IP)
 title: Device Trust Gateway Access Policy
@@ -845,7 +845,7 @@ print_final_summary() {
     echo ""
     echo -e "${BLUE}Next Steps & Policy Reminder:${NC}"
     echo -e "Ensure your Google Workspace Context-Aware Access (CAA) Custom Access Level is actively enforcing:"
-    echo -e "  ${GREEN}device.is_corp_owned == true || device.is_admin_approved == true${NC}"
+    echo -e "  ${GREEN}device.is_corp_owned_device == true || device.is_admin_approved_device == true${NC}"
     echo -e "${GREEN}===================================================================================================${NC}\n"
 }
 

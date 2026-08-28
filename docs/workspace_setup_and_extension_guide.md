@@ -114,12 +114,16 @@ To transform `APPROVED` tags into mandatory access gatekeepers for Google Worksp
 1. Open **Security > Access and data control > Context-Aware Access** (`https://admin.google.com/ac/security/contextaware`).
 2. Click **Create Access Level**.
 3. Name the level: `Approved Devices Only`.
-4. Select **Advanced mode** and enter the following Common Expression Language (CEL) rule:
+4. Select **Advanced mode** and enter the following exact Common Expression Language (CEL) rule:
    ```text
-   device.is_corp_owned == true || device.is_admin_approved == true
+   device.is_corp_owned_device == true || device.is_admin_approved_device == true
    ```
 5. Click **Save**.
-6. Click **Assign to apps** and bind this Access Level to **Google Workspace** (Gmail, Google Drive, Google Calendar, Admin Console).
+6. Navigate to **Assign to apps** to configure policy enforcement:
+   * ⚠️ **Critical: Target Organizational Unit (OU) Selection:** In the left Organizational Unit tree, **do NOT leave this policy assigned to the Root Organizational Unit (`/`)**. The Admin Console defaults to the Root OU, which will immediately apply the access level domain-wide to all user accounts (including Super Admins, faculty, and IT staff). If left at the Root OU without widespread pre-approval, administrators and staff can be locked out. Instead, explicitly select a specific target OU (such as **`Students` OU** or a dedicated **`Test / Pilot OU`**) to isolate policy enforcement.
+   * **App Assignment:** Assign this level to the Workspace Apps of your choice (eg. Gmail, Drive…).
+   * **Enforcement Policy:** Set policies to **Block** when policies / access levels are not met.
+   * **Desktop & Mobile Apps:** Ensure policy is set to Enable for **Apply to Google desktop and mobile apps** (to enforce policy across native clients like Gmail mobile and Google Drive for Desktop in addition to web browsers).
 
 ---
 
