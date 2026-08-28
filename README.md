@@ -177,6 +177,13 @@ The deployment wizard will guide you through the setup automatically. Here is wh
 
 🎉 **Done!** Your portal is now fully live and securing your enterprise workspace!
 
+> [!TIP]
+> **💡 Misplaced your live Portal URL?**
+> If you need to retrieve your unique portal URL later for testing or bookmarking:
+> - **In Google Cloud Console:** Go to [Cloud Run](https://console.cloud.google.com/run) > click **`device-trust-gateway`**. The live HTTPS service URL is displayed directly at the top of the service page.
+> - **Via Terminal (CLI):** Run `gcloud run services describe device-trust-gateway --region us-central1 --format='value(status.url)'`
+> - **Admin Configuration UI:** Append `/#/admin` to your portal URL (e.g. `https://device-trust-gateway-xyz-uc.a.run.app/#/admin`).
+
 ---
 
 ## ⚡ Automated Interactive Deployer (Recommended)

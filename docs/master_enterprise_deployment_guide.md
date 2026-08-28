@@ -326,10 +326,20 @@ To inspect Cloud Identity device bindings, serial numbers, and audit events dire
 WORKSPACE_ADMIN_EMAIL=admin@yourdomain.com backend/venv/bin/python backend/scripts/pull_domain_device_logs.py
 ```
 
+### Finding & Retrieving Your Live Portal URL
+If you misplaced your unique Cloud Run portal URL after deployment:
+1. **Google Cloud Console UI:** Open [Google Cloud Console > Cloud Run](https://console.cloud.google.com/run) and click on **`device-trust-gateway`**. The live HTTPS service URL is displayed at the top of the service page.
+2. **Terminal (CLI Command):** Run the following command to print your active service URL:
+   ```bash
+   gcloud run services describe device-trust-gateway --region us-central1 --format='value(status.url)'
+   ```
+3. **Admin Configuration Dashboard:** Append `/#/admin` to the portal URL (e.g., `https://device-trust-gateway-xyz-uc.a.run.app/#/admin`).
+
 ### Common Issues & Remedies
 
 | Issue | Cause | Fix |
 | :--- | :--- | :--- |
+| **Misplaced or forgot unique Cloud Run Portal URL** | Portal URL was lost in terminal scrollback or between testing sessions | View it in [Cloud Run Console](https://console.cloud.google.com/run) > `device-trust-gateway` (at top of page), or run `gcloud run services describe device-trust-gateway --region <REGION> --format='value(status.url)'`. Append `/#/admin` for Admin UI. |
 | **Deployment stuck at billing check or fails with permission error** | Deploying account lacks `roles/billing.viewer` or `cloudbilling.googleapis.com` is disabled | Run with `./deploy.sh --verbose` to view exact CLI error details. If billing is managed centrally, run with `./deploy.sh --skip-billing-check` to bypass the verification. |
 | **Cloud Build or Cloud Run deployment failure during script run** | Container build error, IAM role shortage, or service quota issue | Run `./deploy.sh --verbose` (or `-v`) to stream real-time container build logs and Cloud Run service revision error messages. |
 | **New Mac auto-approves upon sign-in** | User is in a sub-OU (e.g. `/Admin`) with inherited auto-approval | Open `Devices > Universal settings > Security`, select the `/Admin` OU on the left, and check **Require admin approval**. |
