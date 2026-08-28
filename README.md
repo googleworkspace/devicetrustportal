@@ -42,6 +42,7 @@ For complete documentation detailing supported Workspace editions, end-user flow
 
 - **Google Cloud Project** with an **Active Billing Account** linked. *(Google Cloud Run, Cloud Build, Cloud Scheduler, and Secret Manager require billing to be enabled before APIs can be activated).*
 - **Google Workspace / Cloud Identity** tenant with Context-Aware Access (CAA) enabled.
+- **Google Endpoint Verification Chrome Extension** force-installed across target Organizational Units (OUs) to collect device signals and answer Context-Aware Access challenges (Extension ID: `callobklhcbilhphinckomhgkigmfocg`).
 - **Service Account Credentials** with Domain-Wide Delegation (DWD) authorized in Google Workspace Admin Console (`https://admin.google.com/ac/owl/domainwidedelegation`) for the following 4 required OAuth scopes:
   - `https://www.googleapis.com/auth/cloud-identity.devices`
   - `https://www.googleapis.com/auth/admin.directory.user.readonly`
@@ -163,7 +164,20 @@ The deployment wizard will guide you through the setup automatically. Here is wh
    - **Recommended for Schools & Hybrid Work (Default: N):** Press **N** (or Enter) to skip IAP Edge Defense. The portal runs in Standard Mode over public HTTPS, secured by Google Sign-In and **Trust Chaining (6-digit pairing codes)**. This ensures students and staff at home can approve personal devices to do homework using their school Chromebook.
    - **Strict Corporate Mode (Option Y):** Places Cloud Run behind Google Cloud IAP and an HTTPS Load Balancer, restricting portal access to campus IP subnets or company hardware. Only use this if your organization strictly requires device approvals to happen on-premises.
 
-6. **Activate Workspace Policy:**
+6. **Force-Install Google Endpoint Verification Extension (Google Admin Console):**
+   - Personal computers (macOS, Windows, Linux) require the **Google Endpoint Verification** extension to report hardware telemetry, manage cryptographic keys, and answer Context-Aware Access attestation challenges.
+   - Open [admin.google.com > Devices > Chrome > Apps & extensions > Users & browsers](https://admin.google.com/ac/chrome/apps/user).
+   - In the left Organizational Unit tree, select your target OU (e.g. `gwfe.org`, `/Students`, or `/Staff`).
+   - Click **Add (+) > Add Chrome app or extension by ID**, and enter Extension ID:
+     ```text
+     callobklhcbilhphinckomhgkigmfocg
+     ```
+   - In the right-hand options panel:
+     - Under **Installation policy**, select **Force install + pin to browser toolbar**.
+     - Under **Certificate management**, turn **ON** both **Allow access to keys** and **Allow enterprise challenge**.
+   - Click **Save**.
+
+7. **Activate Workspace Policy (Context-Aware Access):**
    - Open [Google Workspace Admin Console > Security > Access and data control > Context-Aware Access](https://admin.google.com/ac/security/contextaware).
    - Click **Create Access Level**, switch to **Advanced mode**, and create an Access Level named `Approved Devices Only` with CEL expression:
      ```text
@@ -292,7 +306,7 @@ To successfully deploy Context-Aware Access (CAA) policies that mandate device a
 ```
 
 ### Step-by-Step BYOD Lifecycle Workflow:
-1. **Endpoint Verification Enrollment:** Employees install the lightweight Google Endpoint Verification browser extension (or Google Smart Lock app on mobile). The extension collects hardware identifiers, OS version, and cryptographic certificates, registering the device in Cloud Identity as an unmanaged asset. By default, its device user binding initializes with `managementState` set to `PENDING_APPROVAL` or `UNMANAGED`.
+1. **Endpoint Verification Enrollment:** Administrators force-install the lightweight **Google Endpoint Verification** browser extension (`callobklhcbilhphinckomhgkigmfocg`) via the Google Admin Console across target OUs (or users install it on personal Chrome profiles / Google Smart Lock on mobile). The extension collects hardware identifiers, OS version, and cryptographic certificates, registering the device in Cloud Identity as an unmanaged asset. By default, its device user binding initializes with `managementState` set to `PENDING_APPROVAL` or `UNMANAGED`.
 2. **CAA Guardrail Interception:** The Workspace Administrator activates a Custom Access Level in the Workspace Admin Console (`https://admin.google.com/ac/security/contextaware`) enforcing:
    ```text
    device.is_corp_owned_device == true || device.is_admin_approved_device == true
