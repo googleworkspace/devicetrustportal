@@ -326,6 +326,34 @@ To inspect Cloud Identity device bindings, serial numbers, and audit events dire
 WORKSPACE_ADMIN_EMAIL=admin@yourdomain.com backend/venv/bin/python backend/scripts/pull_domain_device_logs.py
 ```
 
+### Post-Deployment: Moving Devices to Company-Owned Inventory
+If you already deployed the Gateway or skipped the seeding prompt during `./deploy.sh`, you can move devices into Company-Owned Inventory at any time:
+
+1. **Enterprise Chromebook Fleet (Direct Terminal Command):**
+   Run the seeding script directly from the project directory:
+   ```bash
+   WORKSPACE_ADMIN_EMAIL=admin@yourdomain.com \
+   GOOGLE_APPLICATION_CREDENTIALS=dwd_key.json \
+   backend/venv/bin/python backend/scripts/seed_company_inventory.py
+   ```
+   *Crawl all active Directory Chromebooks and registers them as Company-Owned (`ownerType: COMPANY`) in Cloud Identity so `device.is_corp_owned_device == true`.*
+
+2. **Automated Recurring Sync (Cloud Scheduler):**
+   ```bash
+   gcloud scheduler jobs create http seed-chromebook-inventory-daily \
+     --schedule="0 2 * * *" \
+     --uri="https://YOUR-GATEWAY-URL/api/cron/cleanup" \
+     --http-method=POST \
+     --headers="X-CloudScheduler=true" \
+     --location=us-central1
+   ```
+
+3. **Company-Owned Macs, Windows PCs & Mobile (Admin Console CSV Upload):**
+   For district/company-owned laptops and phones:
+   - Go to [admin.google.com > Devices > Mobile & endpoints > Company-owned inventory](https://admin.google.com/ac/devices/companyowned).
+   - Click **Import company-owned devices** (`+`), select **Company-owned computers** (or **Company-owned mobile devices**), and upload a CSV with device serial numbers.
+   - When users sign in with the Endpoint Verification extension on these computers, Google matches the serial number to the Company-Owned inventory, tagging them as `is_corp_owned_device == true`.
+
 ### Finding & Retrieving Your Live Portal URL
 If you misplaced your unique Cloud Run portal URL after deployment:
 1. **Google Cloud Console UI:** Open [Google Cloud Console > Cloud Run](https://console.cloud.google.com/run) and click on **`device-trust-gateway`**. The live HTTPS service URL is displayed at the top of the service page.
@@ -339,6 +367,7 @@ If you misplaced your unique Cloud Run portal URL after deployment:
 
 | Issue | Cause | Fix |
 | :--- | :--- | :--- |
+| **Did not seed company inventory during `./deploy.sh`** | Skipped prompt or deployment finished before seeding | Run `backend/venv/bin/python backend/scripts/seed_company_inventory.py` to seed Chromebooks, or upload Mac/PC serials to Google Admin Console > Company-owned inventory. |
 | **Misplaced or forgot unique Cloud Run Portal URL** | Portal URL was lost in terminal scrollback or between testing sessions | View it in [Cloud Run Console](https://console.cloud.google.com/run) > `device-trust-gateway` (at top of page), or run `gcloud run services describe device-trust-gateway --region <REGION> --format='value(status.url)'`. Append `/#/admin` for Admin UI. |
 | **Deployment stuck at billing check or fails with permission error** | Deploying account lacks `roles/billing.viewer` or `cloudbilling.googleapis.com` is disabled | Run with `./deploy.sh --verbose` to view exact CLI error details. If billing is managed centrally, run with `./deploy.sh --skip-billing-check` to bypass the verification. |
 | **Cloud Build or Cloud Run deployment failure during script run** | Container build error, IAM role shortage, or service quota issue | Run `./deploy.sh --verbose` (or `-v`) to stream real-time container build logs and Cloud Run service revision error messages. |

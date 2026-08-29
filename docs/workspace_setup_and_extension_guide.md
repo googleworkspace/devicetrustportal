@@ -107,6 +107,32 @@ When a user signs into Chrome browser on macOS or Windows without an active Cont
 
 ---
 
+## 🏢 Registering & Seeding Company-Owned Inventory
+
+Context-Aware Access rules permit access if `device.is_corp_owned_device == true || device.is_admin_approved_device == true`.
+
+To ensure your corporate hardware assets are recognized as **Company-Owned** (`is_corp_owned_device == true`) without requiring manual user self-service approval:
+
+### 1. Enterprise Chromebooks (Automated Seeding)
+If you skipped seeding during deployment or enrolled new Chromebooks:
+```bash
+WORKSPACE_ADMIN_EMAIL=admin@yourdomain.com \
+GOOGLE_APPLICATION_CREDENTIALS=dwd_key.json \
+backend/venv/bin/python backend/scripts/seed_company_inventory.py
+```
+*Queries the Directory API and batch-anchors all managed ChromeOS devices in Cloud Identity under `ownerType: COMPANY`.*
+
+### 2. Company-Owned Macs, Windows PCs & Mobile (Admin Console CSV Import)
+For district-issued MacBooks, Windows PCs, and mobile devices:
+1. Navigate to **Devices > Mobile & endpoints > Company-owned inventory** (`https://admin.google.com/ac/devices/companyowned`).
+2. Click **Import company-owned devices** (`+`).
+3. Select **Company-owned computers** or **Company-owned mobile devices**.
+4. Download the CSV template and populate hardware **Serial Numbers** and **Asset Tags**.
+5. Upload the CSV and click **Import**.
+6. When users sign in with the Endpoint Verification extension on these computers, Google automatically matches the hardware serial number and applies `is_corp_owned_device == true`.
+
+---
+
 ## 🛡 Context-Aware Access (CAA) Rule Setup
 
 To transform `APPROVED` tags into mandatory access gatekeepers for Google Workspace apps:

@@ -317,15 +317,44 @@ To successfully deploy Context-Aware Access (CAA) policies that mandate device a
 
 ---
 
-## 💻 Chromebook Fleet Seeding Tool
+## 🏢 Moving Devices into Company-Owned Inventory & Seeding Fleet
 
-For organizations with tens of thousands or hundreds of thousands of active ChromeOS devices, we provide an automated inventory seeding tool (`seed_company_inventory.py`) and real-time webhook endpoints (`/api/webhook/chrome-enrollment`).
+In Google Workspace Context-Aware Access, devices evaluating `device.is_corp_owned_device == true` must be registered in **Company-Owned Inventory** (distinct from personal BYOD devices that require `device.is_admin_approved_device == true`).
 
-This tool is seamlessly integrated into `./deploy.sh` and supports four execution frequencies:
-1. **One-Time Execution:** Runs the crawl immediately from your terminal, paginating through the Directory API and executing batch registration requests against Cloud Identity.
-2. **Daily Recurring Schedule:** Configures a Google Cloud Scheduler cron job to run daily at 2:00 AM.
-3. **Weekly Recurring Schedule:** Configures a Google Cloud Scheduler cron job to run every Sunday at 3:00 AM.
-4. **Event-Driven Real-Time Webhook (Pub/Sub Push) + Weekly Safety Net:** Establishes a real-time Google Cloud Pub/Sub push subscription with native OIDC push authentication listening for Google Workspace Reports API enrollment events (`ENTERPRISE_ENROLLMENT`), anchoring newly enrolled Chromebooks instantly while maintaining a weekly recurring sync as a reliable safety net.
+If you have already deployed the Gateway (or skipped seeding during the `./deploy.sh` installer), you can move devices into Company-Owned Inventory at any time using the methods below:
+
+### Method 1: ChromeOS Fleet Seeding Tool (One-Line Terminal Execution)
+To immediately crawl all active enterprise Chromebooks from the Directory API and anchor them in Cloud Identity as Company-Owned assets:
+
+```bash
+# Run from your local repository folder:
+WORKSPACE_ADMIN_EMAIL=admin@yourdomain.com \
+GOOGLE_APPLICATION_CREDENTIALS=dwd_key.json \
+backend/venv/bin/python backend/scripts/seed_company_inventory.py
+```
+* **What it does:** Automatically queries `admin.directory.device.chromeos` and batch-registers all managed Chromebooks into Cloud Identity under `ownerType: COMPANY`.
+
+### Method 2: Automated Recurring Synchronization (GCP Cloud Scheduler)
+To continuously synchronize newly enrolled enterprise Chromebooks automatically on a daily schedule:
+
+```bash
+gcloud scheduler jobs create http seed-chromebook-inventory-daily \
+  --schedule="0 2 * * *" \
+  --uri="https://YOUR-GATEWAY-URL/api/cron/cleanup" \
+  --http-method=POST \
+  --headers="X-CloudScheduler=true" \
+  --location=us-central1
+```
+
+### Method 3: Company-Owned Macs, Windows PCs & Mobile (Google Admin Console CSV Upload)
+For non-ChromeOS company assets (such as district-issued MacBooks, Windows desktops, or school iPads):
+
+1. Open [Google Admin Console > Devices > Mobile & endpoints > Company-owned inventory](https://admin.google.com/ac/devices/companyowned).
+2. Click **Import company-owned devices** (the `+` / Import button at the top).
+3. Select your device type (**Company-owned computers** for Mac/PC/Linux, or **Company-owned mobile devices** for iOS/Android).
+4. Download the CSV template and populate your hardware **Serial Numbers** and **Asset Tags**.
+5. Upload the CSV and click **Import**.
+6. **How it works:** When users sign in with the Endpoint Verification extension installed on these company Macs/PCs, Google automatically matches the hardware serial number to the Company-Owned inventory, tagging the device as `is_corp_owned_device == true`!
 
 ---
 
