@@ -898,6 +898,11 @@ print_final_summary() {
     echo -e "Ensure your Google Workspace Context-Aware Access (CAA) Custom Access Level is actively enforcing:"
     echo -e "  ${GREEN}device.is_corp_owned_device == true || device.is_admin_approved_device == true${NC}"
     echo -e "${GREEN}===================================================================================================${NC}\n"
+
+    if [[ "$OSTYPE" == "msys"* ]] || [[ "$OSTYPE" == "win32"* ]] || [[ "$OSTYPE" == "cygwin"* ]] || [[ -n "$WINDIR" ]] || [[ -n "$COMSPEC" ]]; then
+        echo ""
+        read -p "Deployment completed successfully! Press [Enter] to exit and close this window..." _unused || true
+    fi
 }
 
 # Helper function for Google Cloud Run deployment workflow
