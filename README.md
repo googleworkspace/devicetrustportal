@@ -48,7 +48,7 @@ For complete documentation detailing supported Workspace editions, end-user flow
   - `https://www.googleapis.com/auth/admin.directory.user.readonly`
   - `https://www.googleapis.com/auth/admin.directory.group.member.readonly`
   - `https://www.googleapis.com/auth/admin.directory.device.chromeos.readonly`
-- **Node.js (v26+)** and **Python (3.14+)** installed for local development. *(Note: Node.js is only required if building the React frontend locally outside of Docker. The automated `./deploy.sh` script and Docker builds manage Node.js 26 and Python 3.14 automatically inside container build stages).*
+- **Node.js (v20+)** and **Python (3.11+)** installed for local development. *(Note: Node.js is only required if building the React frontend locally outside of Docker. The automated `./deploy.sh` script and Docker builds manage Node.js 20 and Python 3.11 automatically inside container build stages).*
 
 > [!IMPORTANT]
 > **Pre-Deployment Billing Verification & Diagnostic Reporting:** The automated `./deploy.sh` script actively inspects your GCP project's billing status before creating cloud resources. 

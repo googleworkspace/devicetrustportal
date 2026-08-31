@@ -13,7 +13,7 @@
 # limitations under the License.
 
 # Stage 1: Build React Static Frontend
-FROM node:26-alpine AS frontend-builder
+FROM node:20-alpine AS frontend-builder
 WORKDIR /app
 
 # Accept OAuth Client ID build arg and expose to Webpack
@@ -26,7 +26,7 @@ COPY frontend/ ./
 RUN npm run build
 
 # Stage 2: Python FastAPI Backend
-FROM python:3.14-slim
+FROM python:3.11-slim
 WORKDIR /app
 
 ENV LANG=C.UTF-8

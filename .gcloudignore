@@ -1,0 +1,14 @@
+.gcloudignore
+.git
+.gitignore
+.env
+.env.*
+backend/venv/
+backend/__pycache__/
+backend/.pytest_cache/
+frontend/node_modules/
+frontend/build/
+frontend/dist/
+.eslintcache
+dwd_key.json
+*.json.key
