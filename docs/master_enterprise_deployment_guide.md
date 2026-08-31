@@ -214,6 +214,24 @@ The repository includes an interactive deployment script (`deploy.sh`) that auto
 * `--region <REGION>` (`GCP_REGION=<REGION>`): Pre-specifies target Cloud Run and Cloud Scheduler region (default: `us-central1`).
 * `--target <1|2>` (`DEPLOY_TARGET=<1|2>`): Pre-selects deployment target (`1` for Cloud Run, `2` for Docker Compose).
 
+#### 🪟 Windows Deployment Instructions (Git Bash / WSL)
+For Windows 10 / 11 / Server environments:
+1. **Install Prerequisites:**
+   - Install **Git for Windows** from [git-scm.com/download/win](https://git-scm.com/download/win).
+   - Install **Google Cloud SDK** for Windows from [cloud.google.com/sdk/docs/install](https://cloud.google.com/sdk/docs/install) (ensure `gcloud` is added to system PATH).
+2. **Open Git Bash:**
+   - Launch **Git Bash** from the Start Menu or right-click any directory and select **"Open Git Bash here"**.
+   - *(Note: Do not run `deploy.sh` directly in standard Command Prompt `cmd.exe` or PowerShell; always use Git Bash or WSL).*
+3. **Authenticate & Deploy:**
+   ```bash
+   gcloud auth login
+   git clone https://github.com/googleworkspace/devicetrustportal.git
+   cd devicetrustportal
+   ./deploy.sh
+   ```
+4. **Windows Error Handling:**
+   - If an error occurs during execution, the deployment script executes an `EXIT` trap that pauses with `"Press [Enter] to close this window..."`, ensuring the terminal window does not abruptly close before you can review the error diagnostics.
+
 **Automated Deployment Phases:**
 1. **Pre-flight Billing Check & Diagnostics:** Verifies GCP billing enablement before creating resources. If verification fails (e.g. missing IAM permissions or disabled Cloud Billing API), the script prints the exact `gcloud` error message and diagnostic remedies directly to the console.
 2. **Phase 1 (Baseline Container Build):** Deploys the initial FastAPI/React container to Cloud Run to generate your live HTTPS domain (`https://device-trust-gateway-HASH-uc.a.run.app`).

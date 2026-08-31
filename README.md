@@ -68,51 +68,64 @@ This section is designed for administrators or users with **zero development exp
 
 You only need two free tools installed on your computer to run the automated installer:
 
-1. **Git** (Tool to download the repository):
+1. **Git** (Tool to download the repository and provide the bash terminal):
+   - **Windows:** Download and run the 64-bit installer from [git-scm.com/download/win](https://git-scm.com/download/win). Keep all default settings (this installs **Git Bash** and adds Windows Explorer integration).
    - **Mac:** Open Terminal and type `xcode-select --install` (click Install when prompted).
-   - **Windows:** Download and run the installer from [git-scm.com](https://git-scm.com/download/win).
    - **Linux (Ubuntu/Debian):** Run `sudo apt update && sudo apt install -y git`.
 
 2. **Google Cloud SDK (`gcloud` CLI)** (Tool to connect to your Google Cloud Project):
-   - Download the installer for your OS from [cloud.google.com/sdk/docs/install](https://cloud.google.com/sdk/docs/install) (or run `curl https://sdk.cloud.google.com | bash` in macOS/Linux terminal).
-   - Once installed, log into your Google Cloud account by running:
-     ```bash
-     gcloud auth login
-     ```
+   - **Windows:** Download and run the Windows installer from [cloud.google.com/sdk/docs/install](https://cloud.google.com/sdk/docs/install). Check the box to **"Run `gcloud init`"** and ensure `gcloud` is added to your environment `PATH`.
+   - **macOS / Linux:** Run `curl https://sdk.cloud.google.com | bash` in your terminal, or download the installer from [cloud.google.com/sdk/docs/install](https://cloud.google.com/sdk/docs/install).
 
 ---
 
-### Step 2: Download the Code from GitHub
+### Step 2: Open Terminal & Authenticate
 
-Open your Terminal (Mac/Linux) or Command Prompt / Git Bash (Windows) and run:
+> [!IMPORTANT]
+> **Windows Users:** Always use **Git Bash** (or WSL) to run the deployment script. Do **NOT** use standard Windows Command Prompt (`cmd.exe`) or Windows PowerShell, as `./deploy.sh` requires a Bash shell environment.
 
-```bash
-# 1. Download the code repository from GitHub
-git clone https://github.com/googleworkspace/devicetrustportal.git
+1. **Open your Terminal:**
+   - **Windows:** Press the **Windows Key**, type **`Git Bash`**, and press Enter (or right-click anywhere on your Desktop/Downloads folder and choose **"Open Git Bash here"**).
+   - **Mac:** Open **Terminal** (Applications > Utilities > Terminal).
+   - **Linux:** Open your preferred shell terminal.
 
-# 2. Change directory into the downloaded project folder
-cd devicetrustportal
-```
+2. **Log into Google Cloud:**
+   ```bash
+   gcloud auth login
+   ```
+   *(Your web browser will open automatically. Sign into the Google Workspace / Google Cloud account with administrator access to your target GCP Project).*
+
+3. **Download the Code Repository:**
+   ```bash
+   # Clone the code repository from GitHub
+   git clone https://github.com/googleworkspace/devicetrustportal.git
+
+   # Navigate into the project folder
+   cd devicetrustportal
+   ```
 
 ---
 
 ### Step 3: Run the Automated Deployment Wizard
 
-Run the interactive deployment wizard script:
+Run the interactive deployment wizard script inside your terminal (Git Bash on Windows / Terminal on macOS & Linux):
 
 ```bash
-# Make the script executable (macOS / Linux)
+# Optional for macOS / Linux: Ensure the script is executable
 chmod +x deploy.sh
 
 # Run the deployment wizard (Standard Interactive Mode)
 ./deploy.sh
 ```
 
+> [!TIP]
+> **Windows Users:** You can run `./deploy.sh` directly in Git Bash. If an error occurs, the script automatically pauses with `"Press [Enter] to close this window..."` so your terminal does not abruptly close, allowing you to read all diagnostics.
+
 #### Optional Deployment Flags & Command-Line Options:
 You can pass command-line flags to customize execution or troubleshoot deployment:
 
 ```bash
-# Run with verbose logging for real-time build streaming and detailed diagnostics
+# Run with verbose logging for real-time container build streaming and detailed diagnostics
 ./deploy.sh --verbose               # or -v
 
 # Bypass GCP billing account verification (if billing is managed centrally by an org admin)
