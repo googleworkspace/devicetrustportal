@@ -155,7 +155,9 @@ export const translations: Record<string, TranslationDictionary> = {
     accessDeniedSessionNote: "Active Session: Only authorized Google Workspace Super Administrators or delegated Portal Admins may manage tenant configurations.",
     addAdminModalTitle: "Add Portal Administrator",
     addAdminModalDesc: "Enter the Google Workspace corporate email address to grant delegated configuration access.",
-    emailAddressLabel: "Email Add  es: {
+    emailAddressLabel: "Email Address:",
+  },
+  es: {
     portalTitle: "Portal de Confianza de Dispositivos",
     subtitle: "Aprobación de BYOD de Google Workspace y Verificación de Extremos",
     myDevicesTab: "Mis Dispositivos Aprobados",
@@ -467,6 +469,8 @@ export const translations: Record<string, TranslationDictionary> = {
     approveAction: "Aprovar",
     revokeAction: "Revogar",
     approvedStatus: "APROVADO",
+    pendingStatus: "PENDENTE",
+    revokedStatus: "REVOGADO / NÃO APROVADO",
     companyOwnedLabel: "🏢 Dispositivo da Empresa",
     personalByodLabel: "👤 Pessoal (BYOD)",
     virtualAssetLabel: "Ativo Virtual / Certificado EV",
