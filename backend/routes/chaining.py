@@ -92,7 +92,11 @@ def consume_pairing_code(code: str) -> str:
     if not code_data:
         raise HTTPException(status_code=400, detail="Invalid or expired pairing code")
         
-    if datetime.datetime.utcnow() > code_data["expires_at"]:
+    now = datetime.datetime.now(datetime.timezone.utc)
+    exp = code_data["expires_at"]
+    if exp.tzinfo is None:
+        exp = exp.replace(tzinfo=datetime.timezone.utc)
+    if now > exp:
         if code in PAIRING_CODE_CACHE:
             del PAIRING_CODE_CACHE[code]
         raise HTTPException(status_code=400, detail="Pairing code has expired")
@@ -122,7 +126,7 @@ def generate_pairing_code(user_email: str = Depends(get_current_user_email)):
 
     # Generate 6-digit numeric code
     code = f"{random.randint(100000, 999999)}"
-    expires_at = datetime.datetime.utcnow() + datetime.timedelta(minutes=10)
+    expires_at = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=10)
     
     store_pairing_code(code, user_email, expires_at)
     

@@ -36,7 +36,8 @@ def mock_services():
          patch("backend.services.cloud_identity.CloudIdentityService.revoke_device_user") as mock_rev, \
          patch("backend.services.cloud_identity.CloudIdentityService.get_device_user") as mock_get_du, \
          patch("backend.services.config_service.ConfigService.get_tenant_config") as mock_conf, \
-         patch("backend.services.cloud_identity.cloud_identity_service.service") as mock_service:
+         patch("backend.services.cloud_identity.cloud_identity_service.service") as mock_service, \
+         patch("backend.services.directory_service.directory_service.service") as mock_dir_service:
         
         mock_admin.side_effect = lambda *args, **kwargs: "admin" in (kwargs.get("user_email") or args[0])
         mock_chain.side_effect = lambda *args, **kwargs: "allowed" in (kwargs.get("user_email") or args[0])
@@ -60,6 +61,10 @@ def mock_services():
         mock_service.devices().list().execute.return_value = {"devices": [{"name": "devices/dev-1", "deviceType": "CHROME_OS", "model": "Chromebook", "osVersion": "Chrome 120", "serialNumber": "1234"}]}
         mock_service.devices().deviceUsers().list().execute.return_value = {
             "deviceUsers": [{"name": "devices/dev-1/deviceUsers/du-1", "userEmail": "student@example.com", "approvalState": "APPROVED"}]
+        }
+        
+        mock_dir_service.chromeosdevices().list().execute.return_value = {
+            "chromeosdevices": [{"deviceId": "dev-1", "serialNumber": "1234", "model": "Chromebook", "osVersion": "Chrome 120", "annotatedUser": "student@example.com"}]
         }
         
         yield
@@ -130,6 +135,15 @@ def test_cron_cleanup_forbidden():
 
 def test_cron_cleanup_success():
     response = client.post("/api/cron/cleanup", headers={"X-Cloudscheduler": "true"})
+    assert response.status_code == 200
+    assert response.json()["status"] == "SUCCESS"
+
+def test_cron_sync_inventory_forbidden():
+    response = client.post("/api/cron/sync-inventory")
+    assert response.status_code == 403
+
+def test_cron_sync_inventory_success():
+    response = client.post("/api/cron/sync-inventory", headers={"X-Cloudscheduler": "true"})
     assert response.status_code == 200
     assert response.json()["status"] == "SUCCESS"
 
@@ -250,6 +264,32 @@ def test_get_my_devices_deduplication(mock_services):
         assert len(data) == 1
         assert data[0]["serial_number"] == "C02F30BV0KPF"
         assert data[0]["model"] == "MacBook Pro"
+
+def test_get_my_devices_with_directory_chromeos():
+    app.dependency_overrides[get_current_user_email] = lambda: "student@example.com"
+    with patch("backend.routes.devices.directory_service.get_user_chromeos_devices") as mock_dir_cbs:
+        mock_dir_cbs.return_value = [
+            {
+                "device_user_name": "directory/devices/cb-999/deviceUsers/student@example.com",
+                "device_type": "CHROME_OS",
+                "model": "Acer Chromebook Spin 511",
+                "os_version": "ChromeOS 120.0",
+                "serial_number": "ACER-CB-999",
+                "approval_state": "APPROVED",
+                "owner_type": "COMPANY",
+                "last_sync_time": "2026-08-31T12:00:00Z",
+                "annotated_user": "student@example.com",
+                "asset_tag": "ASSET-CB-999"
+            }
+        ]
+        response = client.get("/api/devices/my-devices")
+        assert response.status_code == 200
+        data = response.json()
+        cb_match = next((d for d in data if d["serial_number"] == "ACER-CB-999"), None)
+        assert cb_match is not None
+        assert cb_match["owner_type"] == "COMPANY"
+        assert cb_match["approval_state"] == "APPROVED"
+        assert cb_match["model"] == "Acer Chromebook Spin 511"
 
 def test_get_public_config():
     response = client.get("/api/config/public")

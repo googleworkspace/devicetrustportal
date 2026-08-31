@@ -107,7 +107,7 @@ class CloudIdentityService:
             raise Exception("Cloud Identity service not initialized with valid credentials")
 
         try:
-            cutoff_date = datetime.datetime.utcnow() - datetime.timedelta(days=threshold_days)
+            cutoff_date = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=threshold_days)
             cutoff_str = cutoff_date.strftime("%Y-%m-%dT%H:%M:%SZ")
             
             query = f"lastSyncTime < '{cutoff_str}'"

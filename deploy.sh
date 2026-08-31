@@ -517,9 +517,20 @@ configure_inventory_seeding() {
             fi
             
             echo -e "\n${BLUE}Launching live inventory seeding script...${NC}"
+            export WORKSPACE_ADMIN_EMAIL
+            export TENANT_CUSTOMER_ID="${TENANT_CUSTOMER_ID:-customers/my_customer}"
             run_python_script "backend/scripts/seed_company_inventory.py"
             ;;
           2)
+            if [ -z "$WORKSPACE_ADMIN_EMAIL" ]; then
+                setup_domain_wide_delegation
+            fi
+
+            echo -e "\n${BLUE}Executing initial baseline Chromebook fleet crawl...${NC}"
+            export WORKSPACE_ADMIN_EMAIL
+            export TENANT_CUSTOMER_ID="${TENANT_CUSTOMER_ID:-customers/my_customer}"
+            run_python_script "backend/scripts/seed_company_inventory.py" || true
+
             echo -e "\n${BLUE}Configuring Daily GCP Cloud Scheduler Job...${NC}"
             if [ -z "$GCP_PROJECT" ]; then
                 read -p "Enter your Google Cloud Project ID: " GCP_PROJECT
@@ -551,6 +562,15 @@ configure_inventory_seeding() {
             log_success "Daily Cloud Scheduler Job configured successfully! (Runs at 2:00 AM daily)"
             ;;
           3)
+            if [ -z "$WORKSPACE_ADMIN_EMAIL" ]; then
+                setup_domain_wide_delegation
+            fi
+
+            echo -e "\n${BLUE}Executing initial baseline Chromebook fleet crawl...${NC}"
+            export WORKSPACE_ADMIN_EMAIL
+            export TENANT_CUSTOMER_ID="${TENANT_CUSTOMER_ID:-customers/my_customer}"
+            run_python_script "backend/scripts/seed_company_inventory.py" || true
+
             echo -e "\n${BLUE}Configuring Weekly GCP Cloud Scheduler Job...${NC}"
             if [ -z "$GCP_PROJECT" ]; then
                 read -p "Enter your Google Cloud Project ID: " GCP_PROJECT
@@ -582,6 +602,14 @@ configure_inventory_seeding() {
             log_success "Weekly Cloud Scheduler Job configured successfully! (Runs at 3:00 AM every Sunday)"
             ;;
           4)
+            if [ -z "$WORKSPACE_ADMIN_EMAIL" ]; then
+                setup_domain_wide_delegation
+            fi
+
+            echo -e "\n${BLUE}Executing initial baseline Chromebook fleet crawl...${NC}"
+            export WORKSPACE_ADMIN_EMAIL
+            export TENANT_CUSTOMER_ID="${TENANT_CUSTOMER_ID:-customers/my_customer}"
+            run_python_script "backend/scripts/seed_company_inventory.py" || true
             echo -e "\n${BLUE}Configuring Event-Driven Pub/Sub Push Webhook & Weekly Cron Safety Net...${NC}"
             if [ -z "$GCP_PROJECT" ]; then
                 read -p "Enter your Google Cloud Project ID: " GCP_PROJECT

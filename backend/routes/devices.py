@@ -79,14 +79,16 @@ def get_my_approved_devices(user_email: str = Depends(get_current_user_email)):
     config = config_service.get_tenant_config()
     my_devices = []
     target_email = user_email.lower().strip()
+    is_admin = directory_service.verify_user_is_admin(target_email, portal_admins=config.portal_admins)
 
     query_filter = f"email:{target_email}"
-    print(f"INFO [devices.py]: Executing Cloud Identity devices.list(filter='{query_filter}') for customer '{config.customer_id}'...")
+    print(f"INFO [devices.py]: Executing Cloud Identity devices.list(filter='{query_filter}') for customer '{config.customer_id}' (is_admin={is_admin})...")
+
+    total_devices_matched = 0
+    page_count = 0
 
     try:
         next_page_token = None
-        page_count = 0
-        total_devices_matched = 0
         
         while True:
             page_count += 1
@@ -140,38 +142,73 @@ def get_my_approved_devices(user_email: str = Depends(get_current_user_email)):
             next_page_token = response.get("nextPageToken")
             if not next_page_token:
                 break
-                
-        # Deduplicate device entries by platform & prioritize physical hardware serial assets over virtual duplicates
-        grouped: Dict[str, List[DeviceUserItem]] = {}
-        for dev_item in my_devices:
-            dev_type = dev_item.device_type
-            if dev_type not in grouped:
-                grouped[dev_type] = []
-            grouped[dev_type].append(dev_item)
-
-        deduped_devices: List[DeviceUserItem] = []
-        for dev_type, items in grouped.items():
-            serial_items = [i for i in items if i.serial_number != "N/A"]
-            virtual_items = [i for i in items if i.serial_number == "N/A"]
-
-            if serial_items:
-                # If physical hardware serial items exist for this platform, return unique hardware serial assets
-                unique_serials: Dict[str, DeviceUserItem] = {}
-                for s_item in serial_items:
-                    if s_item.serial_number not in unique_serials:
-                        unique_serials[s_item.serial_number] = s_item
-                deduped_devices.extend(list(unique_serials.values()))
-            else:
-                # If only virtual extension assets exist, keep the single most recently synced asset for that platform
-                virtual_items.sort(key=lambda x: x.last_sync_time, reverse=True)
-                if virtual_items:
-                    deduped_devices.extend(virtual_items[:1])
-
-        print(f"INFO [devices.py]: Matched {total_devices_matched} total hardware assets across {page_count} pages. Deduplicated {len(my_devices)} down to {len(deduped_devices)} primary device bindings.")
-        return deduped_devices
     except Exception as e:
-        print(f"ERROR [devices.py]: Cloud Identity API filtered crawl failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to fetch user devices from Cloud Identity: {e}")
+        print(f"WARNING [devices.py]: Cloud Identity API filtered crawl encountered notice: {e}")
+
+    # Fetch enterprise-enrolled ChromeOS devices from Admin SDK Directory API
+    try:
+        directory_cbs = directory_service.get_user_chromeos_devices(
+            user_email=target_email,
+            customer_id=config.customer_id,
+            is_admin=is_admin
+        )
+        for cb in directory_cbs:
+            cb_serial = cb.get("serial_number", "N/A")
+            # Check if this physical hardware serial is already in my_devices
+            existing_match = next((d for d in my_devices if d.serial_number != "N/A" and d.serial_number == cb_serial), None)
+            if existing_match:
+                existing_match.owner_type = "COMPANY"
+                existing_match.approval_state = "APPROVED"
+            else:
+                my_devices.append(
+                    DeviceUserItem(
+                        device_user_name=cb["device_user_name"],
+                        device_type=cb["device_type"],
+                        model=cb["model"],
+                        os_version=cb["os_version"],
+                        serial_number=cb["serial_number"],
+                        approval_state=cb["approval_state"],
+                        owner_type=cb["owner_type"],
+                        last_sync_time=cb["last_sync_time"]
+                    )
+                )
+    except Exception as e:
+        print(f"WARNING [devices.py]: Failed to retrieve Directory ChromeOS devices for '{target_email}': {e}")
+
+    # Deduplicate device entries by platform & prioritize physical hardware serial assets over virtual duplicates
+    grouped: Dict[str, List[DeviceUserItem]] = {}
+    for dev_item in my_devices:
+        dev_type = dev_item.device_type
+        if dev_type not in grouped:
+            grouped[dev_type] = []
+        grouped[dev_type].append(dev_item)
+
+    deduped_devices: List[DeviceUserItem] = []
+    for dev_type, items in grouped.items():
+        serial_items = [i for i in items if i.serial_number != "N/A"]
+        virtual_items = [i for i in items if i.serial_number == "N/A"]
+
+        if serial_items:
+            # If physical hardware serial items exist for this platform, return unique hardware serial assets
+            unique_serials: Dict[str, DeviceUserItem] = {}
+            for s_item in serial_items:
+                if s_item.serial_number not in unique_serials:
+                    unique_serials[s_item.serial_number] = s_item
+                else:
+                    # If duplicate exists, prefer COMPANY owned and APPROVED state
+                    existing = unique_serials[s_item.serial_number]
+                    if s_item.owner_type == "COMPANY":
+                        existing.owner_type = "COMPANY"
+                        existing.approval_state = "APPROVED"
+            deduped_devices.extend(list(unique_serials.values()))
+        else:
+            # If only virtual extension assets exist, keep the single most recently synced asset for that platform
+            virtual_items.sort(key=lambda x: x.last_sync_time, reverse=True)
+            if virtual_items:
+                deduped_devices.extend(virtual_items[:1])
+
+    print(f"INFO [devices.py]: Matched {total_devices_matched} Cloud Identity assets and {len(directory_cbs) if 'directory_cbs' in locals() else 0} Directory Chromebooks. Deduplicated {len(my_devices)} down to {len(deduped_devices)} primary device bindings.")
+    return deduped_devices
 
 @router.post("/approve")
 def approve_device(request: DeviceActionRequest, user_email: str = Depends(get_current_user_email)):

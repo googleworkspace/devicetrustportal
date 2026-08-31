@@ -125,3 +125,42 @@ def test_cloud_identity_parse_ev_header():
     ev_header = "some-metadata devices/pixel-123/deviceUsers/du-99 some-other-data"
     parsed = cloud_identity_service.parse_endpoint_verification_header(ev_header)
     assert parsed == "devices/pixel-123/deviceUsers/du-99"
+
+@patch("backend.services.directory_service.DirectoryService")
+def test_directory_get_user_chromeos_devices(mock_dir):
+    mock_service = MagicMock()
+    mock_service.chromeosdevices().list().execute.return_value = {
+        "chromeosdevices": [
+            {
+                "deviceId": "dev-cb-101",
+                "serialNumber": "CB-SERIAL-101",
+                "model": "HP Chromebook 14",
+                "osVersion": "ChromeOS 120.0",
+                "annotatedUser": "student@example.com",
+                "recentUsers": [{"email": "student@example.com"}],
+                "lastSync": "2026-08-31T10:00:00Z"
+            },
+            {
+                "deviceId": "dev-cb-102",
+                "serialNumber": "CB-SERIAL-102",
+                "model": "Dell Chromebook 3100",
+                "osVersion": "ChromeOS 120.0",
+                "annotatedUser": "other@example.com",
+                "recentUsers": [{"email": "other@example.com"}],
+                "lastSync": "2026-08-31T10:00:00Z"
+            }
+        ]
+    }
+    directory_service.service = mock_service
+
+    # Query for student@example.com
+    devices = directory_service.get_user_chromeos_devices("student@example.com", "customers/my_customer", is_admin=False)
+    assert len(devices) == 1
+    assert devices[0]["serial_number"] == "CB-SERIAL-101"
+    assert devices[0]["owner_type"] == "COMPANY"
+    assert devices[0]["approval_state"] == "APPROVED"
+
+    # Admin query returns both
+    admin_devices = directory_service.get_user_chromeos_devices("admin@example.com", "customers/my_customer", is_admin=True)
+    assert len(admin_devices) == 2
+

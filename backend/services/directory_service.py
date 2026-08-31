@@ -23,7 +23,8 @@ class DirectoryService:
     def __init__(self):
         self.scopes = [
             "https://www.googleapis.com/auth/admin.directory.user.readonly",
-            "https://www.googleapis.com/auth/admin.directory.group.member.readonly"
+            "https://www.googleapis.com/auth/admin.directory.group.member.readonly",
+            "https://www.googleapis.com/auth/admin.directory.device.chromeos.readonly"
         ]
         key_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
         admin_email = os.getenv("WORKSPACE_ADMIN_EMAIL")
@@ -108,5 +109,72 @@ class DirectoryService:
         except HttpError as e:
             print(f"Directory API error checking chaining policy for {target_email}: {e}")
             return False
+
+    def get_user_chromeos_devices(self, user_email: str, customer_id: str = "my_customer", is_admin: bool = False) -> List[Dict[str, Any]]:
+        """Queries Admin SDK Directory API for enterprise-enrolled ChromeOS devices associated with the user."""
+        target_email = user_email.lower().strip()
+        
+        if not self.service:
+            print(f"INFO [directory_service.py]: Simulated ChromeOS lookup for '{target_email}'")
+            return []
+
+        cust_key = customer_id.replace("customers/", "").strip() if customer_id else "my_customer"
+        if not cust_key:
+            cust_key = "my_customer"
+
+        matched_devices = []
+        try:
+            page_token = None
+            max_pages = 5
+            page = 0
+            while page < max_pages:
+                page += 1
+                request = self.service.chromeosdevices().list(
+                    customerId=cust_key,
+                    pageToken=page_token,
+                    maxResults=100,
+                    projection="FULL"
+                )
+                response = request.execute()
+                devices = response.get("chromeosdevices", [])
+                if not devices:
+                    break
+
+                for dev in devices:
+                    annotated_user = dev.get("annotatedUser", "").lower().strip()
+                    recent_users = [u.get("email", "").lower().strip() for u in dev.get("recentUsers", []) if isinstance(u, dict)]
+                    
+                    is_match = is_admin or (annotated_user == target_email) or (target_email in recent_users)
+                    if is_match:
+                        serial = dev.get("serialNumber") or dev.get("deviceId") or "N/A"
+                        model = dev.get("model") or "Google Chromebook"
+                        os_version = dev.get("osVersion") or "ChromeOS"
+                        last_sync = dev.get("lastSync", "N/A")
+                        
+                        matched_devices.append({
+                            "device_user_name": f"directory/devices/{dev.get('deviceId', serial)}/deviceUsers/{target_email}",
+                            "device_type": "CHROME_OS",
+                            "model": model,
+                            "os_version": os_version,
+                            "serial_number": serial,
+                            "approval_state": "APPROVED",
+                            "owner_type": "COMPANY",
+                            "last_sync_time": last_sync,
+                            "annotated_user": annotated_user,
+                            "asset_tag": dev.get("annotatedAssetId", "")
+                        })
+
+                page_token = response.get("nextPageToken")
+                if not page_token:
+                    break
+
+            print(f"INFO [directory_service.py]: Found {len(matched_devices)} company-owned ChromeOS device(s) matching '{target_email}' (is_admin={is_admin}).")
+            return matched_devices
+        except HttpError as e:
+            print(f"Directory API error fetching ChromeOS devices for {target_email}: {e}")
+            return []
+        except Exception as e:
+            print(f"Unexpected error fetching ChromeOS devices for {target_email}: {e}")
+            return []
 
 directory_service = DirectoryService()
