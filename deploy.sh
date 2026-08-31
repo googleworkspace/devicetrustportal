@@ -21,6 +21,20 @@ export LC_ALL=C.UTF-8
 
 set -e
 
+# Graceful exit handler (ensures terminal on Windows does not instantly close on errors)
+cleanup_on_exit() {
+    local exit_code=$?
+    if [ $exit_code -ne 0 ]; then
+        echo ""
+        echo -e "${RED}❌ Deployment stopped with error (exit code: $exit_code).${NC}"
+        if [[ "$OSTYPE" == "msys"* ]] || [[ "$OSTYPE" == "win32"* ]] || [[ "$OSTYPE" == "cygwin"* ]] || [[ -n "$WINDIR" ]] || [[ -n "$COMSPEC" ]]; then
+            echo ""
+            read -p "Press [Enter] to close this window..." _unused || true
+        fi
+    fi
+}
+trap cleanup_on_exit EXIT
+
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 YELLOW='\033[1;33m'
@@ -151,7 +165,13 @@ verify_billing_account() {
     # Run with --quiet and a safety timeout so gcloud never hangs on interactive prompts or network delays
     log_debug "Executing: gcloud billing projects describe \"$project_id\" --quiet --format=\"value(billingEnabled,billingAccountName)\""
     
-    if command -v timeout &>/dev/null; then
+    # Check if GNU timeout is available (Windows System32/timeout.exe has incompatible syntax)
+    local use_timeout=false
+    if command -v timeout &>/dev/null && timeout --version 2>&1 | grep -qi "GNU coreutils"; then
+        use_timeout=true
+    fi
+
+    if [ "$use_timeout" = "true" ]; then
         billing_output=$(timeout 10s gcloud billing projects describe "$project_id" --quiet --format="value(billingEnabled,billingAccountName)" 2>"$temp_err" || timeout 10s gcloud beta billing projects describe "$project_id" --quiet --format="value(billingEnabled,billingAccountName)" 2>"$temp_err" || true)
     else
         billing_output=$(gcloud billing projects describe "$project_id" --quiet --format="value(billingEnabled,billingAccountName)" 2>"$temp_err" || gcloud beta billing projects describe "$project_id" --quiet --format="value(billingEnabled,billingAccountName)" 2>"$temp_err" || true)
@@ -227,6 +247,7 @@ verify_billing_account() {
     # Interactive prompt to bypass if desired
     if [ -t 0 ]; then
         read -p "If you know billing is actively enabled for this project, would you like to proceed anyway? (y/N): " PROCEED_ANYWAY
+        PROCEED_ANYWAY=$(echo "$PROCEED_ANYWAY" | tr -d '\r' | xargs)
         if [[ "$PROCEED_ANYWAY" =~ ^[Yy]$ ]]; then
             log_warn "Proceeding with deployment despite unverified billing status upon administrator confirmation."
             return 0
@@ -249,6 +270,7 @@ setup_domain_wide_delegation() {
     
     if [ -z "$GCP_PROJECT" ]; then
         read -p "Enter your Google Cloud Project ID: " GCP_PROJECT
+        GCP_PROJECT=$(echo "$GCP_PROJECT" | tr -d '\r' | xargs)
     fi
     
     SA_NAME="device-trust-gateway-sa"
@@ -337,7 +359,9 @@ setup_domain_wide_delegation() {
     if [ -z "$CLIENT_ID" ]; then
         log_warn "Could not automatically retrieve Client ID via gcloud CLI."
         read -p "Enter your Service Account Numeric Client ID manually (or press Enter to retry): " CLIENT_ID
+        CLIENT_ID=$(echo "$CLIENT_ID" | tr -d '\r' | xargs)
     else
+        CLIENT_ID=$(echo "$CLIENT_ID" | tr -d '\r' | xargs)
         log_debug "Retrieved Client ID: $CLIENT_ID"
     fi
     
@@ -353,10 +377,10 @@ setup_domain_wide_delegation() {
     echo -e "  5. Click ${YELLOW}'Authorize'${NC}."
     echo -e "${RED}===================================================================================================${NC}\n"
     
-    read -p "Press [ENTER] when Domain-Wide Delegation has been successfully authorized in the Workspace Admin console..."
+    read -p "Press [ENTER] when Domain-Wide Delegation has been successfully authorized in the Workspace Admin console..." _unused || true
     
     echo ""
-    CURRENT_EMAIL=$(gcloud config get-value account 2>/dev/null || true)
+    CURRENT_EMAIL=$(gcloud config get-value account 2>/dev/null | tr -d '\r' | xargs || true)
     if [ -z "$WORKSPACE_ADMIN_EMAIL" ]; then
         if [ -n "$CURRENT_EMAIL" ] && [[ "$CURRENT_EMAIL" != *"gserviceaccount.com"* ]]; then
             read -p "Enter the email address of a Workspace Super Administrator to impersonate [${CURRENT_EMAIL}]: " ADMIN_EMAIL
@@ -364,6 +388,7 @@ setup_domain_wide_delegation() {
         else
             read -p "Enter the email address of a Workspace Super Administrator to impersonate (e.g., admin@yourdomain.com): " ADMIN_EMAIL
         fi
+        ADMIN_EMAIL=$(echo "$ADMIN_EMAIL" | tr -d '\r' | xargs)
         WORKSPACE_ADMIN_EMAIL="$ADMIN_EMAIL"
     fi
     
@@ -385,21 +410,33 @@ run_python_script() {
     
     local python_bin="python3"
     
-    # Check if a valid virtual environment exists with working activate/python
+    # Check if a valid virtual environment exists with working activate/python (POSIX or Windows)
     if [ -f "backend/venv/bin/activate" ] && [ -x "backend/venv/bin/python" ]; then
         python_bin="backend/venv/bin/python"
+    elif [ -f "backend/venv/Scripts/activate" ] && [ -f "backend/venv/Scripts/python.exe" ]; then
+        python_bin="backend/venv/Scripts/python.exe"
+    elif [ -f "backend/venv/Scripts/activate" ] && [ -f "backend/venv/Scripts/python" ]; then
+        python_bin="backend/venv/Scripts/python"
     elif [ -f "venv/bin/activate" ] && [ -x "venv/bin/python" ]; then
         python_bin="venv/bin/python"
+    elif [ -f "venv/Scripts/activate" ] && [ -f "venv/Scripts/python.exe" ]; then
+        python_bin="venv/Scripts/python.exe"
     else
-        # Remove corrupted / empty / partial venv directory if bin/activate is missing
-        if [ -d "backend/venv" ] && [ ! -f "backend/venv/bin/activate" ]; then
+        # Remove corrupted / empty / partial venv directory if activate script is missing
+        if [ -d "backend/venv" ] && [ ! -f "backend/venv/bin/activate" ] && [ ! -f "backend/venv/Scripts/activate" ]; then
             log_debug "Removing incomplete or corrupted venv directory 'backend/venv'..."
             rm -rf "backend/venv"
         fi
         
         log_info "Initializing Python virtual environment in 'backend/venv'..."
-        if python3 -m venv backend/venv 2>/dev/null && [ -f "backend/venv/bin/activate" ] && [ -x "backend/venv/bin/python" ]; then
-            python_bin="backend/venv/bin/python"
+        if python3 -m venv backend/venv 2>/dev/null && ([ -f "backend/venv/bin/activate" ] || [ -f "backend/venv/Scripts/activate" ]); then
+            if [ -x "backend/venv/bin/python" ]; then
+                python_bin="backend/venv/bin/python"
+            elif [ -f "backend/venv/Scripts/python.exe" ]; then
+                python_bin="backend/venv/Scripts/python.exe"
+            elif [ -f "backend/venv/Scripts/python" ]; then
+                python_bin="backend/venv/Scripts/python"
+            fi
             log_info "Installing backend dependencies into virtual environment..."
             "$python_bin" -m pip install --quiet --upgrade pip 2>/dev/null || true
             "$python_bin" -m pip install --quiet -r backend/requirements.txt --index-url https://pypi.org/simple 2>/dev/null || \
@@ -423,6 +460,7 @@ execute_mass_revocation_prompt() {
     echo "Would you like to execute a mass revocation sweep across Cloud Identity, unapproving all personal BYOD devices to establish a pristine Zero-Trust baseline?"
     echo "Note: This operation preserves company-owned hardware and ChromeOS assets but revokes all personal device approvals across your entire tenant catalog."
     read -p "Execute Mass Revocation Sweep? (y/n): " DO_MASS_REVOKE
+    DO_MASS_REVOKE=$(echo "$DO_MASS_REVOKE" | tr -d '\r' | xargs)
     
     if [[ "$DO_MASS_REVOKE" =~ ^[Yy]$ ]]; then
         if [ -z "$WORKSPACE_ADMIN_EMAIL" ]; then
@@ -443,6 +481,7 @@ configure_inventory_seeding() {
     echo -e "\n${YELLOW}--- Chromebook Fleet Inventory Seeding Configuration ---${NC}"
     echo "Would you like to configure automated Chromebook Fleet Inventory Seeding to anchor enterprise devices in Cloud Identity?"
     read -p "Configure Seeding? (y/n): " DO_SEED
+    DO_SEED=$(echo "$DO_SEED" | tr -d '\r' | xargs)
     
     if [[ "$DO_SEED" =~ ^[Yy]$ ]]; then
         echo ""
@@ -453,12 +492,14 @@ configure_inventory_seeding() {
         echo "  4) Event-Driven Real-Time Webhook (Pub/Sub Push) + Weekly Safety Net"
         echo ""
         read -p "Enter option [1-4]: " SEED_OPTION
+        SEED_OPTION=$(echo "$SEED_OPTION" | tr -d '\r' | xargs)
         
         # For options that require a public gateway URL, ensure we have one
         if [[ "$SEED_OPTION" =~ ^[234]$ ]]; then
             if [ -z "$GATEWAY_URL" ] || [[ "$GATEWAY_URL" == *"localhost"* ]] || [[ "$GATEWAY_URL" == *"127.0.0.1"* ]]; then
                 echo -e "${YELLOW}Warning: GCP Cloud Scheduler and Pub/Sub Push require a publicly accessible HTTPS URL.${NC}"
                 read -p "Enter your public Gateway URL (e.g., https://yourgateway.com): " CUSTOM_URL
+                CUSTOM_URL=$(echo "$CUSTOM_URL" | tr -d '\r' | xargs)
                 GATEWAY_URL="$CUSTOM_URL"
             fi
             if [ -z "$GATEWAY_URL" ]; then
@@ -482,8 +523,10 @@ configure_inventory_seeding() {
             echo -e "\n${BLUE}Configuring Daily GCP Cloud Scheduler Job...${NC}"
             if [ -z "$GCP_PROJECT" ]; then
                 read -p "Enter your Google Cloud Project ID: " GCP_PROJECT
+                GCP_PROJECT=$(echo "$GCP_PROJECT" | tr -d '\r' | xargs)
             fi
             read -p "Enter target Cloud Scheduler region [${GCP_REGION}]: " SCHEDULER_REGION
+            SCHEDULER_REGION=$(echo "$SCHEDULER_REGION" | tr -d '\r' | xargs)
             SCHEDULER_REGION=${SCHEDULER_REGION:-$GCP_REGION}
             
             log_debug "Creating Daily Cloud Scheduler job 'seed-chromebook-inventory-daily' in region '$SCHEDULER_REGION'..."
@@ -511,8 +554,10 @@ configure_inventory_seeding() {
             echo -e "\n${BLUE}Configuring Weekly GCP Cloud Scheduler Job...${NC}"
             if [ -z "$GCP_PROJECT" ]; then
                 read -p "Enter your Google Cloud Project ID: " GCP_PROJECT
+                GCP_PROJECT=$(echo "$GCP_PROJECT" | tr -d '\r' | xargs)
             fi
             read -p "Enter target Cloud Scheduler region [${GCP_REGION}]: " SCHEDULER_REGION
+            SCHEDULER_REGION=$(echo "$SCHEDULER_REGION" | tr -d '\r' | xargs)
             SCHEDULER_REGION=${SCHEDULER_REGION:-$GCP_REGION}
             
             log_debug "Creating Weekly Cloud Scheduler job 'seed-chromebook-inventory-weekly' in region '$SCHEDULER_REGION'..."
@@ -540,8 +585,10 @@ configure_inventory_seeding() {
             echo -e "\n${BLUE}Configuring Event-Driven Pub/Sub Push Webhook & Weekly Cron Safety Net...${NC}"
             if [ -z "$GCP_PROJECT" ]; then
                 read -p "Enter your Google Cloud Project ID: " GCP_PROJECT
+                GCP_PROJECT=$(echo "$GCP_PROJECT" | tr -d '\r' | xargs)
             fi
             read -p "Enter target GCP region [${GCP_REGION}]: " SCHEDULER_REGION
+            SCHEDULER_REGION=$(echo "$SCHEDULER_REGION" | tr -d '\r' | xargs)
             SCHEDULER_REGION=${SCHEDULER_REGION:-$GCP_REGION}
             
             TOPIC_NAME="chrome-enrollment-events"
@@ -616,21 +663,24 @@ configure_iap_edge_defense() {
     echo -e "    reach the portal or approve personal devices outside campus unless connected to school VPN."
     echo ""
     read -p "Enable Strict IAP Edge Defense? (y/N) [Default: N]: " DO_IAP
-    DO_IAP=${DO_IAP:-n}
+    DO_IAP=$(echo "${DO_IAP:-n}" | tr -d '\r' | xargs)
     
     if [[ "$DO_IAP" =~ ^[Yy]$ ]]; then
         local SERVICE_NAME="device-trust-gateway"
         if [ -z "$GCP_PROJECT" ]; then
             read -p "Enter your Google Cloud Project ID: " GCP_PROJECT
+            GCP_PROJECT=$(echo "$GCP_PROJECT" | tr -d '\r' | xargs)
         fi
         if [ -z "$GCP_REGION" ]; then
             read -p "Enter target Cloud Run region [us-central1]: " GCP_REGION
+            GCP_REGION=$(echo "$GCP_REGION" | tr -d '\r' | xargs)
             GCP_REGION=${GCP_REGION:-us-central1}
         fi
         
         echo -e "\n${BLUE}--- Configured Access Control Parameters ---${NC}"
         echo -e "${YELLOW}Note for GCP Cloud Run / IAP:${NC} IAP inspects the client's ${YELLOW}Public Egress IP address${NC} (or internal RFC1918 CIDR if connecting via Cloud VPN/Interconnect)."
         read -p "Enter corporate Public Egress IP CIDR subnets allowed to access portal (comma-separated, e.g., 203.0.113.0/24, 10.0.0.0/8) [Leave blank to skip]: " USER_IP_INPUT
+        USER_IP_INPUT=$(echo "$USER_IP_INPUT" | tr -d '\r' | xargs)
         
         echo ""
         echo "Select Access Control & Posture restriction mode:"
@@ -641,6 +691,7 @@ configure_iap_edge_defense() {
         echo "  5) IP Subnet Gating Only (Any Device)"
         echo ""
         read -p "Enter option [1-5] (default: 1): " POSTURE_OPTION
+        POSTURE_OPTION=$(echo "$POSTURE_OPTION" | tr -d '\r' | xargs)
         POSTURE_OPTION=${POSTURE_OPTION:-1}
 
         # Format IP array for config update and CEL expression
@@ -861,6 +912,7 @@ deploy_gcp_cloud_run() {
     if [ -z "$GCP_PROJECT" ]; then
         read -p "Enter your Google Cloud Project ID: " GCP_PROJECT
     fi
+    GCP_PROJECT=$(echo "$GCP_PROJECT" | tr -d '\r' | xargs)
     if [ -z "$GCP_PROJECT" ]; then
         log_error "Google Cloud Project ID is required."
         exit 1
@@ -868,8 +920,10 @@ deploy_gcp_cloud_run() {
     
     if [ -z "$GCP_REGION" ] || [ "$GCP_REGION" = "us-central1" ]; then
         read -p "Enter target Cloud Run region [${GCP_REGION}]: " INPUT_REGION
+        INPUT_REGION=$(echo "$INPUT_REGION" | tr -d '\r' | xargs)
         GCP_REGION=${INPUT_REGION:-$GCP_REGION}
     fi
+    GCP_REGION=$(echo "$GCP_REGION" | tr -d '\r' | xargs)
     
     echo -e "\n${BLUE}[1/7] Setting active GCP project to '$GCP_PROJECT'...${NC}"
     log_debug "Executing: gcloud config set project \"$GCP_PROJECT\""
@@ -1047,6 +1101,7 @@ deploy_gcp_cloud_run() {
     echo -e "    6. Click ${YELLOW}'Create'${NC} and copy the resulting Client ID string."
     echo -e "${YELLOW}===================================================================================================${NC}\n"
     read -p "Enter your authorized Google OAuth 2.0 Client ID: " GOOGLE_CLIENT_ID
+    GOOGLE_CLIENT_ID=$(echo "$GOOGLE_CLIENT_ID" | tr -d '\r' | xargs)
     
     echo -e "\n${BLUE}[7/7] Phase 3: Updating Cloud Run configuration with authorized OAuth Client ID (Zero container rebuild required!)...${NC}"
     log_debug "Updating Cloud Run service with GOOGLE_CLIENT_ID..."
@@ -1157,8 +1212,9 @@ if [ -z "$DEPLOY_TARGET" ]; then
     echo "  3) Exit"
     echo ""
     read -p "Enter option [1-3]: " OPTION
+    OPTION=$(echo "$OPTION" | tr -d '\r' | xargs)
 else
-    OPTION="$DEPLOY_TARGET"
+    OPTION=$(echo "$DEPLOY_TARGET" | tr -d '\r' | xargs)
 fi
 
 case $OPTION in
