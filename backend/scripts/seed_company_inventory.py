@@ -22,7 +22,14 @@ import os
 import sys
 import time
 import random
+from pathlib import Path
 from typing import Optional, Dict, Any, List
+
+# Ensure repository root is always in sys.path
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
 import google.auth
 from google.oauth2 import service_account
 from googleapiclient.discovery import build

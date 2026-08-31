@@ -403,49 +403,71 @@ setup_domain_wide_delegation() {
 run_python_script() {
     local script_path="$1"
     
-    if ! command -v python3 &>/dev/null; then
-        log_error "Python 3 could not be found. Please install python3 to run '$script_path'."
+    # 1. Discover available Python runtime executable
+    local py_cmd=""
+    if command -v python3 &>/dev/null && python3 -c "import sys" &>/dev/null; then
+        py_cmd="python3"
+    elif command -v python &>/dev/null && python -c "import sys" &>/dev/null; then
+        py_cmd="python"
+    elif command -v py &>/dev/null && py -3 -c "import sys" &>/dev/null; then
+        py_cmd="py -3"
+    else
+        log_error "Python could not be found. Please install Python 3 to run '$script_path'."
         return 1
     fi
     
-    local python_bin="python3"
+    local python_bin=""
     
-    # Check if a valid virtual environment exists with working activate/python (POSIX or Windows)
-    if [ -f "backend/venv/bin/activate" ] && [ -x "backend/venv/bin/python" ]; then
+    # 2. Check if a working virtual environment already exists
+    if [ -x "backend/venv/bin/python" ]; then
         python_bin="backend/venv/bin/python"
-    elif [ -f "backend/venv/Scripts/activate" ] && [ -f "backend/venv/Scripts/python.exe" ]; then
+    elif [ -f "backend/venv/Scripts/python.exe" ]; then
         python_bin="backend/venv/Scripts/python.exe"
-    elif [ -f "backend/venv/Scripts/activate" ] && [ -f "backend/venv/Scripts/python" ]; then
+    elif [ -f "backend/venv/Scripts/python" ]; then
         python_bin="backend/venv/Scripts/python"
-    elif [ -f "venv/bin/activate" ] && [ -x "venv/bin/python" ]; then
+    elif [ -x "venv/bin/python" ]; then
         python_bin="venv/bin/python"
-    elif [ -f "venv/Scripts/activate" ] && [ -f "venv/Scripts/python.exe" ]; then
+    elif [ -f "venv/Scripts/python.exe" ]; then
         python_bin="venv/Scripts/python.exe"
-    else
-        # Remove corrupted / empty / partial venv directory if activate script is missing
-        if [ -d "backend/venv" ] && [ ! -f "backend/venv/bin/activate" ] && [ ! -f "backend/venv/Scripts/activate" ]; then
-            log_debug "Removing incomplete or corrupted venv directory 'backend/venv'..."
-            rm -rf "backend/venv"
-        fi
-        
+    fi
+    
+    # 3. If no working virtualenv, initialize backend/venv
+    if [ -z "$python_bin" ]; then
         log_info "Initializing Python virtual environment in 'backend/venv'..."
-        if python3 -m venv backend/venv 2>/dev/null && ([ -f "backend/venv/bin/activate" ] || [ -f "backend/venv/Scripts/activate" ]); then
-            if [ -x "backend/venv/bin/python" ]; then
-                python_bin="backend/venv/bin/python"
-            elif [ -f "backend/venv/Scripts/python.exe" ]; then
-                python_bin="backend/venv/Scripts/python.exe"
-            elif [ -f "backend/venv/Scripts/python" ]; then
-                python_bin="backend/venv/Scripts/python"
-            fi
-            log_info "Installing backend dependencies into virtual environment..."
-            "$python_bin" -m pip install --quiet --upgrade pip 2>/dev/null || true
-            "$python_bin" -m pip install --quiet -r backend/requirements.txt --index-url https://pypi.org/simple 2>/dev/null || \
-            "$python_bin" -m pip install -r backend/requirements.txt || true
+        rm -rf "backend/venv" 2>/dev/null || true
+        $py_cmd -m venv backend/venv 2>/dev/null || true
+        
+        if [ -x "backend/venv/bin/python" ]; then
+            python_bin="backend/venv/bin/python"
+        elif [ -f "backend/venv/Scripts/python.exe" ]; then
+            python_bin="backend/venv/Scripts/python.exe"
+        elif [ -f "backend/venv/Scripts/python" ]; then
+            python_bin="backend/venv/Scripts/python"
         else
-            log_warn "Virtual environment creation skipped. Falling back to system python3 runtime..."
-            python_bin="python3"
-            if python3 -m pip --version &>/dev/null; then
-                python3 -m pip install --quiet -r backend/requirements.txt --index-url https://pypi.org/simple 2>/dev/null || true
+            log_warn "Virtual environment creation skipped. Using system Python ($py_cmd)..."
+            python_bin="$py_cmd"
+        fi
+    fi
+    
+    # 4. Strictly verify required dependencies are importable in target python_bin
+    if ! "$python_bin" -c "import google.auth, googleapiclient" &>/dev/null; then
+        log_info "Installing required backend dependencies into Python environment ($python_bin)..."
+        "$python_bin" -m pip install --quiet --upgrade pip 2>/dev/null || true
+        if ! "$python_bin" -m pip install -r backend/requirements.txt --index-url https://pypi.org/simple 2>/dev/null && \
+           ! "$python_bin" -m pip install -r backend/requirements.txt 2>/dev/null; then
+            log_warn "Standard requirements installation failed. Attempting targeted pip install..."
+            "$python_bin" -m pip install google-auth google-api-python-client google-cloud-secret-manager google-cloud-firestore python-dotenv pydantic 2>/dev/null || \
+            "$python_bin" -m pip install --user google-auth google-api-python-client google-cloud-secret-manager google-cloud-firestore python-dotenv pydantic 2>/dev/null || true
+        fi
+    fi
+    
+    # 5. Final verification check
+    if ! "$python_bin" -c "import google.auth, googleapiclient" &>/dev/null; then
+        if [ "$python_bin" != "$py_cmd" ]; then
+            log_warn "Virtual environment dependencies incomplete. Attempting fallback to $py_cmd..."
+            $py_cmd -m pip install -r backend/requirements.txt 2>/dev/null || $py_cmd -m pip install --user -r backend/requirements.txt 2>/dev/null || true
+            if $py_cmd -c "import google.auth, googleapiclient" &>/dev/null; then
+                python_bin="$py_cmd"
             fi
         fi
     fi
