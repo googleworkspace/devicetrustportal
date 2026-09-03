@@ -116,9 +116,10 @@ The user can approve their new personal device using one of two self-service aut
 Follow this checklist in the **Google Admin Console** (`admin.google.com`) to prepare your tenant for the Gateway.
 
 ### Checklist Overview
+- [ ] Enable **ChromeOS Device Reporting** (OS, hardware, telemetry, user tracking) under Device settings.
+- [ ] Enable **Endpoint Verification (Device signals)** in Universal Data Access settings.
 - [ ] Enable **Require Admin Approval** in Universal Settings across all OUs (including `/Admin`).
 - [ ] Set **Mobile Management** to **Advanced** for iOS and Android.
-- [ ] Check **Collect Device signals using endpoint verification**.
 - [ ] Force-install the **Endpoint Verification Chrome Extension** (`callobklhcbilhphinckomhgkigmfocg`).
 - [ ] Turn ON **Allow access to keys** and **Allow enterprise challenge** in Extension Certificate Management.
 - [ ] Enforce **Managed Accounts Sign-in Restriction** (`primary_account_strict`).
@@ -128,24 +129,38 @@ Follow this checklist in the **Google Admin Console** (`admin.google.com`) to pr
 
 ---
 
-### Step 1: Universal Security & Device Approval Settings
+### Step 1: Enable ChromeOS Device Reporting (Mandatory for Chromebook CAA Recognition)
+> [!IMPORTANT]
+> **Why Enterprise-Enrollment is Not Enough for CAA:**
+> For Context-Aware Access (CAA) to recognize a Chromebook as a "Company-owned device" (`device.is_corp_owned_device == true`), simply enterprise-enrolling it is not enough. CAA relies on Endpoint Verification, which requires specific ChromeOS reporting and telemetry settings to be actively broadcasting the device's status to the Admin console.
+
+1. Go to **Devices > Chrome > Settings > Device settings** (`https://admin.google.com/ac/chrome/settings/device`).
+2. Scroll down to the **User and device reporting** section.
+3. Turn **ON** the following four settings:
+   * **Report device OS information** → Set to **Enable OS information reporting**.
+   * **Report device hardware information** → Set to **Enable hardware information reporting**.
+   * **Report device telemetry** → Set to **Enable telemetry reporting**.
+   * **Report device user tracking** → Set to **Enable user tracking / recent users reporting**.
+
+### Step 2: Enable Endpoint Verification Globally (Universal Settings)
+Activates device signal collection across your entire Google Workspace tenant.
+1. Go to **Devices > Mobile & endpoints > Settings > Universal settings > Data access**.
+2. Expand **Endpoint verification** *(labeled as **Device signals** in some Workspace interfaces)*.
+3. Check **Collect device signals using endpoint verification** *(or **Monitor which devices access organization data**)*.
+
+### Step 3: Universal Security & Device Approval Settings
 1. Go to **Devices > Mobile & endpoints > Settings > Universal settings > Security**.
 2. Expand **Device approvals**.
 3. Select **Require admin approval**.
 4. Enter your admin email address to receive enrollment notifications.
 5. ⚠️ **Sub-OU Check:** In the left Organizational Units tree, click sub-OUs (such as `/Admin` and `/Staff`) and verify that **Require admin approval** is explicitly selected or inherited.
 
-### Step 2: Advanced Mobile Management Settings
+### Step 4: Advanced Mobile Management Settings
 1. Go to **Devices > Mobile & endpoints > Settings > Universal settings > General**.
 2. Expand **Mobile management**.
 3. Set **Android** and **iOS** management to **Advanced**. *(Forces new mobile device sign-ins into `PENDING_APPROVAL` / `BLOCKED` status).*
 
-### Step 3: Endpoint Verification Signals
-1. Go to **Devices > Mobile & endpoints > Settings > Universal settings > Data access**.
-2. Expand **Endpoint verification**.
-3. Check **Collect Device signals using endpoint verification**.
-
-### Step 4: Install & Configure Endpoint Verification Chrome Extension
+### Step 5: Install & Configure Endpoint Verification Chrome Extension
 - **Method A: Force-Install via Google Admin Console (Managed Chrome Profiles):**
   1. Go to **Devices > Chrome > Apps & extensions > Users & browsers** *(or `Chrome browser > Apps & extensions > Users & browsers`)*.
   2. Select your target Organizational Unit (e.g. `gwfe.org`, `/Students`, or `/Staff`).

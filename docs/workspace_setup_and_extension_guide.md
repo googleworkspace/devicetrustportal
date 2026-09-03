@@ -28,7 +28,26 @@ By default in Google Workspace:
 
 Navigate to **[admin.google.com](https://admin.google.com)** and verify the following settings across all target Organizational Units (OUs), including sub-OUs such as `/Admin`, `/Staff`, and `/Students`:
 
-### 1. Enable Device Approvals (Security)
+### 1. Enable ChromeOS Device Reporting (Mandatory for Chromebook CAA Recognition)
+> [!IMPORTANT]
+> **Why Enterprise-Enrollment is Not Enough for CAA:**
+> For Context-Aware Access (CAA) to recognize a Chromebook as a "Company-owned device" (`device.is_corp_owned_device == true`), simply enterprise-enrolling it is not enough. CAA relies on Endpoint Verification, which requires specific ChromeOS reporting and telemetry settings to be actively broadcasting the device's hardware identity to the Google Admin console.
+
+* **Path:** `Devices > Chrome > Settings > Device settings` (`https://admin.google.com/ac/chrome/settings/device`)
+* **Section:** Scroll down to the **User and device reporting** section.
+* **Mandatory Settings (Turn all 4 ON):**
+  1. **Report device OS information** → Set to **Enable OS information reporting**.
+  2. **Report device hardware information** → Set to **Enable hardware information reporting**.
+  3. **Report device telemetry** → Set to **Enable telemetry reporting**.
+  4. **Report device user tracking** → Set to **Enable user tracking / recent users reporting**.
+
+### 2. Enable Endpoint Verification Globally (Universal Settings)
+Activates device signal collection across your entire organization.
+* **Path:** `Devices > Mobile & endpoints > Settings > Universal settings > Data access`
+* **Setting:** Expand **Endpoint verification** *(labeled as **Device signals** in some Workspace interfaces)*.
+* **Configuration:** Check the box for **Collect device signals using endpoint verification** *(or **Monitor which devices access organization data**)*.
+
+### 3. Enable Device Approvals (Security)
 * **Path:** `Devices > Mobile & endpoints > Settings > Universal settings > Security`
 * **Direct Link:** `https://admin.google.com/ac/appsettings/724141353720?vid=EMM_UNIVERSAL_SETTINGS_VIEW`
 * **Setting:** Expand **Device approvals**.
@@ -36,19 +55,14 @@ Navigate to **[admin.google.com](https://admin.google.com)** and verify the foll
 * **Email Notifications:** Enter the admin email address (e.g., `claycodes@gwfe.org`) to receive enrollment alerts.
 * ⚠️ **Important:** Verify that sub-OUs (like `/Admin`) inherit this setting or explicitly have **Require admin approval** selected.
 
-### 2. Enable Advanced Mobile Management (Mobile Devices)
+### 4. Enable Advanced Mobile Management (Mobile Devices)
 * **Path:** `Devices > Mobile & endpoints > Settings > Universal settings > General`
 * **Setting:** Expand **Mobile management**.
 * **Configuration:** Set Android and iOS to **Advanced**.
 * **Purpose:** Forces new Android and iOS logins into a `PENDING_APPROVAL` state upon initial account sign-in.
 
-### 3. Enable Endpoint Verification Signal Collection
-* **Path:** `Devices > Mobile & endpoints > Settings > Universal settings > Data access`
-* **Setting:** Expand **Endpoint verification**.
-* **Configuration:** Check **Collect Device signals using endpoint verification**.
-
-### 4. Force Managed Chrome Profile Sign-in (Chrome Browser Settings)
-To prevent employees from signing into corporate Workspace accounts inside unmanaged personal Chrome profiles:
+### 5. Force Managed Chrome Profile Sign-in (Chrome Browser Settings)
+To prevent employees and students from signing into corporate Workspace accounts inside unmanaged personal Chrome profiles:
 * **Path:** `Devices > Chrome > Settings > Users & browsers` *(or `Chrome browser > Settings > Users & browsers`)*
 * **Setting 1 (Browser Sign-in):** Find **Browser sign-in** and set to **Force users to sign in to use the browser**.
 * **Setting 2 (Managed Account Restriction):** Find **Managed accounts sign-in restriction** (`ManagedAccountsSigninRestriction`) and set to **Block users from signing into secondary accounts** (`primary_account_strict`).

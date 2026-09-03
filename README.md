@@ -184,9 +184,22 @@ The deployment wizard will guide you through the setup automatically. Here is wh
    - **Recommended for Schools & Hybrid Work (Default: N):** Press **N** (or Enter) to skip IAP Edge Defense. The portal runs in Standard Mode over public HTTPS, secured by Google Sign-In and **Trust Chaining (6-digit pairing codes)**. This ensures students and staff at home can approve personal devices to do homework using their school Chromebook.
    - **Strict Corporate Mode (Option Y):** Places Cloud Run behind Google Cloud IAP and an HTTPS Load Balancer, restricting portal access to campus IP subnets or company hardware. Only use this if your organization strictly requires device approvals to happen on-premises.
 
-7. **Install Google Endpoint Verification Extension:**
-   - Personal computers (macOS, Windows, Linux) require the **Google Endpoint Verification** extension to report hardware telemetry, manage cryptographic keys, and answer Context-Aware Access attestation challenges.
-   - **Method A: Force-Install via Google Admin Console (Managed Chrome Profiles):**
+7. **Install & Configure Google Endpoint Verification (Extension & ChromeOS Telemetry):**
+   > [!IMPORTANT]
+   > **Why Enterprise-Enrollment is Not Enough for CAA:**
+   > For Context-Aware Access (CAA) to recognize a Chromebook as a "Company-owned device" (`device.is_corp_owned_device == true`), simply enterprise-enrolling it is not enough. CAA relies on Endpoint Verification, which requires specific ChromeOS reporting and telemetry settings to be actively broadcasting the device's status to the Admin console.
+
+   - **Part A: Enable ChromeOS Device Reporting (Device Settings):**
+     - Open [admin.google.com > Devices > Chrome > Settings > Device settings](https://admin.google.com/ac/chrome/settings/device).
+     - Scroll to **User and device reporting** and turn **ON**:
+       1. **Report device OS information**
+       2. **Report device hardware information**
+       3. **Report device telemetry**
+       4. **Report device user tracking**
+   - **Part B: Enable Endpoint Verification Globally (Universal Settings):**
+     - Open [admin.google.com > Devices > Mobile & endpoints > Settings > Universal settings > Data access](https://admin.google.com/ac/appsettings/724141353720?vid=EMM_UNIVERSAL_SETTINGS_VIEW).
+     - Under **Endpoint verification** *(or **Device signals**)*, check **Collect device signals using endpoint verification** *(or **Monitor which devices access organization data**)*.
+   - **Part C: Force-Install Extension via Admin Console (Managed Chrome Profiles):**
      - Open [admin.google.com > Devices > Chrome > Apps & extensions > Users & browsers](https://admin.google.com/ac/chrome/apps/user).
      - In the left Organizational Unit tree, select your target OU (e.g. `gwfe.org`, `/Students`, or `/Staff`).
      - Click **Add (+) > Add Chrome app or extension by ID**, and enter Extension ID:
@@ -197,7 +210,7 @@ The deployment wizard will guide you through the setup automatically. Here is wh
        - Under **Installation policy**, select **Force install + pin to browser toolbar**.
        - Under **Certificate management**, turn **ON** both **Allow access to keys** and **Allow enterprise challenge**.
      - Click **Save**.
-   - **Method B: Manual Install on Personal BYOD Test Devices:**
+   - **Part D: Manual Install on Personal BYOD Test Devices:**
      - On the personal Windows or Mac laptop, open Chrome and install [Google Endpoint Verification from the Chrome Web Store](https://chromewebstore.google.com/detail/endpoint-verification/callobklhcbilhphinckomhgkigmfocg).
      - Sign into Chrome with your managed Workspace account (`student@yourdomain.com`) as a managed profile.
      - Click the Endpoint Verification extension icon in the toolbar and click **Sync now** to immediately report hardware telemetry to Cloud Identity.

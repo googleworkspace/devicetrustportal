@@ -48,6 +48,16 @@ device.is_corp_owned_device == true || device.is_admin_approved_device == true
 | **`device.is_corp_owned_device == true`** | **Company-Owned Hardware Trust Anchors:** Hardware serial numbers registered in Google Workspace as enterprise/district inventory (`ownerType: COMPANY`). Includes zero-touch enterprise-enrolled Chromebooks and district laptops imported via CSV. | **Automatic / Direct Access:** Automatically permitted to access Gmail, Drive, Classroom, etc. without needing self-service portal approval. |
 | **`device.is_admin_approved_device == true`** | **Admin / Portal Approved BYOD Devices:** Personal employee/student hardware (`ownerType: BYOD`) where the user binding in Cloud Identity has been set to `managementState: APPROVED`. | **Gated / Portal Approval:** Starts in a blocked state. Access is restored once the user approves the device via the Device Trust Portal (using 6-digit Trust Chaining or campus network auth). |
 
+> [!IMPORTANT]
+> **Mandatory ChromeOS Reporting Settings for `is_corp_owned_device == true`:**
+> Simply enrolling a Chromebook into Google Workspace enterprise management is **not enough** for CAA to evaluate it as company-owned. CAA relies on Endpoint Verification telemetry. In **Devices > Chrome > Settings > Device settings**, you must scroll to **User and device reporting** and enable:
+> 1. **Report device OS information**
+> 2. **Report device hardware information**
+> 3. **Report device telemetry**
+> 4. **Report device user tracking**
+> 
+> In addition, ensure **Endpoint Verification** (Device signals) is enabled globally in **Universal settings > Data access**.
+
 > [!NOTE]
 > The logical **`||` (OR)** operator guarantees that enterprise fleet machines (Chromebooks) enjoy frictionless, uninterrupted access, while personal home laptops (Macs & PCs) must be verified and authorized before reaching sensitive Workspace data.
 1. **Target Organizational Unit (OU) Selection:** In **Assign to apps**, **do NOT leave this policy assigned to the Root Organizational Unit (`/`)**. The Admin Console defaults to the Root OU, which will immediately enforce the rule domain-wide on all users (including Super Admins and faculty) and can result in severe lockouts. Instead, explicitly select a specific target OU (such as **`Students` OU** or a dedicated **`Test / Pilot OU`**) to isolate policy enforcement.
