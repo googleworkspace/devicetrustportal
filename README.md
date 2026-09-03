@@ -173,29 +173,45 @@ The deployment wizard will guide you through the setup automatically. Here is wh
    - Under **Authorized JavaScript origins** and **Authorized redirect URIs**, paste your live Cloud Run URL.
    - Click **Create**, copy your **Client ID**, and paste it into the terminal prompt.
 
-5. **Access Control & IAP Edge Defense:**
+5. **Configure Workspace App Access Control (Crucial for Student Access):**
+   - In Google Workspace, student or restricted organizational units (OUs) may block third-party / custom OAuth apps by default with an error like *"Access blocked: Your institution's admin needs to review this app"*.
+   - Open [Google Workspace Admin Console > Security > Access and data control > API controls > App access control](https://admin.google.com/ac/owl/appaccess).
+   - Click **Manage Third-Party App Access** (or **Connected apps**), then click **Add app > OAuth app name or Client ID**.
+   - Paste your **OAuth 2.0 Client ID** generated in Step 4 and search for it.
+   - Select your application, select your target OUs (e.g., `/Students` or your top-level domain), and set access to **Trusted** (allows access to Google services) or **Limited**. Click **Save**.
+
+6. **Access Control & IAP Edge Defense:**
    - **Recommended for Schools & Hybrid Work (Default: N):** Press **N** (or Enter) to skip IAP Edge Defense. The portal runs in Standard Mode over public HTTPS, secured by Google Sign-In and **Trust Chaining (6-digit pairing codes)**. This ensures students and staff at home can approve personal devices to do homework using their school Chromebook.
    - **Strict Corporate Mode (Option Y):** Places Cloud Run behind Google Cloud IAP and an HTTPS Load Balancer, restricting portal access to campus IP subnets or company hardware. Only use this if your organization strictly requires device approvals to happen on-premises.
 
-6. **Force-Install Google Endpoint Verification Extension (Google Admin Console):**
+7. **Install Google Endpoint Verification Extension:**
    - Personal computers (macOS, Windows, Linux) require the **Google Endpoint Verification** extension to report hardware telemetry, manage cryptographic keys, and answer Context-Aware Access attestation challenges.
-   - Open [admin.google.com > Devices > Chrome > Apps & extensions > Users & browsers](https://admin.google.com/ac/chrome/apps/user).
-   - In the left Organizational Unit tree, select your target OU (e.g. `gwfe.org`, `/Students`, or `/Staff`).
-   - Click **Add (+) > Add Chrome app or extension by ID**, and enter Extension ID:
-     ```text
-     callobklhcbilhphinckomhgkigmfocg
-     ```
-   - In the right-hand options panel:
-     - Under **Installation policy**, select **Force install + pin to browser toolbar**.
-     - Under **Certificate management**, turn **ON** both **Allow access to keys** and **Allow enterprise challenge**.
-   - Click **Save**.
+   - **Method A: Force-Install via Google Admin Console (Managed Chrome Profiles):**
+     - Open [admin.google.com > Devices > Chrome > Apps & extensions > Users & browsers](https://admin.google.com/ac/chrome/apps/user).
+     - In the left Organizational Unit tree, select your target OU (e.g. `gwfe.org`, `/Students`, or `/Staff`).
+     - Click **Add (+) > Add Chrome app or extension by ID**, and enter Extension ID:
+       ```text
+       callobklhcbilhphinckomhgkigmfocg
+       ```
+     - In the right-hand options panel:
+       - Under **Installation policy**, select **Force install + pin to browser toolbar**.
+       - Under **Certificate management**, turn **ON** both **Allow access to keys** and **Allow enterprise challenge**.
+     - Click **Save**.
+   - **Method B: Manual Install on Personal BYOD Test Devices:**
+     - On the personal Windows or Mac laptop, open Chrome and install [Google Endpoint Verification from the Chrome Web Store](https://chromewebstore.google.com/detail/endpoint-verification/callobklhcbilhphinckomhgkigmfocg).
+     - Sign into Chrome with your managed Workspace account (`student@yourdomain.com`) as a managed profile.
+     - Click the Endpoint Verification extension icon in the toolbar and click **Sync now** to immediately report hardware telemetry to Cloud Identity.
 
-7. **Activate Workspace Policy (Context-Aware Access):**
+8. **Activate Workspace Policy (Context-Aware Access):**
    - Open [Google Workspace Admin Console > Security > Access and data control > Context-Aware Access](https://admin.google.com/ac/security/contextaware).
    - Click **Create Access Level**, switch to **Advanced mode**, and create an Access Level named `Approved Devices Only` with CEL expression:
      ```text
      device.is_corp_owned_device == true || device.is_admin_approved_device == true
      ```
+     > [!NOTE]
+     > **Company-Owned vs. Admin-Approved Explained:**
+     > - **`device.is_corp_owned_device == true`:** Matches official enterprise hardware trust anchors (e.g., district Chromebooks enrolled via Directory API or Macs/PCs imported into Company-Owned Inventory). These devices access Workspace apps directly without self-service approval.
+     > - **`device.is_admin_approved_device == true`:** Matches personal BYOD hardware (Macs, Windows laptops, phones) where the user binding has been explicitly approved via the Device Trust Portal (`managementState: APPROVED`). Personal devices start blocked and regain access only after approval.
    - Click **Assign to apps**:
      - ⚠️ **Important (Target Organizational Unit Selection):** In the left Organizational Unit tree, **do NOT leave this policy assigned to the Root Organizational Unit (`/`)**. The Admin Console defaults to the Root OU, which will immediately apply the policy domain-wide to all users (including Super Admins and faculty) and can cause catastrophic lockouts. Instead, explicitly select your target OU (e.g., **`Students` OU** or a dedicated **`Test / Pilot OU`**).
      - **App Assignment:** Assign this level to the Workspace Apps of your choice (eg. Gmail, Drive…).

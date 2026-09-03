@@ -122,6 +122,7 @@ Follow this checklist in the **Google Admin Console** (`admin.google.com`) to pr
 - [ ] Force-install the **Endpoint Verification Chrome Extension** (`callobklhcbilhphinckomhgkigmfocg`).
 - [ ] Turn ON **Allow access to keys** and **Allow enterprise challenge** in Extension Certificate Management.
 - [ ] Enforce **Managed Accounts Sign-in Restriction** (`primary_account_strict`).
+- [ ] Configure **App Access Control** for the OAuth Client ID (especially for `/Students` OU).
 - [ ] Create and assign the **Context-Aware Access Level** (`Approved Devices Only`).
 - [ ] Run the **Mass BYOD Baseline Revocation Sweep**.
 
@@ -144,21 +145,26 @@ Follow this checklist in the **Google Admin Console** (`admin.google.com`) to pr
 2. Expand **Endpoint verification**.
 3. Check **Collect Device signals using endpoint verification**.
 
-### Step 4: Force-Install Endpoint Verification Chrome Extension
-1. Go to **Devices > Chrome > Apps & extensions > Users & browsers** *(or `Chrome browser > Apps & extensions > Users & browsers`)*.
-2. Select your target Organizational Unit (e.g. `gwfe.org` or `/Staff`).
-3. Click **Add (+) > Add Chrome app or extension by ID**.
-4. Paste Extension ID:
-   ```text
-   callobklhcbilhphinckomhgkigmfocg
-   ```
-5. Click **Save**.
-6. **In the Right-Hand App Options Panel:**
-   * Under **Installation policy**, select **Force install + pin to browser toolbar**.
-   * Scroll down to **Certificate management**:
-     * Next to **Allow access to keys**, click **Turn on** *(allows extension to sign telemetry with OS Keychain/TPM keys)*.
-     * Next to **Allow enterprise challenge**, click **Turn on** *(allows extension to answer Context-Aware Access real-time attestation challenges)*.
-7. Click **Save** at the top right of the page.
+### Step 4: Install & Configure Endpoint Verification Chrome Extension
+- **Method A: Force-Install via Google Admin Console (Managed Chrome Profiles):**
+  1. Go to **Devices > Chrome > Apps & extensions > Users & browsers** *(or `Chrome browser > Apps & extensions > Users & browsers`)*.
+  2. Select your target Organizational Unit (e.g. `gwfe.org`, `/Students`, or `/Staff`).
+  3. Click **Add (+) > Add Chrome app or extension by ID**.
+  4. Paste Extension ID:
+     ```text
+     callobklhcbilhphinckomhgkigmfocg
+     ```
+  5. Click **Save**.
+  6. **In the Right-Hand App Options Panel:**
+     * Under **Installation policy**, select **Force install + pin to browser toolbar**.
+     * Scroll down to **Certificate management**:
+       * Next to **Allow access to keys**, click **Turn on** *(allows extension to sign telemetry with OS Keychain/TPM keys)*.
+       * Next to **Allow enterprise challenge**, click **Turn on** *(allows extension to answer Context-Aware Access real-time attestation challenges)*.
+  7. Click **Save** at the top right of the page.
+- **Method B: Manual Install on Personal BYOD Test Devices:**
+  1. On the user's personal Windows or Mac laptop, open Chrome and install [Google Endpoint Verification](https://chromewebstore.google.com/detail/endpoint-verification/callobklhcbilhphinckomhgkigmfocg) from the Chrome Web Store.
+  2. Sign into Chrome using the managed Google Workspace account (`student@yourdomain.com`) as a managed profile.
+  3. Click the Endpoint Verification extension icon in the browser toolbar and click **Sync now** to trigger immediate signal reporting to Cloud Identity.
 
 ### Step 5: Force Managed Chrome Profile Sign-in
 To prevent data access inside unmanaged personal Chrome browser profiles:
@@ -166,7 +172,17 @@ To prevent data access inside unmanaged personal Chrome browser profiles:
 2. Locate **Browser sign-in** and set to **Force users to sign in to use the browser**.
 3. Locate **Managed accounts sign-in restriction** (`ManagedAccountsSigninRestriction`) and set to **Block users from signing into secondary accounts** (`primary_account_strict`).
 
-### Step 6: Create Context-Aware Access Level
+### Step 6: Configure Workspace App Access Control (Crucial for Student Access)
+To prevent Google Workspace from blocking student accounts during Google Sign-In with *"Access blocked: Your institution's admin needs to review this app"*:
+1. Go to **Security > Access and data control > API controls > App access control** (`https://admin.google.com/ac/owl/appaccess`).
+2. Click **Manage Third-Party App Access** (or **Connected apps**).
+3. Click **Add app > OAuth app name or Client ID**.
+4. Search for your **OAuth 2.0 Web Client ID** generated in GCP.
+5. Select your application and choose the target Organizational Units (e.g., `/Students` or root domain).
+6. Set access permission to **Trusted** (allows access to Google services) or **Limited**.
+7. Click **Save**.
+
+### Step 7: Create Context-Aware Access Level
 1. Go to **Security > Access and data control > Context-Aware Access** (`https://admin.google.com/ac/security/contextaware`).
 2. Click **Create Access Level**.
 3. Name: `Approved Devices Only`.
@@ -174,6 +190,10 @@ To prevent data access inside unmanaged personal Chrome browser profiles:
    ```text
    device.is_corp_owned_device == true || device.is_admin_approved_device == true
    ```
+   > [!NOTE]
+   > **Understanding `is_corp_owned_device` vs. `is_admin_approved_device`:**
+   > - **`device.is_corp_owned_device == true`:** Matches corporate/district hardware trust anchors (e.g. enterprise-enrolled Chromebooks or company-owned Macs/PCs registered in Admin Console Company-Owned Inventory). These devices are automatically granted access without needing self-service portal approval.
+   > - **`device.is_admin_approved_device == true`:** Matches personal BYOD hardware (Macs, Windows laptops, mobile devices) where the user binding has been approved via the Device Trust Portal (`managementState: APPROVED`). Personal devices start blocked until approved.
 5. Click **Save**.
 6. Navigate to **Assign to apps** to configure policy enforcement:
    * ⚠️ **Critical: Target Organizational Unit (OU) Selection:** In the left Organizational Unit tree, **do NOT leave this policy assigned to the Root Organizational Unit (`/`)**. The Admin Console defaults to the Root OU, which will immediately apply the access level domain-wide to all user accounts (including Super Admins, faculty, and IT staff). If left at the Root OU without widespread pre-approval, administrators and staff can be locked out. Instead, explicitly select a specific target OU (such as **`Students` OU** or a dedicated **`Test / Pilot OU`**) to isolate policy enforcement.
@@ -181,7 +201,7 @@ To prevent data access inside unmanaged personal Chrome browser profiles:
    * **Enforcement Policy:** Set policies to **Block** when policies / access levels are not met.
    * **Desktop & Mobile Apps:** Ensure policy is set to Enable for **Apply to Google desktop and mobile apps** (to enforce policy across native clients like Gmail mobile and Google Drive for Desktop in addition to web browsers).
 
-### Step 7: Execute the Zero-Trust Baseline Revocation Sweep
+### Step 8: Execute the Zero-Trust Baseline Revocation Sweep
 Because initial Chrome browser profile sign-ins tag new desktop assets as `APPROVED` by default before revocation, execute the mass revocation script to reset unapproved BYOD hardware to `BLOCKED`:
 
 ```bash

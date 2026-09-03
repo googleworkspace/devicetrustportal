@@ -41,10 +41,15 @@ To enforce this across your tenant, navigate to **Google Workspace Admin Console
 ```text
 device.is_corp_owned_device == true || device.is_admin_approved_device == true
 ```
-* **`device.is_corp_owned_device == true`:** Automatically permits access from corporate hardware trust anchors (e.g., zero-touch Chromebooks, company-owned Macs).
-* **`device.is_admin_approved_device == true`:** Automatically permits access from personal BYOD hardware that has been vetted and approved via our Gateway portal!
 
-#### Best Practices for Policy Assignment & Scoping:
+#### Detailed Breakdown of the CEL Expression:
+| Expression Clause | Device Category & Definition | Approval Flow |
+| :--- | :--- | :--- |
+| **`device.is_corp_owned_device == true`** | **Company-Owned Hardware Trust Anchors:** Hardware serial numbers registered in Google Workspace as enterprise/district inventory (`ownerType: COMPANY`). Includes zero-touch enterprise-enrolled Chromebooks and district laptops imported via CSV. | **Automatic / Direct Access:** Automatically permitted to access Gmail, Drive, Classroom, etc. without needing self-service portal approval. |
+| **`device.is_admin_approved_device == true`** | **Admin / Portal Approved BYOD Devices:** Personal employee/student hardware (`ownerType: BYOD`) where the user binding in Cloud Identity has been set to `managementState: APPROVED`. | **Gated / Portal Approval:** Starts in a blocked state. Access is restored once the user approves the device via the Device Trust Portal (using 6-digit Trust Chaining or campus network auth). |
+
+> [!NOTE]
+> The logical **`||` (OR)** operator guarantees that enterprise fleet machines (Chromebooks) enjoy frictionless, uninterrupted access, while personal home laptops (Macs & PCs) must be verified and authorized before reaching sensitive Workspace data.
 1. **Target Organizational Unit (OU) Selection:** In **Assign to apps**, **do NOT leave this policy assigned to the Root Organizational Unit (`/`)**. The Admin Console defaults to the Root OU, which will immediately enforce the rule domain-wide on all users (including Super Admins and faculty) and can result in severe lockouts. Instead, explicitly select a specific target OU (such as **`Students` OU** or a dedicated **`Test / Pilot OU`**) to isolate policy enforcement.
 2. **App Assignment:** Assign this level to the Workspace Apps of your choice (eg. Gmail, Drive…).
 3. **Enforcement Policy:** Set policies to **Block** when policies / access levels are not met (ensures access is restricted rather than just audited in Monitor Mode).
