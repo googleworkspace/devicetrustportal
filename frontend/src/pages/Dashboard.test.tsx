@@ -18,7 +18,7 @@ import React from "react";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom";
 import { Dashboard } from "./Dashboard";
-import { getMyDevices, checkIsAdmin } from "../services/api";
+import { getMyDevices, checkIsAdmin, getPublicConfig } from "../services/api";
 
 // Mock the API service
 jest.mock("../services/api", () => ({
@@ -27,6 +27,7 @@ jest.mock("../services/api", () => ({
   approveDevice: jest.fn(),
   revokeDevice: jest.fn(),
   revokeDeviceBulk: jest.fn(),
+  getPublicConfig: jest.fn(),
 }));
 
 // Mock GoogleLoginButton to simplify authentication testing
@@ -46,11 +47,13 @@ jest.mock("../components/GoogleLoginButton", () => ({
 
 const mockGetMyDevices = getMyDevices as jest.Mock;
 const mockCheckIsAdmin = checkIsAdmin as jest.Mock;
+const mockGetPublicConfig = getPublicConfig as jest.Mock;
 
 describe("Dashboard Page", () => {
   beforeEach(() => {
     localStorage.clear();
     jest.clearAllMocks();
+    mockGetPublicConfig.mockResolvedValue({ default_locale: "en" });
   });
 
   test("renders logged out state by default", () => {
@@ -176,6 +179,42 @@ describe("Dashboard Page", () => {
 
     await waitFor(() => {
       expect(screen.getByText("Admin Configurations")).toBeInTheDocument();
+    });
+  });
+
+  test("clicking refresh devices button triggers getMyDevices", async () => {
+    localStorage.setItem("userEmail", "user@example.com");
+    localStorage.setItem("googleIdToken", "mock-token");
+
+    mockCheckIsAdmin.mockResolvedValue(false);
+    mockGetMyDevices.mockResolvedValue([
+      {
+        device_user_name: "devices/1/deviceUsers/1",
+        device_type: "DESKTOP",
+        model: "MacBook Pro",
+        os_version: "macOS 14.0",
+        serial_number: "C02XX123XX",
+        approval_state: "APPROVED",
+        owner_type: "BYOD",
+        last_sync_time: "2026-06-15T12:00:00Z",
+      },
+    ]);
+
+    render(<Dashboard />);
+
+    await waitFor(() => {
+      expect(screen.getByText("MacBook Pro")).toBeInTheDocument();
+    });
+
+    expect(mockGetMyDevices).toHaveBeenCalledTimes(1);
+
+    const refreshButtons = screen.getAllByRole("button", { name: /Refresh Devices/i });
+    expect(refreshButtons.length).toBeGreaterThan(0);
+
+    fireEvent.click(refreshButtons[0]);
+
+    await waitFor(() => {
+      expect(mockGetMyDevices).toHaveBeenCalledTimes(2);
     });
   });
 });

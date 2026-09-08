@@ -84,6 +84,7 @@ export interface TranslationDictionary {
   addAdminModalTitle: string;
   addAdminModalDesc: string;
   emailAddressLabel: string;
+  refreshDevices: string;
 }
 
 export const translations: Record<string, TranslationDictionary> = {
@@ -156,6 +157,7 @@ export const translations: Record<string, TranslationDictionary> = {
     addAdminModalTitle: "Add Portal Administrator",
     addAdminModalDesc: "Enter the Google Workspace corporate email address to grant delegated configuration access.",
     emailAddressLabel: "Email Address:",
+    refreshDevices: "Refresh Devices",
   },
   es: {
     portalTitle: "Portal de Confianza de Dispositivos",
@@ -226,6 +228,7 @@ export const translations: Record<string, TranslationDictionary> = {
     addAdminModalTitle: "Agregar Administrador del Portal",
     addAdminModalDesc: "Ingrese el correo corporativo de Google Workspace para otorgar acceso delegado.",
     emailAddressLabel: "Dirección de Correo:",
+    refreshDevices: "Actualizar dispositivos",
   },
   fr: {
     portalTitle: "Portail de Confiance des Appareils",
@@ -296,6 +299,7 @@ export const translations: Record<string, TranslationDictionary> = {
     addAdminModalTitle: "Ajouter un Administrateur",
     addAdminModalDesc: "Entrez l'adresse e-mail professionnelle Google Workspace pour accorder l'accès délégué.",
     emailAddressLabel: "Adresse E-mail :",
+    refreshDevices: "Actualiser les appareils",
   },
   ja: {
     portalTitle: "デバイストラスト ゲートウェイ ポータル",
@@ -366,6 +370,7 @@ export const translations: Record<string, TranslationDictionary> = {
     addAdminModalTitle: "ポータル管理者の追加",
     addAdminModalDesc: "設定権限を委任する Google Workspace 企業メールアドレスを入力してください。",
     emailAddressLabel: "メールアドレス:",
+    refreshDevices: "デバイスを更新",
   },
   de: {
     portalTitle: "Geräte-Vertrauensportal",
@@ -436,6 +441,7 @@ export const translations: Record<string, TranslationDictionary> = {
     addAdminModalTitle: "Portal-Administrator hinzufügen",
     addAdminModalDesc: "Geben Sie die geschäftliche E-Mail-Adresse für den delegierten Zugriff ein.",
     emailAddressLabel: "E-Mail-Adresse:",
+    refreshDevices: "Geräte aktualisieren",
   },
   pt: {
     portalTitle: "Portal de Confiança de Dispositivos",
@@ -506,6 +512,7 @@ export const translations: Record<string, TranslationDictionary> = {
     addAdminModalTitle: "Adicionar Administrador",
     addAdminModalDesc: "Digite o e-mail corporativo do Google Workspace para conceder acesso delegado.",
     emailAddressLabel: "Endereço de E-mail:",
+    refreshDevices: "Atualizar dispositivos",
   },
   zh: {
     portalTitle: "设备信任网关门户",
@@ -576,6 +583,7 @@ export const translations: Record<string, TranslationDictionary> = {
     addAdminModalTitle: "添加门户管理员",
     addAdminModalDesc: "输入 Google Workspace 企业邮箱以授予委托配置访问权限。",
     emailAddressLabel: "电子邮箱地址:",
+    refreshDevices: "刷新设备",
   },
   it: {
     portalTitle: "Portale di Fiducia dei Dispositivi",
@@ -646,6 +654,7 @@ export const translations: Record<string, TranslationDictionary> = {
     addAdminModalTitle: "Aggiungi Amministratore",
     addAdminModalDesc: "Inserisci l'email aziendale Google Workspace per concedere l'accesso delegato.",
     emailAddressLabel: "Indirizzo Email:",
+    refreshDevices: "Aggiorna dispositivi",
   },
   ko: {
     portalTitle: "디바이스 트러스트 게이트웨이 포털",
@@ -716,6 +725,7 @@ export const translations: Record<string, TranslationDictionary> = {
     addAdminModalTitle: "포털 관리자 추가",
     addAdminModalDesc: "설정 권한을 위임할 Google Workspace 회사 이메일을 입력하세요.",
     emailAddressLabel: "이메일 주소:",
+    refreshDevices: "기기 새로고침",
   },
   ar: {
     portalTitle: "بوابة الثقة في الأجهزة",
@@ -786,6 +796,7 @@ export const translations: Record<string, TranslationDictionary> = {
     addAdminModalTitle: "إضافة مسؤول للبوابة",
     addAdminModalDesc: "أدخل بريد Google Workspace الخاص بالشركة لمنح صلاحية الإدارة.",
     emailAddressLabel: "عنوان البريد الإلكتروني:",
+    refreshDevices: "تحديث الأجهزة",
   },
   hi: {
     portalTitle: "डिवाइस ट्रस्ट गेटवे पोर्टल",
@@ -856,6 +867,7 @@ export const translations: Record<string, TranslationDictionary> = {
     addAdminModalTitle: "पोर्टल प्रशासक जोड़ें",
     addAdminModalDesc: "प्रशासनिक अधिकार देने के लिए Google Workspace कॉर्पोरेट ईमेल दर्ज करें।",
     emailAddressLabel: "ईमेल पता:",
+    refreshDevices: "डिवाइस रीफ़्रेश करें",
   },
   nl: {
     portalTitle: "Apparaten Vertrouwensportaal",
@@ -926,6 +938,7 @@ export const translations: Record<string, TranslationDictionary> = {
     addAdminModalTitle: "Beheerder Toevoegen",
     addAdminModalDesc: "Voer het zakelijke Google Workspace-e-mailadres in om beheerdersrechten zu verlenen.",
     emailAddressLabel: "E-mailadres:",
+    refreshDevices: "Apparaten vernieuwen",
   },
   pl: {
     portalTitle: "Portal Zaufania Urządzeń",
@@ -996,6 +1009,7 @@ export const translations: Record<string, TranslationDictionary> = {
     addAdminModalTitle: "Dodaj Administratora",
     addAdminModalDesc: "Wprowadź służbowy adres e-mail Google Workspace, aby przyznać dostęp.",
     emailAddressLabel: "Adres E-mail:",
+    refreshDevices: "Odśwież urządzenia",
   },
   sv: {
     portalTitle: "Enhetsförtroende Portal",
@@ -1066,6 +1080,7 @@ export const translations: Record<string, TranslationDictionary> = {
     addAdminModalTitle: "Lägg till Portaladministratör",
     addAdminModalDesc: "Ange Google Workspace e-postadressen för att ge delegerad åtkomst.",
     emailAddressLabel: "E-postadress:",
+    refreshDevices: "Uppdatera enheter",
   },
   tr: {
     portalTitle: "Cihaz Güven Portalı",
@@ -1136,6 +1151,7 @@ export const translations: Record<string, TranslationDictionary> = {
     addAdminModalTitle: "Portal Yöneticisi Ekle",
     addAdminModalDesc: "Erişim yetkisi vermek için kurumsal Google Workspace e-postasını girin.",
     emailAddressLabel: "E-posta Adresi:",
+    refreshDevices: "Cihazları Yenile",
   },
 };
 

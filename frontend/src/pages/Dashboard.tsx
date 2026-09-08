@@ -221,6 +221,9 @@ export const Dashboard: React.FC = () => {
       </header>
 
       <main style={{ padding: "24px", maxWidth: "1100px", margin: "0 auto" }}>
+        <style>
+          {`@keyframes spin { to { transform: rotate(360deg); } }`}
+        </style>
         {/* Google Workspace Authentication Surface Card */}
         <div style={{ backgroundColor: "#ffffff", padding: "24px", borderRadius: "8px", marginBottom: "24px", border: "1px solid #dadce0", boxShadow: "0 1px 2px 0 rgba(60,64,67,0.3)" }}>
           <h3 style={{ marginTop: 0, marginBottom: "8px", fontSize: "16px", fontWeight: 500, color: "#202124" }}>{t.googleAuthTitle}</h3>
@@ -241,20 +244,34 @@ export const Dashboard: React.FC = () => {
                   <span style={{ fontSize: "14px", color: "#202124", fontWeight: 500 }}>{userEmail}</span>
                 </div>
               </div>
-              <button
-                onClick={() => {
-                  localStorage.removeItem("userEmail");
-                  localStorage.removeItem("googleIdToken");
-                  setUserEmail("");
-                  setAuthToken("");
-                  setDevices([]);
-                  setIsAdmin(false);
-                  setMessage("Signed out successfully.");
-                }}
-                style={{ padding: "6px 14px", backgroundColor: "#ffffff", color: "#3c4043", border: "1px solid #dadce0", borderRadius: "4px", cursor: "pointer", fontWeight: 500, fontSize: "13px", transition: "all 0.15s ease" }}
-              >
-                {t.signOut}
-              </button>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <button
+                  onClick={loadDevices}
+                  disabled={loadingDevices}
+                  aria-label={t.refreshDevices}
+                  style={{ padding: "6px 14px", backgroundColor: "#ffffff", color: "#1a73e8", border: "1px solid #dadce0", borderRadius: "4px", cursor: loadingDevices ? "not-allowed" : "pointer", fontWeight: 500, fontSize: "13px", display: "inline-flex", alignItems: "center", gap: "6px", boxShadow: "0 1px 2px 0 rgba(60,64,67,0.1)", opacity: loadingDevices ? 0.7 : 1, transition: "all 0.15s ease" }}
+                  title={t.refreshDevices}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style={{ animation: loadingDevices ? "spin 1s ease-in-out infinite" : "none" }}>
+                    <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
+                  </svg>
+                  {t.refreshDevices}
+                </button>
+                <button
+                  onClick={() => {
+                    localStorage.removeItem("userEmail");
+                    localStorage.removeItem("googleIdToken");
+                    setUserEmail("");
+                    setAuthToken("");
+                    setDevices([]);
+                    setIsAdmin(false);
+                    setMessage("Signed out successfully.");
+                  }}
+                  style={{ padding: "6px 14px", backgroundColor: "#ffffff", color: "#3c4043", border: "1px solid #dadce0", borderRadius: "4px", cursor: "pointer", fontWeight: 500, fontSize: "13px", transition: "all 0.15s ease" }}
+                >
+                  {t.signOut}
+                </button>
+              </div>
             </div>
           )}
         </div>
@@ -271,21 +288,38 @@ export const Dashboard: React.FC = () => {
         </div>
       ) : loadingDevices ? (
         <div role="status" aria-live="polite" style={{ padding: "40px 20px", backgroundColor: "#ffffff", border: "1px solid #dadce0", borderRadius: "8px", textAlign: "center", marginTop: "10px", boxShadow: "0 1px 2px 0 rgba(60,64,67,0.3)" }}>
-          <style>
-            {`@keyframes spin { to { transform: rotate(360deg); } }`}
-          </style>
           <div style={{ display: "inline-block", width: "40px", height: "40px", border: "4px solid rgba(26, 115, 232, 0.2)", borderRadius: "50%", borderTopColor: "#1a73e8", animation: "spin 1s ease-in-out infinite", marginBottom: "15px" }} />
           <div style={{ fontWeight: 500, color: "#202124", fontSize: "16px", marginBottom: "6px" }}>{t.loadingDevices}</div>
           <div style={{ color: "#5f6368", fontSize: "13px" }}>Securely verifying your hardware inventory for <b>{userEmail}</b>.</div>
         </div>
       ) : deviceError ? (
-        <div role="alert" style={{ padding: "16px", backgroundColor: "#fce8e6", color: "#c5221f", border: "1px solid #f8d7da", borderRadius: "6px", fontWeight: 500 }}>
-          {deviceError}
+        <div role="alert" style={{ padding: "16px", backgroundColor: "#fce8e6", color: "#c5221f", border: "1px solid #f8d7da", borderRadius: "6px", fontWeight: 500, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "10px" }}>
+          <span>{deviceError}</span>
+          <button
+            onClick={loadDevices}
+            disabled={loadingDevices}
+            style={{ padding: "6px 14px", backgroundColor: "#ffffff", color: "#c5221f", border: "1px solid #f8d7da", borderRadius: "4px", cursor: "pointer", fontWeight: 500, fontSize: "13px", display: "inline-flex", alignItems: "center", gap: "6px" }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
+            </svg>
+            {t.refreshDevices}
+          </button>
         </div>
       ) : devices.length === 0 ? (
         <div role="status" style={{ padding: "30px", backgroundColor: "#ffffff", color: "#5f6368", border: "1px solid #dadce0", borderRadius: "8px", textAlign: "center", boxShadow: "0 1px 2px 0 rgba(60,64,67,0.3)" }}>
           <div style={{ fontSize: "16px", fontWeight: 500, marginBottom: "8px", color: "#202124" }}>{t.noApprovedDevices}</div>
-          <div style={{ fontSize: "14px" }}>We checked your inventory but found no approved devices matching <b>{userEmail}</b>.</div>
+          <div style={{ fontSize: "14px", marginBottom: "16px" }}>We checked your inventory but found no approved devices matching <b>{userEmail}</b>.</div>
+          <button
+            onClick={loadDevices}
+            disabled={loadingDevices}
+            style={{ padding: "8px 16px", backgroundColor: "#1a73e8", color: "#ffffff", border: "none", borderRadius: "4px", cursor: loadingDevices ? "not-allowed" : "pointer", fontWeight: 500, fontSize: "13px", display: "inline-flex", alignItems: "center", gap: "6px", boxShadow: "0 1px 2px 0 rgba(60,64,67,0.2)", opacity: loadingDevices ? 0.7 : 1 }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style={{ animation: loadingDevices ? "spin 1s ease-in-out infinite" : "none" }}>
+              <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
+            </svg>
+            {t.refreshDevices}
+          </button>
         </div>
       ) : (
         <>
@@ -296,14 +330,28 @@ export const Dashboard: React.FC = () => {
                 <h2 style={{ margin: 0, fontSize: "18px", fontWeight: 500, color: "#202124" }}>{t.personalDevicesTitle}</h2>
                 <div style={{ fontSize: "13px", color: "#5f6368", marginTop: "2px" }}>{t.personalDevicesSubtitle}</div>
               </div>
-              {selectedDevices.length > 0 && (
+              <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
                 <button
-                  onClick={() => initiateRevoke(selectedDevices)}
-                  style={{ padding: "8px 16px", backgroundColor: "#d93025", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", fontSize: "14px", fontWeight: 500 }}
+                  onClick={loadDevices}
+                  disabled={loadingDevices}
+                  aria-label={t.refreshDevices}
+                  style={{ padding: "8px 14px", backgroundColor: "#ffffff", color: "#1a73e8", border: "1px solid #dadce0", borderRadius: "4px", cursor: loadingDevices ? "not-allowed" : "pointer", fontSize: "13px", fontWeight: 500, display: "inline-flex", alignItems: "center", gap: "6px", boxShadow: "0 1px 2px 0 rgba(60,64,67,0.1)", opacity: loadingDevices ? 0.7 : 1 }}
+                  title={t.refreshDevices}
                 >
-                  ✕ {t.bulkRevokeSelected} ({selectedDevices.length})
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style={{ animation: loadingDevices ? "spin 1s ease-in-out infinite" : "none" }}>
+                    <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
+                  </svg>
+                  {t.refreshDevices}
                 </button>
-              )}
+                {selectedDevices.length > 0 && (
+                  <button
+                    onClick={() => initiateRevoke(selectedDevices)}
+                    style={{ padding: "8px 16px", backgroundColor: "#d93025", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", fontSize: "14px", fontWeight: 500 }}
+                  >
+                    ✕ {t.bulkRevokeSelected} ({selectedDevices.length})
+                  </button>
+                )}
+              </div>
             </div>
 
             {personalDevices.length === 0 ? (
