@@ -43,9 +43,11 @@ Navigate to **[admin.google.com](https://admin.google.com)** and verify the foll
 
 ### 2. Enable Endpoint Verification Globally (Universal Settings)
 Activates device signal collection across your entire organization.
-* **Path:** `Devices > Mobile & endpoints > Settings > Universal settings > Data access`
-* **Setting:** Expand **Endpoint verification** *(labeled as **Device signals** in some Workspace interfaces)*.
-* **Configuration:** Check the box for **Collect device signals using endpoint verification** *(or **Monitor which devices access organization data**)*.
+* **Path:** `Devices > Mobile & endpoints > Settings > Universal > Data access` *(labeled **Universal** or **Universal settings**)*
+* **Setting:** Expand **Device signals** *(or **Endpoint verification**)*.
+* **Configuration:** Check **both** boxes:
+  1. **Collect device signals from Chrome browser**
+  2. **Collect device signals using endpoint verification** *(or **Monitor which devices access organization data**)*
 
 ### 3. Enable Device Approvals (Security)
 * **Path:** `Devices > Mobile & endpoints > Settings > Universal settings > Security`

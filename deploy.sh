@@ -17,6 +17,10 @@
 export LANG=C.UTF-8
 export LC_ALL=C.UTF-8
 
+# Prevent Git Bash / MSYS2 on Windows from converting POSIX paths (e.g. /secrets/dwd_key.json) into local Windows paths
+export MSYS_NO_PATHCONV=1
+export MSYS2_ARG_CONV_EXCL="*"
+
 # Device Trust Gateway - Automated Deployment & Setup Script
 
 set -e
@@ -944,9 +948,15 @@ print_final_summary() {
     echo -e "  🌐 ${YELLOW}Main Gateway Portal:${NC}       ${PORTAL_URL}/#/"
     echo -e "  ⚙️ ${YELLOW}Admin Configuration UI:${NC}    ${PORTAL_URL}/#/admin"
     echo ""
-    echo -e "${BLUE}Next Steps & Policy Reminder:${NC}"
-    echo -e "Ensure your Google Workspace Context-Aware Access (CAA) Custom Access Level is actively enforcing:"
-    echo -e "  ${GREEN}device.is_corp_owned_device == true || device.is_admin_approved_device == true${NC}"
+    echo -e "${BLUE}Next Steps & Mandatory Google Workspace Policy Checklist:${NC}"
+    echo -e "  1. ${YELLOW}Device Approvals:${NC} Devices > Mobile & endpoints > Settings > Universal > Security > Device approvals"
+    echo -e "     → Select ${GREEN}Require admin approval${NC}"
+    echo -e "  2. ${YELLOW}Device Signals:${NC}   Devices > Mobile & endpoints > Settings > Universal > Data access > Device signals"
+    echo -e "     → Check ${GREEN}Collect device signals from Chrome browser${NC} & ${GREEN}Collect device signals using endpoint verification${NC}"
+    echo -e "  3. ${YELLOW}EV Extension:${NC}     Devices > Chrome > Apps & extensions > Users & browsers (${GREEN}callobklhcbilhphinckomhgkigmfocg${NC})"
+    echo -e "     → Under Certificate management, turn ON ${GREEN}Allow access to keys${NC} & ${GREEN}Allow enterprise challenge${NC}"
+    echo -e "  4. ${YELLOW}Context-Aware Access (CAA) Custom Access Level:${NC}"
+    echo -e "     ${GREEN}device.is_corp_owned_device == true || device.is_admin_approved_device == true${NC}"
     echo -e "${GREEN}===================================================================================================${NC}\n"
 
     if [[ "$OSTYPE" == "msys"* ]] || [[ "$OSTYPE" == "win32"* ]] || [[ "$OSTYPE" == "cygwin"* ]] || [[ -n "$WINDIR" ]] || [[ -n "$COMSPEC" ]]; then

@@ -144,9 +144,11 @@ Follow this checklist in the **Google Admin Console** (`admin.google.com`) to pr
 
 ### Step 2: Enable Endpoint Verification Globally (Universal Settings)
 Activates device signal collection across your entire Google Workspace tenant.
-1. Go to **Devices > Mobile & endpoints > Settings > Universal settings > Data access**.
-2. Expand **Endpoint verification** *(labeled as **Device signals** in some Workspace interfaces)*.
-3. Check **Collect device signals using endpoint verification** *(or **Monitor which devices access organization data**)*.
+1. Go to **Devices > Mobile & endpoints > Settings > Universal > Data access** *(labeled **Universal** or **Universal settings**)*.
+2. Expand **Device signals** *(or **Endpoint verification**)*.
+3. Check **both** boxes:
+   * **Collect device signals from Chrome browser**
+   * **Collect device signals using endpoint verification** *(or **Monitor which devices access organization data**)*
 
 ### Step 3: Universal Security & Device Approval Settings
 1. Go to **Devices > Mobile & endpoints > Settings > Universal settings > Security**.

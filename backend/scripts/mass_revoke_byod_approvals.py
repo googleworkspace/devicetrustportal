@@ -26,6 +26,7 @@ import google.auth
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
+from backend.services.cloud_identity import resolve_dwd_key_path
 
 def execute_mass_byod_revocation():
     print("\n===================================================================================================")
@@ -37,19 +38,22 @@ def execute_mass_byod_revocation():
     scopes = [
         "https://www.googleapis.com/auth/cloud-identity.devices"
     ]
-    key_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "dwd_key.json")
-    admin_email = os.getenv("WORKSPACE_ADMIN_EMAIL")
+    key_path = resolve_dwd_key_path()
+    admin_email = (os.getenv("WORKSPACE_ADMIN_EMAIL") or "").strip()
 
     if not admin_email:
         print("ERROR: WORKSPACE_ADMIN_EMAIL environment variable is required for DWD impersonation.")
         return
 
     try:
-        if key_path and os.path.exists(key_path):
+        if key_path:
             credentials = service_account.Credentials.from_service_account_file(
                 key_path, scopes=scopes, subject=admin_email
             )
         else:
+            raw_env_cred = (os.getenv("GOOGLE_APPLICATION_CREDENTIALS") or "").strip()
+            if raw_env_cred and not os.path.exists(raw_env_cred):
+                os.environ.pop("GOOGLE_APPLICATION_CREDENTIALS", None)
             credentials, _ = google.auth.default(scopes=scopes)
 
         service = build("cloudidentity", "v1", credentials=credentials)

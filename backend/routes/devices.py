@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone
 from pydantic import BaseModel
@@ -130,6 +131,8 @@ def crawl_devices_for_user(
             response = request.execute() or {}
         except Exception as list_err:
             print(f"WARNING [devices.py]: Failed to fetch page of devices: {list_err}")
+            if not next_page_token:
+                raise
             break
 
         devices = response.get("devices") or []
@@ -236,7 +239,19 @@ def get_my_approved_devices(user_email: str = Depends(get_current_user_email)):
     if not target_email:
         return []
 
+    is_production = os.getenv("USE_SECRET_MANAGER", "false").lower() == "true"
+
     if not cloud_identity_service.service:
+        if is_production:
+            err_detail = getattr(cloud_identity_service, "init_error", None) or "Missing or invalid Domain-Wide Delegation credentials."
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    f"Cloud Identity API service is not initialized ({err_detail}). "
+                    "Verify that /secrets/dwd_key.json is mounted, WORKSPACE_ADMIN_EMAIL is set to an active "
+                    "Google Workspace Super Admin, and Domain-Wide Delegation scopes are authorized."
+                )
+            )
         print(f"INFO [devices.py]: Running without Cloud Identity service credentials. Returning mock assets for '{user_email}'.")
         return [
             DeviceUserItem(
@@ -269,6 +284,7 @@ def get_my_approved_devices(user_email: str = Depends(get_current_user_email)):
     print(f"INFO [devices.py]: Executing Cloud Identity devices.list(filter='{query_filter}') for customer '{config.customer_id}' (is_admin={is_admin})...")
 
     total_devices_matched = 0
+    crawl_error: Optional[str] = None
 
     # 1. Fast path: server-side filtered search
     try:
@@ -280,6 +296,7 @@ def get_my_approved_devices(user_email: str = Depends(get_current_user_email)):
         total_devices_matched += fast_path_count
         my_devices.extend(fast_path_devices)
     except Exception as e:
+        crawl_error = str(e)
         print(f"WARNING [devices.py]: Cloud Identity API filtered crawl encountered notice: {e}")
 
     # 2. Adaptive Fallback: If fast-path yields zero device bindings for user,
@@ -294,8 +311,19 @@ def get_my_approved_devices(user_email: str = Depends(get_current_user_email)):
             )
             total_devices_matched += fallback_count
             my_devices.extend(fallback_devices)
+            crawl_error = None
         except Exception as e:
+            crawl_error = str(e)
             print(f"WARNING [devices.py]: Cloud Identity API unfiltered fallback crawl encountered notice: {e}")
+            if is_production:
+                raise HTTPException(
+                    status_code=500,
+                    detail=(
+                        f"Cloud Identity API device lookup failed ({crawl_error}). "
+                        "Verify WORKSPACE_ADMIN_EMAIL and Domain-Wide Delegation scope "
+                        "(https://www.googleapis.com/auth/cloud-identity.devices)."
+                    )
+                )
 
     # Fetch enterprise-enrolled ChromeOS devices from Admin SDK Directory API
     directory_cbs = []

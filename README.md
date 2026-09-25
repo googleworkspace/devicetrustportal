@@ -196,10 +196,16 @@ The deployment wizard will guide you through the setup automatically. Here is wh
        2. **Report device hardware information**
        3. **Report device telemetry**
        4. **Report device user tracking**
-   - **Part B: Enable Endpoint Verification Globally (Universal Settings):**
-     - Open [admin.google.com > Devices > Mobile & endpoints > Settings > Universal settings > Data access](https://admin.google.com/ac/appsettings/724141353720?vid=EMM_UNIVERSAL_SETTINGS_VIEW).
-     - Under **Endpoint verification** *(or **Device signals**)*, check **Collect device signals using endpoint verification** *(or **Monitor which devices access organization data**)*.
-   - **Part C: Force-Install Extension via Admin Console (Managed Chrome Profiles):**
+   - **Part B: Enable Device Signals & Endpoint Verification Globally (Universal Data Access):**
+     - Open [admin.google.com > Devices > Mobile & endpoints > Settings > Universal > Data access](https://admin.google.com/ac/appsettings/724141353720?vid=EMM_UNIVERSAL_SETTINGS_VIEW) *(labeled **Universal** or **Universal settings** in the left menu)*.
+     - Expand **Device signals** *(or **Endpoint verification**)* and check **both**:
+       1. **Collect device signals from Chrome browser**
+       2. **Collect device signals using endpoint verification** *(or **Monitor which devices access organization data**)*
+   - **Part C: Enable Device Approvals (Universal Security Settings):**
+     - Open [admin.google.com > Devices > Mobile & endpoints > Settings > Universal > Security](https://admin.google.com/ac/appsettings/724141353720?vid=EMM_UNIVERSAL_SETTINGS_VIEW).
+     - Expand **Device approvals**, select **Require admin approval**, and enter an admin notification email address.
+     - Verify that all target sub-OUs (e.g. `/Students`, `/Staff`, `/Admin`) inherit or explicitly enable **Require admin approval**.
+   - **Part D: Force-Install Extension via Admin Console (Managed Chrome Profiles):**
      - Open [admin.google.com > Devices > Chrome > Apps & extensions > Users & browsers](https://admin.google.com/ac/chrome/apps/user).
      - In the left Organizational Unit tree, select your target OU (e.g. `gwfe.org`, `/Students`, or `/Staff`).
      - Click **Add (+) > Add Chrome app or extension by ID**, and enter Extension ID:
@@ -208,9 +214,9 @@ The deployment wizard will guide you through the setup automatically. Here is wh
        ```
      - In the right-hand options panel:
        - Under **Installation policy**, select **Force install + pin to browser toolbar**.
-       - Under **Certificate management**, turn **ON** both **Allow access to keys** and **Allow enterprise challenge**.
+       - ⚠️ **Critical (Required for Windows/Mac BYOD Registration):** Under **Certificate management**, turn **ON** both **Allow access to keys** (`KeyPermissions`) and **Allow enterprise challenge** (`AttestationExtensionAllowlist`). Without both toggles enabled, Chrome on Windows/macOS cannot complete the cryptographic enterprise challenge to register the hardware device in Cloud Identity.
      - Click **Save**.
-   - **Part D: Manual Install on Personal BYOD Test Devices:**
+   - **Part E: Manual Install on Personal BYOD Test Devices:**
      - On the personal Windows or Mac laptop, open Chrome and install [Google Endpoint Verification from the Chrome Web Store](https://chromewebstore.google.com/detail/endpoint-verification/callobklhcbilhphinckomhgkigmfocg).
      - Sign into Chrome with your managed Workspace account (`student@yourdomain.com`) as a managed profile.
      - Click the Endpoint Verification extension icon in the toolbar and click **Sync now** to immediately report hardware telemetry to Cloud Identity.

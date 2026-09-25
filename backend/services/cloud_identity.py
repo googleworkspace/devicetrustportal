@@ -21,24 +21,50 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from googleapiclient.http import BatchHttpRequest
 
+def resolve_dwd_key_path() -> Optional[str]:
+    """Resolves the DWD service account key file path, recovering from MSYS2/Windows path mangling."""
+    env_path = (os.getenv("GOOGLE_APPLICATION_CREDENTIALS") or "").strip()
+    candidates = []
+    if env_path:
+        candidates.append(env_path)
+    candidates.extend(["/secrets/dwd_key.json", "dwd_key.json"])
+    for candidate in candidates:
+        if candidate and os.path.exists(candidate):
+            if env_path and candidate != env_path:
+                print(
+                    f"INFO [cloud_identity.py]: Configured GOOGLE_APPLICATION_CREDENTIALS='{env_path}' not found; "
+                    f"recovered mounted DWD key at '{candidate}'."
+                )
+            return candidate
+    return None
+
 class CloudIdentityService:
     def __init__(self):
         self.scopes = [
             "https://www.googleapis.com/auth/cloud-identity.devices"
         ]
-        key_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
-        admin_email = os.getenv("WORKSPACE_ADMIN_EMAIL")
+        self.init_error: Optional[str] = None
+        key_path = resolve_dwd_key_path()
+        admin_email = (os.getenv("WORKSPACE_ADMIN_EMAIL") or "").strip()
 
         try:
-            if key_path and admin_email and os.path.exists(key_path):
+            if key_path and admin_email:
                 credentials = service_account.Credentials.from_service_account_file(
                     key_path, scopes=self.scopes, subject=admin_email
                 )
             else:
+                raw_env_cred = (os.getenv("GOOGLE_APPLICATION_CREDENTIALS") or "").strip()
+                if raw_env_cred and not os.path.exists(raw_env_cred):
+                    print(
+                        f"WARNING [cloud_identity.py]: GOOGLE_APPLICATION_CREDENTIALS='{raw_env_cred}' does not exist on disk. "
+                        "Clearing invalid path before falling back to Application Default Credentials."
+                    )
+                    os.environ.pop("GOOGLE_APPLICATION_CREDENTIALS", None)
                 credentials, _ = google.auth.default(scopes=self.scopes)
 
             self.service = build("cloudidentity", "v1", credentials=credentials)
         except Exception as e:
+            self.init_error = str(e)
             print(f"Error initializing Cloud Identity service: {e}")
             self.service = None
 

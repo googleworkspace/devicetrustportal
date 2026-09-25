@@ -1831,3 +1831,44 @@ def test_get_my_devices_virtual_timezone_offset_sorting():
         assert len(data) == 1
         assert data[0]["device_user_name"] == "devices/dev-v-newer-offset/deviceUsers/du"
         assert data[0]["last_sync_time"] == "2026-09-08T07:00:00-05:00"
+
+def test_resolve_dwd_key_path_recovers_from_msys2_path_mangling(monkeypatch):
+    from backend.services.cloud_identity import resolve_dwd_key_path
+
+    # Simulate Windows Git Bash mangling /secrets/dwd_key.json into C:/Program Files/Git/secrets/dwd_key.json
+    monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", "C:/Program Files/Git/secrets/dwd_key.json")
+
+    def fake_exists(path):
+        return path == "/secrets/dwd_key.json"
+
+    with patch("backend.services.cloud_identity.os.path.exists", side_effect=fake_exists):
+        assert resolve_dwd_key_path() == "/secrets/dwd_key.json"
+
+def test_get_my_devices_production_uninitialized_service_raises_500(monkeypatch):
+    app.dependency_overrides[get_current_user_email] = lambda: "dmalfoy@demoschool.goog"
+    monkeypatch.setenv("USE_SECRET_MANAGER", "true")
+
+    with patch("backend.routes.devices.cloud_identity_service.service", None), \
+         patch("backend.routes.devices.cloud_identity_service.init_error", "File C:/Program Files/Git/secrets/dwd_key.json was not found", create=True):
+        response = client.get("/api/devices/my-devices")
+        assert response.status_code == 500
+        detail = response.json()["detail"]
+        assert "Cloud Identity API service is not initialized" in detail
+        assert "/secrets/dwd_key.json" in detail
+
+def test_get_my_devices_production_crawl_failure_raises_500(monkeypatch):
+    app.dependency_overrides[get_current_user_email] = lambda: "dmalfoy@demoschool.goog"
+    monkeypatch.setenv("USE_SECRET_MANAGER", "true")
+
+    mock_service = MagicMock()
+    mock_devices_resource = MagicMock()
+    mock_service.devices.return_value = mock_devices_resource
+    mock_devices_resource.list.side_effect = Exception("unauthorized_client: Client is unauthorized to retrieve access tokens")
+
+    with patch("backend.routes.devices.cloud_identity_service.service", mock_service):
+        response = client.get("/api/devices/my-devices")
+        assert response.status_code == 500
+        detail = response.json()["detail"]
+        assert "Cloud Identity API device lookup failed" in detail
+        assert "unauthorized_client" in detail
+
