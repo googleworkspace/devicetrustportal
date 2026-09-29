@@ -239,42 +239,16 @@ def get_my_approved_devices(user_email: str = Depends(get_current_user_email)):
     if not target_email:
         return []
 
-    is_production = os.getenv("USE_SECRET_MANAGER", "false").lower() == "true"
-
     if not cloud_identity_service.service:
-        if is_production:
-            err_detail = getattr(cloud_identity_service, "init_error", None) or "Missing or invalid Domain-Wide Delegation credentials."
-            raise HTTPException(
-                status_code=500,
-                detail=(
-                    f"Cloud Identity API service is not initialized ({err_detail}). "
-                    "Verify that /secrets/dwd_key.json is mounted, WORKSPACE_ADMIN_EMAIL is set to an active "
-                    "Google Workspace Super Admin, and Domain-Wide Delegation scopes are authorized."
-                )
+        err_detail = getattr(cloud_identity_service, "init_error", None) or "Missing or invalid Domain-Wide Delegation credentials."
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"Cloud Identity API service is not initialized ({err_detail}). "
+                "Verify that /secrets/dwd_key.json is mounted, WORKSPACE_ADMIN_EMAIL is set to an active "
+                "Google Workspace Super Admin, and Domain-Wide Delegation scopes are authorized."
             )
-        print(f"INFO [devices.py]: Running without Cloud Identity service credentials. Returning mock assets for '{user_email}'.")
-        return [
-            DeviceUserItem(
-                device_user_name="devices/mock-cb123/deviceUsers/du-1",
-                device_type="CHROME_OS",
-                model="Enterprise Chromebook Pixel",
-                os_version="ChromeOS 120.0",
-                serial_number="PF2ABC99",
-                approval_state="APPROVED",
-                owner_type="COMPANY",
-                last_sync_time="2026-05-14T10:00:00Z"
-            ),
-            DeviceUserItem(
-                device_user_name="devices/mock-pixel99/deviceUsers/du-2",
-                device_type="ANDROID",
-                model="Google Pixel 7 Pro",
-                os_version="Android 14.0",
-                serial_number="35991234567890",
-                approval_state="PENDING_APPROVAL",
-                owner_type="BYOD",
-                last_sync_time="2026-05-14T10:05:00Z"
-            )
-        ]
+        )
 
     config = config_service.get_tenant_config()
     my_devices: List[DeviceUserItem] = []
@@ -315,15 +289,14 @@ def get_my_approved_devices(user_email: str = Depends(get_current_user_email)):
         except Exception as e:
             crawl_error = str(e)
             print(f"WARNING [devices.py]: Cloud Identity API unfiltered fallback crawl encountered notice: {e}")
-            if is_production:
-                raise HTTPException(
-                    status_code=500,
-                    detail=(
-                        f"Cloud Identity API device lookup failed ({crawl_error}). "
-                        "Verify WORKSPACE_ADMIN_EMAIL and Domain-Wide Delegation scope "
-                        "(https://www.googleapis.com/auth/cloud-identity.devices)."
-                    )
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    f"Cloud Identity API device lookup failed ({crawl_error}). "
+                    "Verify WORKSPACE_ADMIN_EMAIL and Domain-Wide Delegation scope "
+                    "(https://www.googleapis.com/auth/cloud-identity.devices)."
                 )
+            )
 
     # Fetch enterprise-enrolled ChromeOS devices from Admin SDK Directory API
     directory_cbs = []
@@ -469,7 +442,8 @@ def get_my_approved_devices(user_email: str = Depends(get_current_user_email)):
 @router.post("/approve")
 def approve_device(request: DeviceActionRequest, user_email: str = Depends(get_current_user_email)):
     if not cloud_identity_service.service:
-        return {"status": "SUCCESS", "message": "Simulated device approval complete."}
+        err_detail = getattr(cloud_identity_service, "init_error", None) or "Missing or invalid Domain-Wide Delegation credentials."
+        raise HTTPException(status_code=500, detail=f"Cloud Identity API service is not initialized ({err_detail}).")
 
     config = config_service.get_tenant_config()
     is_admin = directory_service.verify_user_is_admin(user_email, portal_admins=config.portal_admins)
@@ -488,7 +462,8 @@ def approve_device(request: DeviceActionRequest, user_email: str = Depends(get_c
 @router.post("/revoke")
 def revoke_device(request: DeviceActionRequest, user_email: str = Depends(get_current_user_email)):
     if not cloud_identity_service.service:
-        return {"status": "SUCCESS", "message": "Simulated device revocation complete."}
+        err_detail = getattr(cloud_identity_service, "init_error", None) or "Missing or invalid Domain-Wide Delegation credentials."
+        raise HTTPException(status_code=500, detail=f"Cloud Identity API service is not initialized ({err_detail}).")
 
     config = config_service.get_tenant_config()
     is_admin = directory_service.verify_user_is_admin(user_email, portal_admins=config.portal_admins)
@@ -517,7 +492,8 @@ def revoke_device(request: DeviceActionRequest, user_email: str = Depends(get_cu
 def revoke_device_bulk(request: BulkRevokeRequest, user_email: str = Depends(get_current_user_email)):
     """Executes bulk unapproval via BatchHttpRequest across multiple device user bindings simultaneously."""
     if not cloud_identity_service.service:
-        return {"status": "SUCCESS", "revoked_count": len(request.device_user_names)}
+        err_detail = getattr(cloud_identity_service, "init_error", None) or "Missing or invalid Domain-Wide Delegation credentials."
+        raise HTTPException(status_code=500, detail=f"Cloud Identity API service is not initialized ({err_detail}).")
 
     config = config_service.get_tenant_config()
     is_admin = directory_service.verify_user_is_admin(user_email, portal_admins=config.portal_admins)

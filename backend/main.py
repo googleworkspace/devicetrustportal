@@ -49,7 +49,7 @@ def health_check():
 def get_public_config():
     config = config_service.get_tenant_config()
     return {
-        "google_client_id": getattr(config, "google_client_id", "") or "1234567890-mockclient.apps.googleusercontent.com",
+        "google_client_id": getattr(config, "google_client_id", "") or "",
         "default_locale": getattr(config, "default_locale", "en")
     }
 

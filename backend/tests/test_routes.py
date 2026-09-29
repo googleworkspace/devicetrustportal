@@ -1846,7 +1846,7 @@ def test_resolve_dwd_key_path_recovers_from_msys2_path_mangling(monkeypatch):
 
 def test_get_my_devices_production_uninitialized_service_raises_500(monkeypatch):
     app.dependency_overrides[get_current_user_email] = lambda: "dmalfoy@demoschool.goog"
-    monkeypatch.setenv("USE_SECRET_MANAGER", "true")
+    monkeypatch.setenv("USE_SECRET_MANAGER", "false")
 
     with patch("backend.routes.devices.cloud_identity_service.service", None), \
          patch("backend.routes.devices.cloud_identity_service.init_error", "File C:/Program Files/Git/secrets/dwd_key.json was not found", create=True):
@@ -1858,7 +1858,7 @@ def test_get_my_devices_production_uninitialized_service_raises_500(monkeypatch)
 
 def test_get_my_devices_production_crawl_failure_raises_500(monkeypatch):
     app.dependency_overrides[get_current_user_email] = lambda: "dmalfoy@demoschool.goog"
-    monkeypatch.setenv("USE_SECRET_MANAGER", "true")
+    monkeypatch.setenv("USE_SECRET_MANAGER", "false")
 
     mock_service = MagicMock()
     mock_devices_resource = MagicMock()
@@ -1871,4 +1871,26 @@ def test_get_my_devices_production_crawl_failure_raises_500(monkeypatch):
         detail = response.json()["detail"]
         assert "Cloud Identity API device lookup failed" in detail
         assert "unauthorized_client" in detail
+
+def test_approve_and_revoke_uninitialized_service_raises_500():
+    app.dependency_overrides[get_current_user_email] = lambda: "dmalfoy@demoschool.goog"
+
+    with patch("backend.routes.devices.cloud_identity_service.service", None):
+        resp_approve = client.post("/api/devices/approve", json={"device_user_name": "devices/d1/deviceUsers/du1"})
+        assert resp_approve.status_code == 500
+
+        resp_revoke = client.post("/api/devices/revoke", json={"device_user_name": "devices/d1/deviceUsers/du1"})
+        assert resp_revoke.status_code == 500
+
+        resp_bulk = client.post("/api/devices/revoke-bulk", json={"device_user_names": ["devices/d1/deviceUsers/du1"]})
+        assert resp_bulk.status_code == 500
+
+def test_cron_endpoints_uninitialized_service_raises_500():
+    with patch("backend.routes.cron.cloud_identity_service.service", None):
+        resp_cleanup = client.post("/api/cron/cleanup", headers={"X-Cloudscheduler": "true"})
+        assert resp_cleanup.status_code == 500
+
+        resp_sync = client.post("/api/cron/sync-inventory", headers={"X-Cloudscheduler": "true"})
+        assert resp_sync.status_code == 500
+
 

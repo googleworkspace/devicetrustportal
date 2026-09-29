@@ -84,8 +84,8 @@ class DirectoryService:
             return True
 
         if not self.service:
-            print(f"INFO [directory_service.py]: Simulated admin check for '{target_email}'")
-            return target_email in ["admin@example.com"]
+            print(f"ERROR [directory_service.py]: Directory API service is not initialized; cannot verify admin status for '{target_email}'.")
+            return False
 
         try:
             request = self.service.users().get(userKey=target_email, projection="full")
@@ -106,8 +106,8 @@ class DirectoryService:
             return False
 
         if not self.service:
-            # Simulation mode
-            return target_email in [g.lower().strip() for g in allowed_groups] or "/Staff" in allowed_ous
+            print(f"ERROR [directory_service.py]: Directory API service is not initialized; cannot verify chaining policy for '{target_email}'.")
+            return False
 
         try:
             # 1. Check Org Unit (OU)
@@ -144,7 +144,7 @@ class DirectoryService:
         target_email = user_email.lower().strip()
         
         if not self.service:
-            print(f"INFO [directory_service.py]: Simulated ChromeOS lookup for '{target_email}'")
+            print(f"WARNING [directory_service.py]: Directory API service is not initialized; skipping ChromeOS device lookup for '{target_email}'.")
             return []
 
         cust_key = customer_id.replace("customers/", "").strip() if customer_id else "my_customer"

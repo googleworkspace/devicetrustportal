@@ -73,7 +73,7 @@ class CloudIdentityService:
 
     def get_device_user(self, device_user_name: str, customer_id: str) -> Optional[Dict[str, Any]]:
         if not self.service:
-            return {"name": device_user_name, "userEmail": "student@example.com", "approvalState": "APPROVED"}
+            raise Exception("Cloud Identity service not initialized with valid credentials")
 
         try:
             request = self.service.devices().deviceUsers().get(name=device_user_name, customer=customer_id)

@@ -58,10 +58,16 @@ export const GoogleLoginButton: React.FC<Props> = ({ onLoginSuccess }) => {
     );
   }
 
-  const effectiveId = clientId || "1234567890-mockclient.apps.googleusercontent.com";
+  if (!clientId) {
+    return (
+      <div style={{ padding: "12px 16px", backgroundColor: "#fce8e6", color: "#c5221f", border: "1px solid #fad2cf", borderRadius: "6px", fontSize: "13px", marginTop: "15px", marginBottom: "15px" }}>
+        Google OAuth 2.0 Client ID is not configured (`GOOGLE_CLIENT_ID`). Please complete Phase 2/3 of `deploy.sh` or set `GOOGLE_CLIENT_ID` in your service environment.
+      </div>
+    );
+  }
 
   return (
-    <GoogleOAuthProvider key={effectiveId} clientId={effectiveId}>
+    <GoogleOAuthProvider key={clientId} clientId={clientId}>
       <div style={{ marginTop: "15px", marginBottom: "15px" }}>
         <GoogleLogin
           onSuccess={(credentialResponse) => {
@@ -78,7 +84,6 @@ export const GoogleLoginButton: React.FC<Props> = ({ onLoginSuccess }) => {
                 }
               } catch (e) {
                 console.error("Failed to parse Google ID token payload", e);
-                onLoginSuccess("oauth-user@example.com", token);
               }
             }
           }}

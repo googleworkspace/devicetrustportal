@@ -23,8 +23,10 @@ router = APIRouter(prefix="/api/cron", tags=["Cron"])
 def sync_chromebook_fleet_inventory(customer_id: str) -> Dict[str, Any]:
     """Crawls active Directory ChromeOS devices and ensures they are anchored as COMPANY hardware in Cloud Identity."""
     if not directory_service.service or not cloud_identity_service.service:
-        print("INFO [cron.py]: Simulated Chromebook inventory sync complete.")
-        return {"status": "SUCCESS", "synced_count": 0, "simulated": True}
+        raise HTTPException(
+            status_code=500,
+            detail="Cloud Identity or Directory API service is not initialized with valid credentials."
+        )
 
     cust_key = customer_id.replace("customers/", "").strip() if customer_id else "my_customer"
     ci_customer = f"customers/{cust_key}" if not customer_id.startswith("customers/") else customer_id
@@ -100,8 +102,10 @@ def run_inactivity_cleanup(
         raise HTTPException(status_code=403, detail="Access denied: Automated cron execution requires Google Cloud Scheduler authorization.")
 
     if not cloud_identity_service.service:
-        print("INFO [cron.py]: Simulated inactivity cleanup complete (No valid Cloud Identity service).")
-        return {"status": "SUCCESS", "revoked_count": 1, "inventory_sync": {"status": "SUCCESS", "synced_count": 0}}
+        raise HTTPException(
+            status_code=500,
+            detail="Cloud Identity API service is not initialized with valid credentials."
+        )
 
     config = config_service.get_tenant_config()
     revoked_count = 0
