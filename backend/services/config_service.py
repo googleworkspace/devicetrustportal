@@ -39,6 +39,17 @@ class ConfigService:
         
         if self.use_secret_manager:
             try:
+                raw_env_cred = (os.getenv("GOOGLE_APPLICATION_CREDENTIALS") or "").strip()
+                if raw_env_cred and not os.path.exists(raw_env_cred):
+                    recovered = None
+                    for candidate in ([f"/{raw_env_cred}"] if not raw_env_cred.startswith("/") else []) + ["/secrets/dwd_key.json", "dwd_key.json"]:
+                        if os.path.exists(candidate):
+                            recovered = candidate
+                            break
+                    if recovered:
+                        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = recovered
+                    else:
+                        os.environ.pop("GOOGLE_APPLICATION_CREDENTIALS", None)
                 from google.cloud import secretmanager
                 self.sm_client = secretmanager.SecretManagerServiceClient()
             except Exception as e:

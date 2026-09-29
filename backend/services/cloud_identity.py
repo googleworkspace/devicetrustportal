@@ -27,6 +27,8 @@ def resolve_dwd_key_path() -> Optional[str]:
     candidates = []
     if env_path:
         candidates.append(env_path)
+        if not env_path.startswith("/"):
+            candidates.append(f"/{env_path}")
     candidates.extend(["/secrets/dwd_key.json", "dwd_key.json"])
     for candidate in candidates:
         if candidate and os.path.exists(candidate):
@@ -35,6 +37,7 @@ def resolve_dwd_key_path() -> Optional[str]:
                     f"INFO [cloud_identity.py]: Configured GOOGLE_APPLICATION_CREDENTIALS='{env_path}' not found; "
                     f"recovered mounted DWD key at '{candidate}'."
                 )
+                os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = candidate
             return candidate
     return None
 
