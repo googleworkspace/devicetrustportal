@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from pydantic import BaseModel
 from fastapi import APIRouter, HTTPException, Depends
 from backend.services.config_service import config_service
-from backend.services.cloud_identity import cloud_identity_service
+from backend.services.cloud_identity import cloud_identity_service, normalize_customer_id
 from backend.services.directory_service import directory_service
 from backend.routes.admin import get_current_user_email
 
@@ -96,6 +96,45 @@ def extract_field(d: Dict[str, Any], *keys: str, default: str = "") -> str:
                 return s
     return default
 
+def normalize_approval_state(*raw_states: Any) -> str:
+    """Normalizes Cloud Identity DeviceUser and Device managementState/approvalState values."""
+    cleaned_states: List[str] = []
+    for raw in raw_states:
+        val = str(raw or "").strip().upper()
+        if val and val not in ("MANAGEMENT_STATE_UNSPECIFIED", "APPROVAL_STATE_UNSPECIFIED", "UNSPECIFIED"):
+            cleaned_states.append(val)
+
+    for val in cleaned_states:
+        if val == "BLOCKED":
+            return "BLOCKED"
+        if val == "APPROVED":
+            return "APPROVED"
+        if val in ("PENDING_APPROVAL", "PENDING"):
+            return "PENDING_APPROVAL"
+        if val in ("WIPED", "WIPING", "ACCOUNT_WIPED", "ACCOUNT_WIPING"):
+            return "WIPED"
+
+    return cleaned_states[0] if cleaned_states else "UNKNOWN_STATE"
+
+def extract_device_metadata(d: Dict[str, Any]) -> Dict[str, str]:
+    device_type = extract_field(d, "deviceType", default="UNKNOWN_TYPE").upper()
+    model = extract_field(d, "model", default="Unknown Model")
+    os_version = extract_field(d, "osVersion", "os", default="Unknown OS")
+    owner_type = extract_field(d, "ownerType", default="BYOD").upper()
+    raw_serial = extract_field(d, "serialNumber", "deviceSerialNumber", "imei", "meid", default="")
+    serial_number = raw_serial if is_valid_serial(raw_serial) else "N/A"
+    dev_last_sync = normalize_sync_time(d.get("lastSyncTime"))
+    dev_mgmt_state = extract_field(d, "managementState", "approvalState", default="")
+    return {
+        "device_type": device_type,
+        "model": model,
+        "os_version": os_version,
+        "owner_type": owner_type,
+        "serial_number": serial_number,
+        "last_sync_time": dev_last_sync,
+        "management_state": dev_mgmt_state,
+    }
+
 def crawl_devices_for_user(
     customer_id: str,
     target_email: str,
@@ -109,17 +148,23 @@ def crawl_devices_for_user(
     if not norm_email:
         return [], 0
 
-    cid = (customer_id or "my_customer").strip() or "my_customer"
+    cid = normalize_customer_id(customer_id)
 
     matched_items: List[DeviceUserItem] = []
     total_devices_scanned = 0
     seen_dus = set()
+    device_map: Dict[str, Dict[str, Any]] = {}
+    devices_with_matched_du = set()
+    du_errors: List[str] = []
+
     next_page_token = None
     seen_page_tokens = set()
 
+    # Step 1: List matching Device resources
     while True:
         list_kwargs: Dict[str, Any] = {
             "customer": cid,
+            "pageSize": 100,
         }
         if next_page_token:
             list_kwargs["pageToken"] = next_page_token
@@ -148,87 +193,150 @@ def crawl_devices_for_user(
                 continue
             if not device_name.startswith("devices/"):
                 device_name = f"devices/{device_name}"
-
-            device_type = extract_field(d, "deviceType", default="UNKNOWN_TYPE").upper()
-            model = extract_field(d, "model", default="Unknown Model")
-            os_version = extract_field(d, "osVersion", "os", default="Unknown OS")
-            owner_type = extract_field(d, "ownerType", default="BYOD").upper()
-            raw_serial = extract_field(d, "serialNumber", "deviceSerialNumber", "imei", "meid", default="")
-            serial_number = raw_serial if is_valid_serial(raw_serial) else "N/A"
-            dev_last_sync = normalize_sync_time(d.get("lastSyncTime"))
-
-            try:
-                du_page_token = None
-                seen_du_tokens = set()
-                while True:
-                    du_kwargs: Dict[str, Any] = {
-                        "parent": device_name,
-                        "customer": cid,
-                    }
-                    if du_page_token:
-                        du_kwargs["pageToken"] = du_page_token
-                    du_req = cloud_identity_service.service.devices().deviceUsers().list(**du_kwargs)
-                    du_resp = du_req.execute() or {}
-
-                    du_list = du_resp.get("deviceUsers") or []
-                    if not isinstance(du_list, list):
-                        du_list = []
-
-                    for du in du_list:
-                        if not du or not isinstance(du, dict):
-                            continue
-                        du_email = str(du.get("userEmail") or "").lower().strip()
-                        if du_email and du_email == norm_email:
-                            du_name = str(du.get("name") or f"{device_name}/deviceUsers/{norm_email}").strip()
-                            if du_name and du_name not in seen_dus:
-                                seen_dus.add(du_name)
-                                m_state = str(du.get("managementState") or "").strip().upper()
-                                a_state = str(du.get("approvalState") or "").strip().upper()
-                                if m_state in ("MANAGEMENT_STATE_UNSPECIFIED", "UNSPECIFIED"):
-                                    m_state = ""
-                                if a_state in ("APPROVAL_STATE_UNSPECIFIED", "UNSPECIFIED"):
-                                    a_state = ""
-
-                                if m_state == "BLOCKED" or a_state == "BLOCKED":
-                                    state = "BLOCKED"
-                                elif m_state == "APPROVED" or a_state == "APPROVED":
-                                    state = "APPROVED"
-                                elif m_state == "PENDING_APPROVAL" or a_state == "PENDING_APPROVAL":
-                                    state = "PENDING_APPROVAL"
-                                elif m_state in ("WIPED", "WIPING") or a_state in ("WIPED", "WIPING"):
-                                    state = "WIPED"
-                                else:
-                                    state = m_state or a_state or "UNKNOWN_STATE"
-
-                                du_sync = normalize_sync_time(du.get("lastSyncTime"))
-                                effective_sync = du_sync if du_sync != "N/A" else dev_last_sync
-
-                                matched_items.append(
-                                    DeviceUserItem(
-                                        device_user_name=du_name,
-                                        device_type=device_type,
-                                        model=model,
-                                        os_version=os_version,
-                                        serial_number=serial_number,
-                                        approval_state=state,
-                                        owner_type=owner_type,
-                                        last_sync_time=effective_sync
-                                    )
-                                )
-
-                    raw_du_next = str(du_resp.get("nextPageToken") or "").strip()
-                    du_page_token = raw_du_next if raw_du_next else None
-                    if not du_page_token or du_page_token in seen_du_tokens:
-                        break
-                    seen_du_tokens.add(du_page_token)
-            except Exception as du_err:
-                print(f"WARNING [devices.py]: Failed to list device users for '{device_name}': {du_err}")
+            device_map[device_name] = d
 
         raw_next = str(response.get("nextPageToken") or "").strip()
         next_page_token = raw_next if raw_next else None
         if not next_page_token or next_page_token in seen_page_tokens:
             break
         seen_page_tokens.add(next_page_token)
+
+    # Step 2: Query deviceUsers(parent='devices/-') directly with email filter when performing filtered lookup
+    if query_filter:
+        try:
+            du_wildcard_token = None
+            seen_wildcard_tokens = set()
+            while True:
+                du_w_kwargs: Dict[str, Any] = {
+                    "parent": "devices/-",
+                    "customer": cid,
+                    "pageSize": 20,
+                    "filter": query_filter,
+                }
+                if du_wildcard_token:
+                    du_w_kwargs["pageToken"] = du_wildcard_token
+                du_w_req = cloud_identity_service.service.devices().deviceUsers().list(**du_w_kwargs)
+                du_w_resp = du_w_req.execute() or {}
+                du_w_list = du_w_resp.get("deviceUsers") or []
+                if not isinstance(du_w_list, list):
+                    du_w_list = []
+
+                for du in du_w_list:
+                    if not du or not isinstance(du, dict):
+                        continue
+                    du_email = str(du.get("userEmail") or "").lower().strip()
+                    if du_email and du_email == norm_email:
+                        du_name = str(du.get("name") or "").strip()
+                        if not du_name or "/deviceUsers/" not in du_name:
+                            continue
+                        parent_dev_name = du_name.split("/deviceUsers/")[0]
+                        if parent_dev_name not in device_map:
+                            try:
+                                fetched_dev = cloud_identity_service.service.devices().get(
+                                    name=parent_dev_name, customer=cid
+                                ).execute() or {}
+                                if isinstance(fetched_dev, dict) and fetched_dev:
+                                    device_map[parent_dev_name] = fetched_dev
+                                    total_devices_scanned += 1
+                            except Exception as get_err:
+                                print(f"WARNING [devices.py]: Could not fetch parent device '{parent_dev_name}': {get_err}")
+                                device_map[parent_dev_name] = {"name": parent_dev_name}
+
+                        if du_name not in seen_dus:
+                            seen_dus.add(du_name)
+                            devices_with_matched_du.add(parent_dev_name)
+                            meta = extract_device_metadata(device_map.get(parent_dev_name, {}))
+                            state = normalize_approval_state(
+                                du.get("managementState"),
+                                du.get("approvalState"),
+                                meta["management_state"],
+                            )
+                            du_sync = normalize_sync_time(du.get("lastSyncTime"))
+                            effective_sync = du_sync if du_sync != "N/A" else meta["last_sync_time"]
+                            matched_items.append(
+                                DeviceUserItem(
+                                    device_user_name=du_name,
+                                    device_type=meta["device_type"],
+                                    model=meta["model"],
+                                    os_version=meta["os_version"],
+                                    serial_number=meta["serial_number"],
+                                    approval_state=state,
+                                    owner_type=meta["owner_type"],
+                                    last_sync_time=effective_sync,
+                                )
+                            )
+
+                raw_w_next = str(du_w_resp.get("nextPageToken") or "").strip()
+                du_wildcard_token = raw_w_next if raw_w_next else None
+                if not du_wildcard_token or du_wildcard_token in seen_wildcard_tokens:
+                    break
+                seen_wildcard_tokens.add(du_wildcard_token)
+        except Exception as w_err:
+            print(f"WARNING [devices.py]: Wildcard deviceUsers.list(parent='devices/-', filter='{query_filter}') notice: {w_err}")
+
+    # Step 3: For any discovered Device not yet matched via 'devices/-', inspect its deviceUsers directly
+    for device_name, d in device_map.items():
+        if device_name in devices_with_matched_du:
+            continue
+        meta = extract_device_metadata(d)
+        try:
+            du_page_token = None
+            seen_du_tokens = set()
+            while True:
+                du_kwargs: Dict[str, Any] = {
+                    "parent": device_name,
+                    "customer": cid,
+                }
+                if du_page_token:
+                    du_kwargs["pageToken"] = du_page_token
+                du_req = cloud_identity_service.service.devices().deviceUsers().list(**du_kwargs)
+                du_resp = du_req.execute() or {}
+
+                du_list = du_resp.get("deviceUsers") or []
+                if not isinstance(du_list, list):
+                    du_list = []
+
+                for du in du_list:
+                    if not du or not isinstance(du, dict):
+                        continue
+                    du_email = str(du.get("userEmail") or "").lower().strip()
+                    if du_email and du_email == norm_email:
+                        du_name = str(du.get("name") or f"{device_name}/deviceUsers/{norm_email}").strip()
+                        if du_name and du_name not in seen_dus:
+                            seen_dus.add(du_name)
+                            devices_with_matched_du.add(device_name)
+                            state = normalize_approval_state(
+                                du.get("managementState"),
+                                du.get("approvalState"),
+                                meta["management_state"],
+                            )
+                            du_sync = normalize_sync_time(du.get("lastSyncTime"))
+                            effective_sync = du_sync if du_sync != "N/A" else meta["last_sync_time"]
+
+                            matched_items.append(
+                                DeviceUserItem(
+                                    device_user_name=du_name,
+                                    device_type=meta["device_type"],
+                                    model=meta["model"],
+                                    os_version=meta["os_version"],
+                                    serial_number=meta["serial_number"],
+                                    approval_state=state,
+                                    owner_type=meta["owner_type"],
+                                    last_sync_time=effective_sync
+                                )
+                            )
+
+                raw_du_next = str(du_resp.get("nextPageToken") or "").strip()
+                du_page_token = raw_du_next if raw_du_next else None
+                if not du_page_token or du_page_token in seen_du_tokens:
+                    break
+                seen_du_tokens.add(du_page_token)
+        except Exception as du_err:
+            du_errors.append(f"{device_name}: {du_err}")
+            print(f"WARNING [devices.py]: Failed to list device users for '{device_name}': {du_err}")
+
+    if not matched_items and du_errors and len(du_errors) == len(device_map):
+        raise RuntimeError(f"Failed to list deviceUsers for discovered devices ({du_errors[0]})")
 
     return matched_items, total_devices_scanned
 
@@ -251,11 +359,16 @@ def get_my_approved_devices(user_email: str = Depends(get_current_user_email)):
         )
 
     config = config_service.get_tenant_config()
+    cid = normalize_customer_id(config.customer_id)
     my_devices: List[DeviceUserItem] = []
     is_admin = directory_service.verify_user_is_admin(target_email, portal_admins=config.portal_admins)
 
     query_filter = f"email:{target_email}"
-    print(f"INFO [devices.py]: Executing Cloud Identity devices.list(filter='{query_filter}') for customer '{config.customer_id}' (is_admin={is_admin})...")
+    dwd_subject = getattr(cloud_identity_service, "admin_email", "") or os.getenv("WORKSPACE_ADMIN_EMAIL", "")
+    print(
+        f"INFO [devices.py]: Executing Cloud Identity lookup for user='{target_email}', "
+        f"customer='{cid}', dwd_subject='{dwd_subject}', is_admin={is_admin}..."
+    )
 
     total_devices_matched = 0
     crawl_error: Optional[str] = None
@@ -263,7 +376,7 @@ def get_my_approved_devices(user_email: str = Depends(get_current_user_email)):
     # 1. Fast path: server-side filtered search
     try:
         fast_path_devices, fast_path_count = crawl_devices_for_user(
-            customer_id=config.customer_id,
+            customer_id=cid,
             target_email=target_email,
             query_filter=query_filter
         )
@@ -279,13 +392,18 @@ def get_my_approved_devices(user_email: str = Depends(get_current_user_email)):
         print(f"INFO [devices.py]: Fast-path filter yielded 0 device bindings for '{target_email}'. Initiating unfiltered fallback crawl across tenant devices...")
         try:
             fallback_devices, fallback_count = crawl_devices_for_user(
-                customer_id=config.customer_id,
+                customer_id=cid,
                 target_email=target_email,
                 query_filter=None
             )
             total_devices_matched += fallback_count
             my_devices.extend(fallback_devices)
             crawl_error = None
+            if not my_devices:
+                print(
+                    f"WARNING [devices.py]: Unfiltered fallback scanned {fallback_count} total device(s) in customer '{cid}' "
+                    f"(impersonating WORKSPACE_ADMIN_EMAIL='{dwd_subject}') and found 0 bindings for '{target_email}'."
+                )
         except Exception as e:
             crawl_error = str(e)
             print(f"WARNING [devices.py]: Cloud Identity API unfiltered fallback crawl encountered notice: {e}")
@@ -446,12 +564,13 @@ def approve_device(request: DeviceActionRequest, user_email: str = Depends(get_c
         raise HTTPException(status_code=500, detail=f"Cloud Identity API service is not initialized ({err_detail}).")
 
     config = config_service.get_tenant_config()
+    cid = normalize_customer_id(config.customer_id)
     is_admin = directory_service.verify_user_is_admin(user_email, portal_admins=config.portal_admins)
-    verify_device_user_ownership(request.device_user_name, user_email, config.customer_id, is_admin)
+    verify_device_user_ownership(request.device_user_name, user_email, cid, is_admin)
     try:
         operation = cloud_identity_service.approve_device_user(
             device_user_name=request.device_user_name,
-            customer_id=config.customer_id
+            customer_id=cid
         )
         return {"status": "SUCCESS", "operation": operation}
     except HTTPException:
@@ -466,20 +585,21 @@ def revoke_device(request: DeviceActionRequest, user_email: str = Depends(get_cu
         raise HTTPException(status_code=500, detail=f"Cloud Identity API service is not initialized ({err_detail}).")
 
     config = config_service.get_tenant_config()
+    cid = normalize_customer_id(config.customer_id)
     is_admin = directory_service.verify_user_is_admin(user_email, portal_admins=config.portal_admins)
-    verify_device_user_ownership(request.device_user_name, user_email, config.customer_id, is_admin)
+    verify_device_user_ownership(request.device_user_name, user_email, cid, is_admin)
     try:
         parent_device = request.device_user_name.split("/deviceUsers/")[0]
         if parent_device.startswith("directory/"):
             raise HTTPException(status_code=403, detail="Access Denied: Company-owned trust anchors cannot be revoked.")
-        dev_req = cloud_identity_service.service.devices().get(name=parent_device, customer=config.customer_id)
+        dev_req = cloud_identity_service.service.devices().get(name=parent_device, customer=cid)
         dev_resp = dev_req.execute()
         if dev_resp.get("ownerType") == "COMPANY":
             raise HTTPException(status_code=403, detail="Access Denied: Company-owned trust anchors cannot be revoked.")
 
         cloud_identity_service.revoke_device_user(
             device_user_name=request.device_user_name,
-            customer_id=config.customer_id,
+            customer_id=cid,
             action=config.revocation_action
         )
         return {"status": "SUCCESS", "message": f"Device revoked successfully via {config.revocation_action}."}
@@ -496,9 +616,10 @@ def revoke_device_bulk(request: BulkRevokeRequest, user_email: str = Depends(get
         raise HTTPException(status_code=500, detail=f"Cloud Identity API service is not initialized ({err_detail}).")
 
     config = config_service.get_tenant_config()
+    cid = normalize_customer_id(config.customer_id)
     is_admin = directory_service.verify_user_is_admin(user_email, portal_admins=config.portal_admins)
     for du_name in request.device_user_names:
-        verify_device_user_ownership(du_name, user_email, config.customer_id, is_admin)
+        verify_device_user_ownership(du_name, user_email, cid, is_admin)
     try:
         # Filter out company anchors before batch execution
         bulk_targets = []
@@ -506,7 +627,7 @@ def revoke_device_bulk(request: BulkRevokeRequest, user_email: str = Depends(get
             parent_dev = du_name.split("/deviceUsers/")[0]
             if parent_dev.startswith("directory/"):
                 continue
-            dev_req = cloud_identity_service.service.devices().get(name=parent_dev, customer=config.customer_id)
+            dev_req = cloud_identity_service.service.devices().get(name=parent_dev, customer=cid)
             dev_resp = dev_req.execute()
             if dev_resp.get("ownerType") != "COMPANY":
                 bulk_targets.append(du_name)
@@ -516,7 +637,7 @@ def revoke_device_bulk(request: BulkRevokeRequest, user_email: str = Depends(get
 
         res = cloud_identity_service.revoke_device_users_bulk(
             device_user_names=bulk_targets,
-            customer_id=config.customer_id,
+            customer_id=cid,
             action=config.revocation_action
         )
         return res

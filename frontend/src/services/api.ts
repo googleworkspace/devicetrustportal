@@ -48,6 +48,35 @@ export interface DeviceUserItem {
   last_sync_time: string;
 }
 
+export const sendClientLog = (
+  level: "INFO" | "WARNING" | "ERROR",
+  event: string,
+  message: string,
+  details?: Record<string, any>
+): void => {
+  try {
+    const userEmail = localStorage.getItem("userEmail") || undefined;
+    const route = window.location.hash || window.location.pathname || "/";
+    const userAgent = typeof navigator !== "undefined" ? navigator.userAgent : undefined;
+    fetch(`${API_BASE_URL}/api/client-logs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      keepalive: true,
+      body: JSON.stringify({
+        level,
+        event,
+        message,
+        user_email: userEmail,
+        route,
+        user_agent: userAgent,
+        details: details || {},
+      }),
+    }).catch(() => {});
+  } catch (_) {
+    // Ignore telemetry errors
+  }
+};
+
 const getHeaders = () => {
   const idToken = localStorage.getItem("googleIdToken");
   const headers: Record<string, string> = {
@@ -60,16 +89,38 @@ const getHeaders = () => {
 };
 
 const fetchWithAuth = async (url: string, options: RequestInit = {}): Promise<Response> => {
-  const response = await fetch(url, options);
+  let response: Response;
+  try {
+    response = await fetch(url, options);
+  } catch (netErr: any) {
+    sendClientLog("ERROR", "API_NETWORK_ERROR", `Network failure calling ${url}`, {
+      url,
+      method: options.method || "GET",
+      error: netErr?.message || String(netErr),
+    });
+    throw netErr;
+  }
+
   if (response.status === 401) {
     console.warn("Session expired or invalid credentials. Clearing local storage.");
+    sendClientLog("WARNING", "API_AUTH_EXPIRED", `401 Unauthorized on ${url}; clearing session`, {
+      url,
+      method: options.method || "GET",
+    });
     localStorage.removeItem("googleIdToken");
     localStorage.removeItem("userEmail");
     window.location.reload();
     throw new Error("Your authentication session has expired. Please sign in again.");
   }
   if (!response.ok) {
-    throw new Error(await response.text());
+    const errText = await response.text();
+    sendClientLog("ERROR", "API_HTTP_ERROR", `HTTP ${response.status} on ${url}`, {
+      url,
+      method: options.method || "GET",
+      status: response.status,
+      response_body: errText.slice(0, 1000),
+    });
+    throw new Error(errText);
   }
   return response;
 };

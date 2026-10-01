@@ -16,7 +16,7 @@
 
 import React, { useState, useEffect } from "react";
 import { GoogleOAuthProvider, GoogleLogin } from "@react-oauth/google";
-import { getPublicConfig } from "../services/api";
+import { getPublicConfig, sendClientLog } from "../services/api";
 
 interface Props {
   onLoginSuccess: (email: string, token: string) => void;
@@ -35,11 +35,16 @@ export const GoogleLoginButton: React.FC<Props> = ({ onLoginSuccess }) => {
           const envId = process.env.REACT_APP_GOOGLE_CLIENT_ID || "";
           if (envId && envId !== "INITIAL_DEPLOY_PENDING") {
             setClientId(envId);
+          } else {
+            sendClientLog("ERROR", "OAUTH_CLIENT_ID_MISSING", "No Google OAuth 2.0 Client ID configured in /api/config/public or environment");
           }
         }
       })
       .catch((err) => {
         console.warn("Could not load dynamic OAuth config:", err);
+        sendClientLog("WARNING", "OAUTH_PUBLIC_CONFIG_ERROR", "Failed to fetch /api/config/public", {
+          error: err?.message || String(err),
+        });
         const envId = process.env.REACT_APP_GOOGLE_CLIENT_ID || "";
         if (envId && envId !== "INITIAL_DEPLOY_PENDING") {
           setClientId(envId);
@@ -80,15 +85,24 @@ export const GoogleLoginButton: React.FC<Props> = ({ onLoginSuccess }) => {
                 const email = payload.email;
                 if (email) {
                   localStorage.setItem("userEmail", email);
+                  sendClientLog("INFO", "OAUTH_SIGNIN_SUCCESS", `User signed in with Google as ${email}`, {
+                    email,
+                    hd: payload.hd || null,
+                    aud_prefix: typeof payload.aud === "string" ? payload.aud.slice(0, 16) : null,
+                  });
                   onLoginSuccess(email, token);
                 }
-              } catch (e) {
+              } catch (e: any) {
                 console.error("Failed to parse Google ID token payload", e);
+                sendClientLog("ERROR", "OAUTH_TOKEN_PARSE_ERROR", "Failed to parse Google ID token payload", {
+                  error: e?.message || String(e),
+                });
               }
             }
           }}
           onError={() => {
             console.error("Google Sign-In Failed");
+            sendClientLog("ERROR", "OAUTH_SIGNIN_ERROR", "Google Sign-In widget reported an authentication failure");
           }}
           useOneTap
         />

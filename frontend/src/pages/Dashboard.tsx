@@ -15,7 +15,7 @@
  */
 
 import React, { useState, useEffect, useCallback } from "react";
-import { getMyDevices, approveDevice, revokeDevice, revokeDeviceBulk, checkIsAdmin, getPublicConfig, DeviceUserItem } from "../services/api";
+import { getMyDevices, approveDevice, revokeDevice, revokeDeviceBulk, checkIsAdmin, getPublicConfig, sendClientLog, DeviceUserItem } from "../services/api";
 import { GoogleLoginButton } from "../components/GoogleLoginButton";
 import { getTranslator } from "../i18n/translations";
 
@@ -50,14 +50,44 @@ export const Dashboard: React.FC = () => {
     if (userEmail) {
       setLoadingDevices(true);
       setDeviceError("");
+      sendClientLog("INFO", "LOAD_DEVICES_START", `Requesting /api/devices/my-devices for ${userEmail}`);
       getMyDevices()
         .then((data) => {
-          setDevices(data);
+          const list = Array.isArray(data) ? data : [];
+          setDevices(list);
           setLoadingDevices(false);
+          if (list.length === 0) {
+            sendClientLog(
+              "WARNING",
+              "LOAD_DEVICES_EMPTY",
+              `Portal UI received 0 devices for ${userEmail}`,
+              { count: 0 }
+            );
+          } else {
+            sendClientLog(
+              "INFO",
+              "LOAD_DEVICES_SUCCESS",
+              `Portal UI rendered ${list.length} device(s) for ${userEmail}`,
+              {
+                count: list.length,
+                devices: list.map((d) => ({
+                  device_user_name: d.device_user_name,
+                  device_type: d.device_type,
+                  model: d.model,
+                  approval_state: d.approval_state,
+                  owner_type: d.owner_type,
+                })),
+              }
+            );
+          }
         })
         .catch((err) => {
-          setDeviceError(`Failed to load approved devices: ${err.message}`);
+          const errMsg = `Failed to load approved devices: ${err.message}`;
+          setDeviceError(errMsg);
           setLoadingDevices(false);
+          sendClientLog("ERROR", "LOAD_DEVICES_ERROR", errMsg, {
+            error: err?.message || String(err),
+          });
         });
     } else {
       setDevices([]);
@@ -81,14 +111,25 @@ export const Dashboard: React.FC = () => {
 
   const handleApprove = async (name: string) => {
     setMessage("");
+    sendClientLog("INFO", "APPROVE_DEVICE_START", `User initiated approval for ${name}`, {
+      device_user_name: name,
+    });
     try {
       await approveDevice(name);
       setMessage("Device approved successfully.");
       setDevices((prev) =>
         prev.map((d) => (d.device_user_name === name ? { ...d, approval_state: "APPROVED" } : d))
       );
+      sendClientLog("INFO", "APPROVE_DEVICE_SUCCESS", `Device approved successfully: ${name}`, {
+        device_user_name: name,
+      });
     } catch (e: any) {
-      setMessage(`Failed to approve device: ${e.message}`);
+      const errMsg = `Failed to approve device: ${e.message}`;
+      setMessage(errMsg);
+      sendClientLog("ERROR", "APPROVE_DEVICE_ERROR", errMsg, {
+        device_user_name: name,
+        error: e?.message || String(e),
+      });
     }
   };
 
@@ -101,6 +142,9 @@ export const Dashboard: React.FC = () => {
   const handleConfirmRevoke = async () => {
     setIsRevoking(true);
     setMessage("");
+    sendClientLog("INFO", "REVOKE_DEVICE_START", `User initiated revocation for ${revokeTarget.length} device(s)`, {
+      device_user_names: revokeTarget,
+    });
 
     try {
       if (revokeTarget.length === 1) {
@@ -113,8 +157,16 @@ export const Dashboard: React.FC = () => {
         prev.map((d) => (revokeTarget.includes(d.device_user_name) ? { ...d, approval_state: "UNMANAGED" } : d))
       );
       setMessage(`Successfully revoked approval for ${revokeTarget.length} device(s).`);
+      sendClientLog("INFO", "REVOKE_DEVICE_SUCCESS", `Successfully revoked ${revokeTarget.length} device(s)`, {
+        device_user_names: revokeTarget,
+      });
     } catch (e: any) {
-      setMessage(`Failed to revoke device(s): ${e.message}`);
+      const errMsg = `Failed to revoke device(s): ${e.message}`;
+      setMessage(errMsg);
+      sendClientLog("ERROR", "REVOKE_DEVICE_ERROR", errMsg, {
+        device_user_names: revokeTarget,
+        error: e?.message || String(e),
+      });
     }
 
     setIsRevoking(false);

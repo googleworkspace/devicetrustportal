@@ -47,25 +47,34 @@ class DirectoryService:
             "https://www.googleapis.com/auth/admin.directory.device.chromeos.readonly"
         ]
         self.init_error: Optional[str] = None
-        key_path = resolve_dwd_key_path()
-        admin_email = (os.getenv("WORKSPACE_ADMIN_EMAIL") or "").strip()
+        self.key_path = resolve_dwd_key_path()
+        self.admin_email = (os.getenv("WORKSPACE_ADMIN_EMAIL") or "").strip()
+
+        if not self.key_path:
+            raw_env_cred = (os.getenv("GOOGLE_APPLICATION_CREDENTIALS") or "").strip()
+            self.init_error = (
+                f"DWD service account key file not found (GOOGLE_APPLICATION_CREDENTIALS='{raw_env_cred}', "
+                "checked '/secrets/dwd_key.json' and 'dwd_key.json')."
+            )
+            print(f"ERROR [directory_service.py]: {self.init_error}")
+            self.service = None
+            return
+
+        if not self.admin_email:
+            self.init_error = "WORKSPACE_ADMIN_EMAIL environment variable is not set for Domain-Wide Delegation."
+            print(f"ERROR [directory_service.py]: {self.init_error}")
+            self.service = None
+            return
 
         try:
-            if key_path and admin_email:
-                credentials = service_account.Credentials.from_service_account_file(
-                    key_path, scopes=self.scopes, subject=admin_email
-                )
-            else:
-                raw_env_cred = (os.getenv("GOOGLE_APPLICATION_CREDENTIALS") or "").strip()
-                if raw_env_cred and not os.path.exists(raw_env_cred):
-                    print(
-                        f"WARNING [directory_service.py]: GOOGLE_APPLICATION_CREDENTIALS='{raw_env_cred}' does not exist on disk. "
-                        "Clearing invalid path before falling back to Application Default Credentials."
-                    )
-                    os.environ.pop("GOOGLE_APPLICATION_CREDENTIALS", None)
-                credentials, _ = google.auth.default(scopes=self.scopes)
-
+            credentials = service_account.Credentials.from_service_account_file(
+                self.key_path, scopes=self.scopes, subject=self.admin_email
+            )
             self.service = build("admin", "directory_v1", credentials=credentials)
+            print(
+                f"INFO [directory_service.py]: Initialized Admin SDK Directory v1 client with DWD key '{self.key_path}' "
+                f"and subject '{self.admin_email}'."
+            )
         except Exception as e:
             self.init_error = str(e)
             print(f"Error initializing Directory service: {e}")

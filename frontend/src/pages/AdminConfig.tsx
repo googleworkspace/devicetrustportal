@@ -15,7 +15,7 @@
  */
 
 import React, { useState, useEffect } from "react";
-import { getAdminConfig, updateAdminConfig, TenantConfig } from "../services/api";
+import { getAdminConfig, updateAdminConfig, sendClientLog, TenantConfig } from "../services/api";
 import { getTranslator } from "../i18n/translations";
 
 export const AdminConfig: React.FC = () => {
@@ -52,9 +52,14 @@ export const AdminConfig: React.FC = () => {
         setGoogleClientId(data.google_client_id || "");
         setDefaultLocale(data.default_locale || "en");
         setLoading(false);
+        sendClientLog("INFO", "ADMIN_CONFIG_LOADED", `Admin config loaded for ${userEmail}`);
       } catch (e: any) {
-        setError(`Access Denied: ${e.message || "Workspace Administrator privileges required."}`);
+        const errMsg = `Access Denied: ${e.message || "Workspace Administrator privileges required."}`;
+        setError(errMsg);
         setLoading(false);
+        sendClientLog("ERROR", "ADMIN_CONFIG_LOAD_ERROR", errMsg, {
+          error: e?.message || String(e),
+        });
       }
     };
     load();
@@ -94,9 +99,18 @@ export const AdminConfig: React.FC = () => {
       await updateAdminConfig(updatedConfig);
       setMessage(t.configSaveSuccess);
       setSaving(false);
+      sendClientLog("INFO", "ADMIN_CONFIG_SAVED", `Admin config updated by ${userEmail}`, {
+        inactivity_threshold_days: updatedConfig.inactivity_threshold_days,
+        portal_admins_count: updatedConfig.portal_admins.length,
+        default_locale: updatedConfig.default_locale,
+      });
     } catch (err: any) {
-      setError(`Update failed: ${err.message}`);
+      const errMsg = `Update failed: ${err.message}`;
+      setError(errMsg);
       setSaving(false);
+      sendClientLog("ERROR", "ADMIN_CONFIG_SAVE_ERROR", errMsg, {
+        error: err?.message || String(err),
+      });
     }
   };
 

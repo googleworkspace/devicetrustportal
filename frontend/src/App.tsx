@@ -19,6 +19,7 @@ import { Dashboard } from "./pages/Dashboard";
 import { ChainingApproval } from "./pages/ChainingApproval";
 import { NetworkApproval } from "./pages/NetworkApproval";
 import { AdminConfig } from "./pages/AdminConfig";
+import { sendClientLog } from "./services/api";
 
 export const App: React.FC = () => {
   const [route, setRoute] = useState(() => window.location.hash.replace("#", "") || "/");
@@ -27,8 +28,26 @@ export const App: React.FC = () => {
     const handleHashChange = () => {
       setRoute(window.location.hash.replace("#", "") || "/");
     };
+    const handleWindowError = (event: ErrorEvent) => {
+      sendClientLog("ERROR", "UNCAUGHT_WINDOW_ERROR", event.message || "Uncaught window error", {
+        filename: event.filename,
+        lineno: event.lineno,
+        colno: event.colno,
+      });
+    };
+    const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
+      const reason = event.reason?.message || String(event.reason || "Unhandled promise rejection");
+      sendClientLog("ERROR", "UNHANDLED_PROMISE_REJECTION", reason);
+    };
+
     window.addEventListener("hashchange", handleHashChange);
-    return () => window.removeEventListener("hashchange", handleHashChange);
+    window.addEventListener("error", handleWindowError);
+    window.addEventListener("unhandledrejection", handleUnhandledRejection);
+    return () => {
+      window.removeEventListener("hashchange", handleHashChange);
+      window.removeEventListener("error", handleWindowError);
+      window.removeEventListener("unhandledrejection", handleUnhandledRejection);
+    };
   }, []);
 
   if (route.startsWith("/chaining")) {

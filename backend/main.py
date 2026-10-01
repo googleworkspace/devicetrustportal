@@ -13,7 +13,10 @@
 # limitations under the License.
 
 import os
-from fastapi import FastAPI
+import json
+from typing import Optional, Dict, Any
+from pydantic import BaseModel
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from backend.routes import admin, chaining, network_auth, cron, webhook, devices
@@ -33,6 +36,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+class ClientLogRequest(BaseModel):
+    level: str = "INFO"
+    event: str
+    message: str
+    user_email: Optional[str] = None
+    route: Optional[str] = None
+    user_agent: Optional[str] = None
+    details: Optional[Dict[str, Any]] = None
+
 # Include REST routers
 app.include_router(admin.router)
 app.include_router(chaining.router)
@@ -43,6 +55,22 @@ app.include_router(devices.router)
 
 @app.get("/health")
 def health_check():
+    return {"status": "OK"}
+
+@app.post("/api/client-logs")
+def receive_client_log(payload: ClientLogRequest, request: Request):
+    lvl = (payload.level or "INFO").strip().upper()
+    if lvl not in ("INFO", "WARNING", "ERROR"):
+        lvl = "INFO"
+    user = (payload.user_email or "anonymous").strip()
+    route = (payload.route or "/").strip()
+    ua = (payload.user_agent or request.headers.get("user-agent") or "unknown").strip()
+    details_str = json.dumps(payload.details or {}, default=str)
+    print(
+        f"{lvl} [CLIENT_LOG]: event='{payload.event}' user='{user}' route='{route}' "
+        f"message='{payload.message}' details={details_str} ua='{ua}'",
+        flush=True,
+    )
     return {"status": "OK"}
 
 @app.get("/api/config/public")
