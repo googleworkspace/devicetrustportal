@@ -1261,6 +1261,30 @@ echo -e "${BLUE}=========================================================${NC}"
 echo -e "${BLUE}      Device Trust Gateway - Interactive Deployer        ${NC}"
 echo -e "${BLUE}=========================================================${NC}"
 
+if command -v git &>/dev/null && [ -d ".git" ]; then
+    LOCAL_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+    log_info "Local Git revision: ${LOCAL_COMMIT}"
+    if [ "${DTG_SKIP_GIT_UPDATE:-false}" != "true" ]; then
+        if git fetch origin main --quiet 2>/dev/null; then
+            REMOTE_COMMIT=$(git rev-parse --short origin/main 2>/dev/null || echo "")
+            if [ -n "$REMOTE_COMMIT" ] && [ "$LOCAL_COMMIT" != "$REMOTE_COMMIT" ]; then
+                BEHIND_COUNT=$(git rev-list --count HEAD..origin/main 2>/dev/null || echo "0")
+                if [ "${BEHIND_COUNT:-0}" -gt 0 ] 2>/dev/null; then
+                    log_warn "Your local checkout (${LOCAL_COMMIT}) is ${BEHIND_COUNT} commit(s) behind origin/main (${REMOTE_COMMIT})."
+                    log_info "Syncing latest production code from origin/main..."
+                    if git merge --ff-only origin/main 2>/dev/null || git reset --hard origin/main 2>/dev/null; then
+                        log_success "Updated to latest commit (${REMOTE_COMMIT}). Restarting deploy.sh..."
+                        export DTG_SKIP_GIT_UPDATE=true
+                        exec "$0" "$@"
+                    else
+                        log_warn "Could not auto-update git checkout. Run 'git fetch origin && git reset --hard origin/main' before deploying."
+                    fi
+                fi
+            fi
+        fi
+    fi
+fi
+
 if [ "$VERBOSE" = "true" ]; then
     log_info "Verbose logging mode enabled."
 fi
