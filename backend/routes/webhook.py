@@ -15,13 +15,13 @@
 import os
 import json
 import base64
-from typing import Dict, Any, Optional
+from typing import Optional
 from pydantic import BaseModel
 from fastapi import APIRouter, HTTPException, Header, Request
 from google.oauth2 import id_token
 from google.auth.transport import requests
 from backend.services.config_service import config_service
-from backend.services.cloud_identity import cloud_identity_service
+from backend.services.cloud_identity import cloud_identity_service, normalize_customer_id
 
 router = APIRouter(prefix="/api/webhook", tags=["Webhook"])
 
@@ -66,6 +66,7 @@ async def chrome_enrollment_webhook(
     events = audit_payload.get("events", [])
     enrolled_serials = []
     config = config_service.get_tenant_config()
+    cid = normalize_customer_id(config.customer_id)
 
     for event in events:
         event_name = event.get("name", "")
@@ -85,10 +86,11 @@ async def chrome_enrollment_webhook(
                         ci_body = {
                             "deviceType": "CHROME_OS",
                             "serialNumber": serial_num,
-                            "assetTag": serial_num
+                            "assetTag": serial_num,
+                            "ownerType": "COMPANY"
                         }
                         cloud_identity_service.service.devices().create(
-                            customer=f"customers/{config.customer_id}",
+                            customer=cid,
                             body=ci_body
                         ).execute()
                     except Exception as e:

@@ -14,30 +14,10 @@
 
 import os
 from typing import List, Dict, Any, Optional
-import google.auth
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
-
-def resolve_dwd_key_path() -> Optional[str]:
-    """Resolves the DWD service account key file path, recovering from MSYS2/Windows path mangling."""
-    env_path = (os.getenv("GOOGLE_APPLICATION_CREDENTIALS") or "").strip()
-    candidates = []
-    if env_path:
-        candidates.append(env_path)
-        if not env_path.startswith("/"):
-            candidates.append(f"/{env_path}")
-    candidates.extend(["/secrets/dwd_key.json", "dwd_key.json"])
-    for candidate in candidates:
-        if candidate and os.path.exists(candidate):
-            if env_path and candidate != env_path:
-                print(
-                    f"INFO [directory_service.py]: Configured GOOGLE_APPLICATION_CREDENTIALS='{env_path}' not found; "
-                    f"recovered mounted DWD key at '{candidate}'."
-                )
-                os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = candidate
-            return candidate
-    return None
+from backend.services.cloud_identity import resolve_dwd_key_path
 
 class DirectoryService:
     def __init__(self):

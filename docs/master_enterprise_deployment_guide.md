@@ -117,15 +117,16 @@ Follow this checklist in the **Google Admin Console** (`admin.google.com`) to pr
 
 ### Checklist Overview
 - [ ] Enable **ChromeOS Device Reporting** (OS, hardware, telemetry, user tracking) under Device settings.
+- [ ] Enable **Managed Chrome Profile Reporting & Signals Sharing** (`CloudProfileReportingEnabled`, `UserSecuritySignalsReporting`, `UserSecurityAuthenticatedReporting`, `EnterpriseHardwarePlatformAPIEnabled`) under Users & browsers settings.
 - [ ] Enable **Endpoint Verification (Device signals)** in Universal Data Access settings.
-- [ ] Enable **Require Admin Approval** in Universal Settings across all OUs (including `/Admin`).
+- [ ] Enable **Require Admin Approval** in Universal Settings across all OUs (including `/Admin`, `/Staff`, `/Students`).
 - [ ] Set **Mobile Management** to **Advanced** for iOS and Android.
 - [ ] Force-install the **Endpoint Verification Chrome Extension** (`callobklhcbilhphinckomhgkigmfocg`).
 - [ ] Turn ON **Allow access to keys** and **Allow enterprise challenge** in Extension Certificate Management.
 - [ ] Enforce **Managed Accounts Sign-in Restriction** (`primary_account_strict`).
 - [ ] Configure **App Access Control** for the OAuth Client ID (especially for `/Students` OU).
 - [ ] Create and assign the **Context-Aware Access Level** (`Approved Devices Only`).
-- [ ] Run the **Mass BYOD Baseline Revocation Sweep**.
+- [ ] Run the **Mass BYOD Baseline Revocation Sweep** (if revoking pre-existing auto-approved devices).
 
 ---
 
@@ -155,16 +156,31 @@ Activates device signal collection across your entire Google Workspace tenant.
 2. Expand **Device approvals**.
 3. Select **Require admin approval**.
 4. Enter your admin email address to receive enrollment notifications.
-5. ⚠️ **Sub-OU Check:** In the left Organizational Units tree, click sub-OUs (such as `/Admin` and `/Staff`) and verify that **Require admin approval** is explicitly selected or inherited.
+5. ⚠️ **Sub-OU Check:** In the left Organizational Units tree, click sub-OUs (such as `/Admin`, `/Staff`, and `/Students`) and verify that **Require admin approval** is explicitly selected or inherited.
 
 ### Step 4: Advanced Mobile Management Settings
 1. Go to **Devices > Mobile & endpoints > Settings > Universal settings > General**.
 2. Expand **Mobile management**.
 3. Set **Android** and **iOS** management to **Advanced**. *(Forces new mobile device sign-ins into `PENDING_APPROVAL` / `BLOCKED` status).*
 
-### Step 5: Install & Configure Endpoint Verification Chrome Extension
+### Step 5: Enable Managed Chrome Profile Reporting, Signals Sharing & Sign-in Restrictions
+> [!IMPORTANT]
+> **No CBCM Machine Enrollment Required for Personal BYOD Laptops:**
+> Unenrolled personal Windows and macOS laptops do **not** require Chrome Browser Cloud Management (CBCM) machine enrollment (`CloudReportingEnabled` is ignored on unenrolled BYOD computers). Instead, they register in Cloud Identity in `PENDING_APPROVAL` state via **signed-in Managed Chrome Profile** policies.
+
+1. Go to **Devices > Chrome > Settings > Users & browsers** (`https://admin.google.com/ac/chrome/settings/user`).
+2. Select your target OU (or root domain) and configure the following **five** settings:
+   * **Profile reporting** (`CloudProfileReportingEnabled`) → Set to **Enable profile reporting**.
+   * **Chrome signals sharing** (`UserSecuritySignalsReporting` & `UserSecurityAuthenticatedReporting`) → Set to **Enable signals sharing**.
+   * **Enterprise Hardware Platform API** (`EnterpriseHardwarePlatformAPIEnabled`) → Set to **Allow extensions to see hardware platform information**.
+   * **Browser sign-in** → Set to **Force users to sign in to use the browser**.
+   * **Managed accounts sign-in restriction** (`ManagedAccountsSigninRestriction`) → Set to **Block users from signing into secondary accounts** (`primary_account_strict`).
+3. Click **Save**.
+   *(Note on `chrome://policy` Precedence Warnings: Machine-scoped precedence policies such as `CloudPolicyOverridesPlatformPolicy` and `CloudUserPolicyOverridesCloudMachinePolicy` are `per_profile: false`. If pushed at the profile level, `chrome://policy` displays a benign "Ignored because the policy is not set at the machine scope" notice. Leave Policy Precedence at default; `Cloud user` profile policies apply automatically on unenrolled BYOD laptops).*
+
+### Step 6: Install & Configure Endpoint Verification Chrome Extension
 - **Method A: Force-Install via Google Admin Console (Managed Chrome Profiles):**
-  1. Go to **Devices > Chrome > Apps & extensions > Users & browsers** *(or `Chrome browser > Apps & extensions > Users & browsers`)*.
+  1. Go to **Devices > Chrome > Apps & extensions > Users & browsers** (`https://admin.google.com/ac/chrome/apps/user`).
   2. Select your target Organizational Unit (e.g. `gwfe.org`, `/Students`, or `/Staff`).
   3. Click **Add (+) > Add Chrome app or extension by ID**.
   4. Paste Extension ID:
@@ -175,21 +191,16 @@ Activates device signal collection across your entire Google Workspace tenant.
   6. **In the Right-Hand App Options Panel:**
      * Under **Installation policy**, select **Force install + pin to browser toolbar**.
      * Scroll down to **Certificate management**:
-       * Next to **Allow access to keys**, click **Turn on** *(allows extension to sign telemetry with OS Keychain/TPM keys)*.
-       * Next to **Allow enterprise challenge**, click **Turn on** *(allows extension to answer Context-Aware Access real-time attestation challenges)*.
+       * Next to **Allow access to keys** (`KeyPermissions`), click **Turn on**.
+       * Next to **Allow enterprise challenge** (`AttestationExtensionAllowlist`), click **Turn on**.
+     * *(Platform Note: In Chromium's policy engine, `KeyPermissions` and `AttestationExtensionAllowlist` are ChromeOS-only policies (`supported_on: ["chrome_os"]`) for Verified Access hardware TPM attestation. They will not appear in `chrome://policy` on Windows or macOS laptops—this is normal. Windows and macOS BYOD devices register via the Profile Reporting and Chrome Signals Sharing policies configured in Step 5).*
   7. Click **Save** at the top right of the page.
-- **Method B: Manual Install on Personal BYOD Test Devices:**
-  1. On the user's personal Windows or Mac laptop, open Chrome and install [Google Endpoint Verification](https://chromewebstore.google.com/detail/endpoint-verification/callobklhcbilhphinckomhgkigmfocg) from the Chrome Web Store.
-  2. Sign into Chrome using the managed Google Workspace account (`student@yourdomain.com`) as a managed profile.
-  3. Click the Endpoint Verification extension icon in the browser toolbar and click **Sync now** to trigger immediate signal reporting to Cloud Identity.
+- **Method B: Testing on Personal BYOD Devices:**
+  1. On the user's personal Windows or Mac laptop, open Chrome and sign into the Chrome profile using the managed Google Workspace account (`user@yourdomain.com`).
+  2. Verify the [Google Endpoint Verification](https://chromewebstore.google.com/detail/endpoint-verification/callobklhcbilhphinckomhgkigmfocg) extension is active in the toolbar and click **Sync now** (or verify `CloudProfileReportingEnabled` and `UserSecuritySignalsReporting` are `true` at `chrome://policy`).
+  3. The device registers in Cloud Identity in `PENDING_APPROVAL` state and appears immediately in the Device Trust Gateway Portal.
 
-### Step 5: Force Managed Chrome Profile Sign-in
-To prevent data access inside unmanaged personal Chrome browser profiles:
-1. Go to **Devices > Chrome > Settings > Users & browsers**.
-2. Locate **Browser sign-in** and set to **Force users to sign in to use the browser**.
-3. Locate **Managed accounts sign-in restriction** (`ManagedAccountsSigninRestriction`) and set to **Block users from signing into secondary accounts** (`primary_account_strict`).
-
-### Step 6: Configure Workspace App Access Control (Crucial for Student Access)
+### Step 7: Configure Workspace App Access Control (Crucial for Student Access)
 To prevent Google Workspace from blocking student accounts during Google Sign-In with *"Access blocked: Your institution's admin needs to review this app"*:
 1. Go to **Security > Access and data control > API controls > App access control** (`https://admin.google.com/ac/owl/appaccess`).
 2. Click **Manage Third-Party App Access** (or **Connected apps**).
@@ -199,7 +210,7 @@ To prevent Google Workspace from blocking student accounts during Google Sign-In
 6. Set access permission to **Trusted** (allows access to Google services) or **Limited**.
 7. Click **Save**.
 
-### Step 7: Create Context-Aware Access Level
+### Step 8: Create Context-Aware Access Level
 1. Go to **Security > Access and data control > Context-Aware Access** (`https://admin.google.com/ac/security/contextaware`).
 2. Click **Create Access Level**.
 3. Name: `Approved Devices Only`.
@@ -218,11 +229,11 @@ To prevent Google Workspace from blocking student accounts during Google Sign-In
    * **Enforcement Policy:** Set policies to **Block** when policies / access levels are not met.
    * **Desktop & Mobile Apps:** Ensure policy is set to Enable for **Apply to Google desktop and mobile apps** (to enforce policy across native clients like Gmail mobile and Google Drive for Desktop in addition to web browsers).
 
-### Step 8: Execute the Zero-Trust Baseline Revocation Sweep
-Because initial Chrome browser profile sign-ins tag new desktop assets as `APPROVED` by default before revocation, execute the mass revocation script to reset unapproved BYOD hardware to `BLOCKED`:
+### Step 9: Execute the Zero-Trust Baseline Revocation Sweep (For Pre-Existing Devices)
+If desktop devices signed into Chrome prior to enabling **Profile reporting**, **Chrome signals sharing**, and **Require admin approval**, they may have been tagged as `APPROVED` at initial creation. Execute the mass revocation script to reset any pre-existing unapproved BYOD hardware to `BLOCKED`:
 
 ```bash
-WORKSPACE_ADMIN_EMAIL=claycodes@gwfe.org backend/venv/bin/python backend/scripts/mass_revoke_byod_approvals.py
+WORKSPACE_ADMIN_EMAIL=admin@yourdomain.com backend/venv/bin/python backend/scripts/mass_revoke_byod_approvals.py
 ```
 
 ---
@@ -259,14 +270,18 @@ For Windows 10 / 11 / Server environments:
 2. **Open Git Bash:**
    - Launch **Git Bash** from the Start Menu or right-click any directory and select **"Open Git Bash here"**.
    - *(Note: Do not run `deploy.sh` directly in standard Command Prompt `cmd.exe` or PowerShell; always use Git Bash or WSL).*
-3. **Authenticate & Deploy:**
+3. **Authenticate & Deploy (or Update Existing Checkout):**
    ```bash
    gcloud auth login
    git clone https://github.com/googleworkspace/devicetrustportal.git
    cd devicetrustportal
+   # If updating an existing local checkout before redeploying:
+   git fetch origin && git reset --hard origin/main
    ./deploy.sh
    ```
-4. **Windows Error Handling:**
+4. **Windows Path Conversion & Error Handling:**
+   - `./deploy.sh` automatically configures `MSYS2_ARG_CONV_EXCL="--set-secrets;--set-env-vars;--update-env-vars;GOOGLE_APPLICATION_CREDENTIALS"` so container paths like `/secrets/dwd_key.json` are preserved without breaking `gcloud`'s internal Windows Python path resolution.
+   - **Never set `MSYS_NO_PATHCONV=1` or `MSYS2_ARG_CONV_EXCL="*"` globally** when running manual `gcloud` commands in Git Bash on Windows, as `gcloud` requires MSYS path conversion to locate `gcloud.py`.
    - If an error occurs during execution, the deployment script executes an `EXIT` trap that pauses with `"Press [Enter] to close this window..."`, ensuring the terminal window does not abruptly close before you can review the error diagnostics.
 
 **Automated Deployment Phases:**

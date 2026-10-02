@@ -951,12 +951,15 @@ print_final_summary() {
     echo ""
     echo -e "${BLUE}Next Steps & Mandatory Google Workspace Policy Checklist:${NC}"
     echo -e "  1. ${YELLOW}Device Approvals:${NC} Devices > Mobile & endpoints > Settings > Universal > Security > Device approvals"
-    echo -e "     → Select ${GREEN}Require admin approval${NC}"
+    echo -e "     → Select ${GREEN}Require admin approval${NC} (verify inheritance across sub-OUs)"
     echo -e "  2. ${YELLOW}Device Signals:${NC}   Devices > Mobile & endpoints > Settings > Universal > Data access > Device signals"
     echo -e "     → Check ${GREEN}Collect device signals from Chrome browser${NC} & ${GREEN}Collect device signals using endpoint verification${NC}"
-    echo -e "  3. ${YELLOW}EV Extension:${NC}     Devices > Chrome > Apps & extensions > Users & browsers (${GREEN}callobklhcbilhphinckomhgkigmfocg${NC})"
-    echo -e "     → Under Certificate management, turn ON ${GREEN}Allow access to keys${NC} & ${GREEN}Allow enterprise challenge${NC}"
-    echo -e "  4. ${YELLOW}Context-Aware Access (CAA) Custom Access Level:${NC}"
+    echo -e "  3. ${YELLOW}Chrome Profile:${NC}   Devices > Chrome > Settings > Users & browsers"
+    echo -e "     → Enable ${GREEN}Profile reporting${NC}, ${GREEN}Chrome signals sharing${NC}, & ${GREEN}Enterprise Hardware Platform API${NC}"
+    echo -e "     → Set ${GREEN}Browser sign-in${NC} to Force sign-in & ${GREEN}Managed accounts sign-in restriction${NC} to Block secondary accounts"
+    echo -e "  4. ${YELLOW}EV Extension:${NC}     Devices > Chrome > Apps & extensions > Users & browsers (${GREEN}callobklhcbilhphinckomhgkigmfocg${NC})"
+    echo -e "     → Set to ${GREEN}Force install${NC}; under Certificate management, turn ON ${GREEN}Allow access to keys${NC} & ${GREEN}Allow enterprise challenge${NC}"
+    echo -e "  5. ${YELLOW}Context-Aware Access (CAA) Custom Access Level:${NC}"
     echo -e "     ${GREEN}device.is_corp_owned_device == true || device.is_admin_approved_device == true${NC}"
     echo -e "${GREEN}===================================================================================================${NC}\n"
 
@@ -1047,7 +1050,7 @@ deploy_gcp_cloud_run() {
         if [ -n "$WORKSPACE_ADMIN_EMAIL" ]; then
             INIT_ADMINS="[\"$WORKSPACE_ADMIN_EMAIL\"]"
         fi
-        DEFAULT_CONFIG="{\"customer_id\": \"customers/my_customer\", \"inactivity_threshold_days\": 90, \"revocation_action\": \"DELETE\", \"default_locale\": \"en\", \"portal_admins\": ${INIT_ADMINS}, \"trusted_ip_ranges\": [], \"chaining_allowed_groups\": [], \"chaining_allowed_ous\": []}"
+        DEFAULT_CONFIG="{\"customer_id\": \"customers/my_customer\", \"inactivity_threshold_days\": 90, \"revocation_action\": \"BLOCK\", \"default_locale\": \"en\", \"portal_admins\": ${INIT_ADMINS}, \"trusted_ip_ranges\": [], \"chaining_allowed_groups\": [], \"chaining_allowed_ous\": []}"
         echo -n "$DEFAULT_CONFIG" | gcloud secrets versions add "$SECRET_NAME" --data-file=- --project="$GCP_PROJECT" --quiet
         log_success "Secret '$SECRET_NAME' created with initial default configuration."
     else
@@ -1228,7 +1231,7 @@ deploy_on_premise_docker() {
 USE_SECRET_MANAGER=false
 TENANT_CUSTOMER_ID=customers/my_customer
 TENANT_INACTIVITY_THRESHOLD=90
-TENANT_REVOCATION_ACTION=DELETE
+TENANT_REVOCATION_ACTION=BLOCK
 TENANT_DEFAULT_LOCALE=en
 TENANT_TRUSTED_IPS=[]
 TENANT_CHAINING_GROUPS=[]

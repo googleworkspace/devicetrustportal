@@ -43,61 +43,135 @@ export const NetworkApproval: React.FC = () => {
   };
 
   return (
-    <div style={{ padding: "20px", fontFamily: "sans-serif", maxWidth: "800px", margin: "0 auto" }}>
-      <a href="#/" style={{ color: "#1a73e8", textDecoration: "none", fontWeight: "bold" }}>&larr; Back to Dashboard</a>
-      <h1 style={{ marginTop: "20px" }}>Campus Wi-Fi Approval Portal</h1>
-      <p style={{ color: "#555" }}>
-        If you are currently connected to the campus secure Wi-Fi network (or trusted LAN), you can approve your personal device with one click.
-      </p>
+    <div className="dtg-shell">
+      <header className="dtg-header">
+        <div className="dtg-header-inner">
+          <div className="dtg-brand">
+            <a href="#/" className="dtg-btn dtg-btn-neutral" style={{ padding: "8px" }} aria-label="Back to Dashboard">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z" />
+              </svg>
+            </a>
+            <div>
+              <h1 className="dtg-brand-title">Campus Wi-Fi Approval Portal</h1>
+              <div className="dtg-brand-subtitle">
+                Approve your personal device automatically while connected to trusted campus networks
+              </div>
+            </div>
+          </div>
+          <div className="dtg-header-actions">
+            <a href="#/" className="dtg-btn dtg-btn-outline">
+              &larr; Back to Dashboard
+            </a>
+          </div>
+        </div>
+      </header>
 
-      {message && <div style={{ padding: "12px", backgroundColor: "#d4edda", color: "#155724", borderRadius: "4px", marginBottom: "20px" }}>{message}</div>}
-      {error && <div style={{ padding: "12px", backgroundColor: "#f8d7da", color: "#721c24", borderRadius: "4px", marginBottom: "20px" }}>{error}</div>}
+      <main className="dtg-main dtg-main-narrow">
+        {message && (
+          <div role="status" className="dtg-alert dtg-alert-success">
+            <span>{message}</span>
+          </div>
+        )}
+        {error && (
+          <div role="alert" className="dtg-alert dtg-alert-error">
+            <span>{error}</span>
+          </div>
+        )}
 
-      <div style={{ border: "1px solid #ddd", padding: "25px", borderRadius: "8px", backgroundColor: "#fdfdfd", marginTop: "25px" }}>
-        <h2>Self-Service Approval</h2>
-        <p style={{ fontSize: "14px", color: "#666" }}>
-          Our Gateway backend automatically verifies your IP address against configured campus subnets before granting access.
-        </p>
+        <div className="dtg-card">
+          <h2 className="dtg-card-title">Self-Service Network Approval</h2>
+          <p className="dtg-card-desc" style={{ marginBottom: "20px" }}>
+            Our Gateway backend automatically verifies your IP address against configured campus subnets before granting
+            access.
+          </p>
 
-        <div style={{ marginBottom: "25px", borderTop: "1px solid #eee", paddingTop: "20px" }}>
-          <label style={{ display: "block", fontWeight: "bold", marginBottom: "10px", color: "#202124" }}>Device Identification Strategy:</label>
-          <div style={{ display: "flex", gap: "20px", marginBottom: "15px" }}>
-            <label style={{ fontSize: "14px", cursor: "pointer" }}>
-              <input type="radio" name="netMode" checked={mode === "optionA"} onChange={() => setMode("optionA")} /> Option A: API Lookup
+          <div
+            style={{
+              marginBottom: "22px",
+              borderTop: "1px solid var(--dtg-border-subtle)",
+              paddingTop: "18px",
+            }}
+          >
+            <label
+              style={{
+                display: "block",
+                fontWeight: 600,
+                marginBottom: "10px",
+                color: "var(--dtg-text)",
+                fontSize: "13px",
+              }}
+            >
+              Device Identification Strategy:
             </label>
-            <label style={{ fontSize: "14px", cursor: "pointer" }}>
-              <input type="radio" name="netMode" checked={mode === "optionB"} onChange={() => setMode("optionB")} /> Option B: Endpoint Verif.
-            </label>
+            <div style={{ display: "flex", gap: "16px", marginBottom: "14px", flexWrap: "wrap" }}>
+              <label style={{ fontSize: "13px", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "6px" }}>
+                <input
+                  type="radio"
+                  name="netMode"
+                  checked={mode === "optionA"}
+                  onChange={() => setMode("optionA")}
+                />
+                Option A: API Lookup
+              </label>
+              <label style={{ fontSize: "13px", cursor: "pointer", display: "inline-flex", alignItems: "center", gap: "6px" }}>
+                <input
+                  type="radio"
+                  name="netMode"
+                  checked={mode === "optionB"}
+                  onChange={() => setMode("optionB")}
+                />
+                Option B: Endpoint Verif.
+              </label>
+            </div>
+
+            {mode === "optionA" ? (
+              <div>
+                <label
+                  style={{
+                    fontSize: "12px",
+                    color: "var(--dtg-text-secondary)",
+                    display: "block",
+                    marginBottom: "6px",
+                  }}
+                >
+                  Enter Hardware Serial Number / IMEI:
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g., PF2ABC99"
+                  value={rawDeviceId}
+                  onChange={(e) => setRawDeviceId(e.target.value)}
+                  className="dtg-input"
+                />
+              </div>
+            ) : (
+              <div
+                style={{
+                  backgroundColor: "var(--dtg-primary-soft)",
+                  padding: "12px",
+                  borderRadius: "6px",
+                  border: "1px solid var(--dtg-primary-border)",
+                }}
+              >
+                <p style={{ fontSize: "12px", color: "var(--dtg-primary)", margin: 0, lineHeight: 1.45 }}>
+                  <b>Endpoint Verification Integration:</b> Your device certificate and resource ID are automatically
+                  captured and supplied by the Google Workspace browser extension during submission.
+                </p>
+              </div>
+            )}
           </div>
 
-          {mode === "optionA" ? (
-            <div>
-              <label style={{ fontSize: "12px", color: "#5f6368", display: "block", marginBottom: "6px" }}>Enter Hardware Serial Number / IMEI:</label>
-              <input
-                type="text"
-                placeholder="e.g., PF2ABC99"
-                value={rawDeviceId}
-                onChange={(e) => setRawDeviceId(e.target.value)}
-                style={{ padding: "10px", width: "100%", boxSizing: "border-box", fontSize: "14px", borderRadius: "4px", border: "1px solid #ccc" }}
-              />
-            </div>
-          ) : (
-            <div style={{ backgroundColor: "#e8f0fe", padding: "12px", borderRadius: "4px", border: "1px solid #d2e3fc" }}>
-              <p style={{ fontSize: "12px", color: "#1a73e8", margin: 0, lineHeight: "1.4" }}>
-                <b>Endpoint Verification Integration:</b> Your device certificate and resource ID are automatically captured and supplied by the Google Workspace browser extension during submission.
-              </p>
-            </div>
-          )}
+          <button
+            onClick={handleApprove}
+            disabled={loading}
+            className="dtg-btn dtg-btn-success"
+            style={{ width: "100%", padding: "12px 24px", fontSize: "15px" }}
+          >
+            {loading ? "Verifying Network Trust..." : "Approve This Device"}
+          </button>
         </div>
-
-        <button
-          onClick={handleApprove}
-          disabled={loading}
-          style={{ padding: "14px 25px", backgroundColor: "#34a853", color: "white", border: "none", borderRadius: "5px", fontWeight: "bold", cursor: "pointer", fontSize: "16px", width: "100%" }}
-        >
-          {loading ? "Verifying Network Trust..." : "Approve This Device"}
-        </button>
-      </div>
+      </main>
     </div>
   );
 };

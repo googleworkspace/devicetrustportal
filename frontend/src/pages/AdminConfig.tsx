@@ -87,16 +87,20 @@ export const AdminConfig: React.FC = () => {
     setSaving(true);
 
     const updatedConfig: TenantConfig = {
-      customer_id: "customers/my_customer",
+      customer_id: config?.customer_id || "customers/my_customer",
       inactivity_threshold_days: Number(threshold),
       portal_admins: portalAdmins,
-      revocation_action: "BLOCK",
+      revocation_action: config?.revocation_action || "BLOCK",
       google_client_id: googleClientId.trim(),
       default_locale: defaultLocale,
+      trusted_ip_ranges: config?.trusted_ip_ranges || [],
+      chaining_allowed_groups: config?.chaining_allowed_groups || [],
+      chaining_allowed_ous: config?.chaining_allowed_ous || [],
     };
 
     try {
       await updateAdminConfig(updatedConfig);
+      setConfig(updatedConfig);
       setMessage(t.configSaveSuccess);
       setSaving(false);
       sendClientLog("INFO", "ADMIN_CONFIG_SAVED", `Admin config updated by ${userEmail}`, {
@@ -116,9 +120,12 @@ export const AdminConfig: React.FC = () => {
 
   if (loading) {
     return (
-      <div style={{ backgroundColor: "#f8f9fa", minHeight: "100vh", display: "flex", justifyContent: "center", alignItems: "center", fontFamily: "'Google Sans', Roboto, Arial, sans-serif" }}>
-        <div style={{ textAlign: "center", color: "#5f6368", fontSize: "15px", fontWeight: 500 }}>
-          {t.loadingAdminConfig}
+      <div className="dtg-shell" style={{ justifyContent: "center", alignItems: "center" }}>
+        <div className="dtg-empty-state" style={{ border: "none", boxShadow: "none", background: "transparent" }}>
+          <div className="dtg-spinner" />
+          <div style={{ color: "var(--dtg-text-secondary)", fontSize: "15px", fontWeight: 500 }}>
+            {t.loadingAdminConfig}
+          </div>
         </div>
       </div>
     );
@@ -126,71 +133,150 @@ export const AdminConfig: React.FC = () => {
 
   if (error && !config) {
     return (
-      <div style={{ backgroundColor: "#f8f9fa", minHeight: "100vh", fontFamily: "'Google Sans', Roboto, Arial, sans-serif", padding: "40px 20px" }}>
-        <div style={{ maxWidth: "600px", margin: "0 auto", backgroundColor: "#ffffff", padding: "32px", borderRadius: "8px", border: "1px solid #dadce0", boxShadow: "0 1px 2px 0 rgba(60,64,67,0.3)" }}>
-          <a href="#/" style={{ color: "#1a73e8", textDecoration: "none", fontWeight: 500, fontSize: "14px", display: "inline-flex", alignItems: "center", gap: "6px" }}>
-            &larr; {t.returnToDashboard}
-          </a>
-          <h1 style={{ color: "#d93025", marginTop: "20px", fontSize: "22px", fontWeight: 500 }}>{t.accessDeniedTitle}</h1>
-          <p style={{ color: "#202124", fontSize: "15px", lineHeight: "1.5" }}>
-            {error}
-          </p>
-          <div style={{ backgroundColor: "#f8f9fa", padding: "12px 16px", borderRadius: "6px", border: "1px solid #dadce0", fontSize: "13px", color: "#5f6368", marginTop: "20px" }}>
-            {t.signedInAs}: <b style={{ color: "#202124" }}>{userEmail || "None"}</b>. {t.accessDeniedSessionNote}
+      <div className="dtg-shell">
+        <main className="dtg-main dtg-main-narrow" style={{ paddingTop: "40px" }}>
+          <div className="dtg-card">
+            <a
+              href="#/"
+              style={{
+                color: "var(--dtg-primary)",
+                textDecoration: "none",
+                fontWeight: 600,
+                fontSize: "14px",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "6px",
+              }}
+            >
+              &larr; {t.returnToDashboard}
+            </a>
+            <h1 style={{ color: "var(--dtg-danger)", marginTop: "18px", fontSize: "21px", fontWeight: 600 }}>
+              {t.accessDeniedTitle}
+            </h1>
+            <p style={{ color: "var(--dtg-text)", fontSize: "15px", lineHeight: 1.5 }}>{error}</p>
+            <div
+              style={{
+                backgroundColor: "var(--dtg-surface-subtle)",
+                padding: "12px 16px",
+                borderRadius: "6px",
+                border: "1px solid var(--dtg-border-subtle)",
+                fontSize: "13px",
+                color: "var(--dtg-text-secondary)",
+                marginTop: "20px",
+              }}
+            >
+              {t.signedInAs}: <b style={{ color: "var(--dtg-text)" }}>{userEmail || "None"}</b>.{" "}
+              {t.accessDeniedSessionNote}
+            </div>
           </div>
-        </div>
+        </main>
       </div>
     );
   }
 
   return (
-    <div style={{ backgroundColor: "#f8f9fa", minHeight: "100vh", fontFamily: "'Google Sans', Roboto, Arial, sans-serif", color: "#202124" }}>
-      {/* Google Cloud Console Top App Bar */}
-      <header style={{ backgroundColor: "#ffffff", borderBottom: "1px solid #dadce0", padding: "12px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", position: "sticky", top: 0, zIndex: 1000, boxShadow: "0 1px 2px 0 rgba(60,64,67,0.1)" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
-          <a href="#/" style={{ color: "#5f6368", textDecoration: "none", display: "flex", alignItems: "center" }} aria-label={t.returnToDashboard}>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/>
-            </svg>
-          </a>
-          <div>
-            <h1 style={{ margin: 0, fontSize: "18px", fontWeight: 500, letterSpacing: "-0.2px", color: "#202124" }}>{t.adminTitle}</h1>
-            <div style={{ fontSize: "12px", color: "#5f6368", marginTop: "2px" }}>{t.adminSubHeader}</div>
+    <div className="dtg-shell">
+      {/* Google Workspace Top App Bar */}
+      <header className="dtg-header">
+        <div className="dtg-header-inner">
+          <div className="dtg-brand">
+            <a
+              href="#/"
+              className="dtg-btn dtg-btn-neutral"
+              style={{ padding: "8px" }}
+              aria-label={t.returnToDashboard}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z" />
+              </svg>
+            </a>
+            <div>
+              <h1 className="dtg-brand-title">{t.adminTitle}</h1>
+              <div className="dtg-brand-subtitle">{t.adminSubHeader}</div>
+            </div>
+          </div>
+
+          <div className="dtg-header-actions">
+            <a href="#/" className="dtg-btn dtg-btn-outline">
+              {t.backToPortal}
+            </a>
           </div>
         </div>
-        
-        <a href="#/" style={{ padding: "6px 14px", backgroundColor: "#ffffff", color: "#1a73e8", border: "1px solid #dadce0", textDecoration: "none", borderRadius: "4px", fontWeight: 500, fontSize: "13px" }}>
-          {t.backToPortal}
-        </a>
       </header>
 
-      <main style={{ padding: "28px 24px", maxWidth: "850px", margin: "0 auto" }}>
-        {message && <div role="status" aria-live="polite" style={{ padding: "14px 16px", backgroundColor: "#e6f4ea", color: "#137333", border: "1px solid #ceead6", borderRadius: "6px", marginBottom: "20px", fontWeight: 500 }}>{message}</div>}
-        {error && <div role="alert" style={{ padding: "14px 16px", backgroundColor: "#fce8e6", color: "#c5221f", border: "1px solid #fad2cf", borderRadius: "6px", marginBottom: "20px", fontWeight: 500 }}>{error}</div>}
+      <main className="dtg-main dtg-main-narrow">
+        {message && (
+          <div role="status" aria-live="polite" className="dtg-alert dtg-alert-success">
+            <span>{message}</span>
+          </div>
+        )}
+        {error && (
+          <div role="alert" className="dtg-alert dtg-alert-error">
+            <span>{error}</span>
+          </div>
+        )}
 
-        <form onSubmit={handleSubmit} style={{ border: "1px solid #dadce0", padding: "32px", borderRadius: "8px", backgroundColor: "#ffffff", boxShadow: "0 1px 2px 0 rgba(60,64,67,0.3)" }}>
-          <h2 style={{ margin: "0 0 8px 0", fontSize: "18px", fontWeight: 500, color: "#202124" }}>{t.generalSecurityPolicies}</h2>
-          <p style={{ fontSize: "13px", color: "#5f6368", margin: "0 0 24px 0" }}>{t.generalSecurityPoliciesDesc}</p>
+        <form onSubmit={handleSubmit} className="dtg-card">
+          <h2 style={{ margin: "0 0 6px 0", fontSize: "18px", fontWeight: 600, color: "var(--dtg-text)" }}>
+            {t.generalSecurityPolicies}
+          </h2>
+          <p style={{ fontSize: "13px", color: "var(--dtg-text-secondary)", margin: "0 0 24px 0" }}>
+            {t.generalSecurityPoliciesDesc}
+          </p>
 
-          <div style={{ marginBottom: "24px" }}>
-            <label htmlFor="inactivity-threshold" style={{ display: "block", fontWeight: 500, marginBottom: "6px", color: "#202124", fontSize: "14px" }}>{t.inactivityThresholdLabel}</label>
+          <div style={{ marginBottom: "22px" }}>
+            <label
+              htmlFor="inactivity-threshold"
+              style={{ display: "block", fontWeight: 600, marginBottom: "6px", color: "var(--dtg-text)", fontSize: "14px" }}
+            >
+              {t.inactivityThresholdLabel}
+            </label>
             <input
               id="inactivity-threshold"
               type="number"
+              min={1}
               value={threshold}
               onChange={(e) => setThreshold(Number(e.target.value))}
-              style={{ padding: "10px 12px", width: "100%", boxSizing: "border-box", fontSize: "15px", borderRadius: "4px", border: "1px solid #dadce0", color: "#202124" }}
+              className="dtg-input"
             />
-            <span style={{ fontSize: "12px", color: "#5f6368", display: "block", marginTop: "4px" }}>{t.inactivityThresholdHint}</span>
+            <span style={{ fontSize: "12px", color: "var(--dtg-text-secondary)", display: "block", marginTop: "5px" }}>
+              {t.inactivityThresholdHint}
+            </span>
           </div>
 
-          <div style={{ marginBottom: "32px" }}>
-            <label htmlFor="default-locale-select" style={{ display: "block", fontWeight: 500, marginBottom: "6px", color: "#202124", fontSize: "14px" }}>{t.defaultLocaleLabel}</label>
+          <div style={{ marginBottom: "22px" }}>
+            <label
+              htmlFor="google-client-id-input"
+              style={{ display: "block", fontWeight: 600, marginBottom: "6px", color: "var(--dtg-text)", fontSize: "14px" }}
+            >
+              Google OAuth 2.0 Web Client ID:
+            </label>
+            <input
+              id="google-client-id-input"
+              type="text"
+              placeholder="1234567890-abcdefg.apps.googleusercontent.com"
+              value={googleClientId}
+              onChange={(e) => setGoogleClientId(e.target.value)}
+              className="dtg-input"
+            />
+            <span style={{ fontSize: "12px", color: "var(--dtg-text-secondary)", display: "block", marginTop: "5px" }}>
+              OAuth 2.0 Web Application Client ID used for Google Sign-In on the portal.
+            </span>
+          </div>
+
+          <div style={{ marginBottom: "28px" }}>
+            <label
+              htmlFor="default-locale-select"
+              style={{ display: "block", fontWeight: 600, marginBottom: "6px", color: "var(--dtg-text)", fontSize: "14px" }}
+            >
+              {t.defaultLocaleLabel}
+            </label>
             <select
               id="default-locale-select"
               value={defaultLocale}
               onChange={(e) => setDefaultLocale(e.target.value)}
-              style={{ padding: "10px 12px", width: "100%", boxSizing: "border-box", fontSize: "14px", borderRadius: "4px", border: "1px solid #dadce0", backgroundColor: "#fff", color: "#202124", cursor: "pointer" }}
+              className="dtg-select"
+              style={{ width: "100%", padding: "10px 12px", fontSize: "14px" }}
             >
               <option value="en">English (en) — Default International</option>
               <option value="es">Español (es) — Spanish Regionalization</option>
@@ -208,42 +294,86 @@ export const AdminConfig: React.FC = () => {
               <option value="sv">Svenska (sv) — Swedish Regionalization</option>
               <option value="tr">Türkçe (tr) — Turkish Regionalization</option>
             </select>
-            <span style={{ fontSize: "12px", color: "#5f6368", display: "block", marginTop: "4px" }}>
+            <span style={{ fontSize: "12px", color: "var(--dtg-text-secondary)", display: "block", marginTop: "5px" }}>
               {t.defaultLocaleHint}
             </span>
           </div>
 
-          <hr style={{ border: "none", borderTop: "1px solid #dadce0", margin: "32px 0" }} />
+          <hr style={{ border: "none", borderTop: "1px solid var(--dtg-border-subtle)", margin: "28px 0" }} />
 
-          <h2 style={{ margin: "0 0 8px 0", fontSize: "18px", fontWeight: 500, color: "#202124" }}>{t.delegatedAccessTitle}</h2>
-          <p style={{ fontSize: "13px", color: "#5f6368", margin: "0 0 20px 0" }}>{t.delegatedAccessDesc}</p>
+          <h2 style={{ margin: "0 0 6px 0", fontSize: "18px", fontWeight: 600, color: "var(--dtg-text)" }}>
+            {t.delegatedAccessTitle}
+          </h2>
+          <p style={{ fontSize: "13px", color: "var(--dtg-text-secondary)", margin: "0 0 20px 0" }}>
+            {t.delegatedAccessDesc}
+          </p>
 
-          <div style={{ marginBottom: "32px" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
-              <label style={{ display: "block", fontWeight: 500, color: "#202124", fontSize: "14px" }}>{t.authorizedAdminsLabel}</label>
+          <div style={{ marginBottom: "28px" }}>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginBottom: "12px",
+                flexWrap: "wrap",
+                gap: "10px",
+              }}
+            >
+              <label style={{ display: "block", fontWeight: 600, color: "var(--dtg-text)", fontSize: "14px" }}>
+                {t.authorizedAdminsLabel}
+              </label>
               <button
                 type="button"
                 onClick={() => setShowAddAdminModal(true)}
-                style={{ padding: "6px 14px", backgroundColor: "#ffffff", color: "#1a73e8", border: "1px solid #dadce0", borderRadius: "4px", cursor: "pointer", fontWeight: 500, fontSize: "13px", display: "inline-flex", alignItems: "center", gap: "6px", boxShadow: "0 1px 2px 0 rgba(60,64,67,0.1)" }}
+                className="dtg-btn dtg-btn-outline"
               >
                 {t.addAdminButton}
               </button>
             </div>
 
             {portalAdmins.length === 0 ? (
-              <div style={{ padding: "14px", backgroundColor: "#f8f9fa", color: "#5f6368", fontSize: "13px", borderRadius: "4px", border: "1px solid #dadce0" }}>
+              <div
+                style={{
+                  padding: "14px 16px",
+                  backgroundColor: "var(--dtg-surface-subtle)",
+                  color: "var(--dtg-text-secondary)",
+                  fontSize: "13px",
+                  borderRadius: "6px",
+                  border: "1px solid var(--dtg-border-subtle)",
+                }}
+              >
                 {t.noDelegatedAdmins}
               </div>
             ) : (
-              <div style={{ border: "1px solid #dadce0", borderRadius: "6px", backgroundColor: "#fff", overflow: "hidden" }}>
+              <div
+                style={{
+                  border: "1px solid var(--dtg-border)",
+                  borderRadius: "8px",
+                  backgroundColor: "var(--dtg-surface)",
+                  overflow: "hidden",
+                }}
+              >
                 {portalAdmins.map((email, idx) => (
-                  <div key={idx} style={{ padding: "12px 16px", borderBottom: idx < portalAdmins.length - 1 ? "1px solid #dadce0" : "none", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <span style={{ fontFamily: "monospace", fontSize: "14px", color: "#202124" }}>{email}</span>
+                  <div
+                    key={idx}
+                    style={{
+                      padding: "12px 16px",
+                      borderBottom: idx < portalAdmins.length - 1 ? "1px solid var(--dtg-border-subtle)" : "none",
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      flexWrap: "wrap",
+                      gap: "10px",
+                    }}
+                  >
+                    <span style={{ fontFamily: "monospace", fontSize: "14px", color: "var(--dtg-text)", wordBreak: "break-all" }}>
+                      {email}
+                    </span>
                     <button
                       type="button"
                       aria-label={`${t.removeAdminButton} ${email}`}
                       onClick={() => handleRemoveAdmin(email)}
-                      style={{ padding: "6px 12px", backgroundColor: "#ffffff", color: "#d93025", border: "1px solid #dadce0", borderRadius: "4px", cursor: "pointer", fontSize: "12px", fontWeight: 500 }}
+                      className="dtg-btn dtg-btn-danger-outline"
                     >
                       {t.removeAdminButton}
                     </button>
@@ -256,7 +386,8 @@ export const AdminConfig: React.FC = () => {
           <button
             type="submit"
             disabled={saving}
-            style={{ padding: "12px 24px", backgroundColor: "#1a73e8", color: "white", border: "none", borderRadius: "4px", fontWeight: 500, cursor: saving ? "not-allowed" : "pointer", fontSize: "14px", width: "100%", boxShadow: "0 1px 2px 0 rgba(60,64,67,0.3)", opacity: saving ? 0.7 : 1 }}
+            className="dtg-btn dtg-btn-primary"
+            style={{ width: "100%", padding: "12px 24px", fontSize: "14px" }}
           >
             {saving ? t.savingConfigsButton : t.saveConfigsButton}
           </button>
@@ -265,16 +396,26 @@ export const AdminConfig: React.FC = () => {
 
       {/* Add Authorized Administrator Modal Overlay */}
       {showAddAdminModal && (
-        <div style={{ position: "fixed", top: 0, left: 0, width: "100vw", height: "100vh", backgroundColor: "rgba(0,0,0,0.5)", display: "flex", justifyContent: "center", alignItems: "center", zIndex: 9999 }}>
-          <div style={{ backgroundColor: "#fff", padding: "28px", borderRadius: "8px", maxWidth: "450px", width: "90%", boxShadow: "0 4px 15px rgba(0,0,0,0.2)" }}>
-            <h3 style={{ margin: "0 0 12px 0", fontSize: "18px", fontWeight: 500, color: "#202124" }}>{t.addAdminModalTitle}</h3>
-            <p style={{ fontSize: "13px", color: "#5f6368", margin: "0 0 20px 0", lineHeight: "1.5" }}>
+        <div className="dtg-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="add-admin-modal-title">
+          <div className="dtg-modal" style={{ maxWidth: "450px" }}>
+            <h3
+              id="add-admin-modal-title"
+              style={{ margin: "0 0 10px 0", fontSize: "18px", fontWeight: 600, color: "var(--dtg-text)" }}
+            >
+              {t.addAdminModalTitle}
+            </h3>
+            <p style={{ fontSize: "13px", color: "var(--dtg-text-secondary)", margin: "0 0 18px 0", lineHeight: 1.5 }}>
               {t.addAdminModalDesc}
             </p>
-            
+
             <form onSubmit={handleAddAdmin}>
-              <div style={{ marginBottom: "24px" }}>
-                <label htmlFor="modal-admin-email" style={{ display: "block", fontWeight: 500, marginBottom: "6px", color: "#202124", fontSize: "13px" }}>{t.emailAddressLabel}</label>
+              <div style={{ marginBottom: "22px" }}>
+                <label
+                  htmlFor="modal-admin-email"
+                  style={{ display: "block", fontWeight: 600, marginBottom: "6px", color: "var(--dtg-text)", fontSize: "13px" }}
+                >
+                  {t.emailAddressLabel}
+                </label>
                 <input
                   id="modal-admin-email"
                   type="email"
@@ -282,25 +423,22 @@ export const AdminConfig: React.FC = () => {
                   placeholder="admin@yourdomain.com"
                   value={newAdminEmail}
                   onChange={(e) => setNewAdminEmail(e.target.value)}
-                  style={{ padding: "10px 12px", width: "100%", boxSizing: "border-box", fontSize: "14px", borderRadius: "4px", border: "1px solid #dadce0", color: "#202124" }}
+                  className="dtg-input"
                 />
               </div>
 
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: "12px" }}>
+              <div className="dtg-modal-actions">
                 <button
                   type="button"
                   onClick={() => {
                     setNewAdminEmail("");
                     setShowAddAdminModal(false);
                   }}
-                  style={{ padding: "8px 16px", backgroundColor: "#ffffff", color: "#3c4043", border: "1px solid #dadce0", borderRadius: "4px", cursor: "pointer", fontWeight: 500, fontSize: "13px" }}
+                  className="dtg-btn dtg-btn-neutral"
                 >
                   {t.cancelAction}
                 </button>
-                <button
-                  type="submit"
-                  style={{ padding: "8px 16px", backgroundColor: "#1a73e8", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", fontWeight: 500, fontSize: "13px" }}
-                >
+                <button type="submit" className="dtg-btn dtg-btn-primary">
                   {t.addAdminButton}
                 </button>
               </div>

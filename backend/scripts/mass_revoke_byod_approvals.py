@@ -26,7 +26,7 @@ import google.auth
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
-from backend.services.cloud_identity import resolve_dwd_key_path
+from backend.services.cloud_identity import resolve_dwd_key_path, normalize_customer_id
 
 def execute_mass_byod_revocation():
     print("\n===================================================================================================")
@@ -61,7 +61,7 @@ def execute_mass_byod_revocation():
         print(f"ERROR: Failed to initialize Cloud Identity service: {e}")
         return
 
-    customer_id = "customers/my_customer"
+    customer_id = normalize_customer_id(os.getenv("TENANT_CUSTOMER_ID", "customers/my_customer"))
     next_page_token = None
     page_count = 0
     total_devices_inspected = 0
@@ -107,17 +107,17 @@ def execute_mass_byod_revocation():
                         du_resp = du_req.execute()
 
                         for du in du_resp.get("deviceUsers", []):
-                            state = du.get("managementState") or du.get("approvalState", "UNKNOWN_STATE")
+                            state = (du.get("managementState") or du.get("approvalState") or "UNKNOWN_STATE").upper()
                             if state == "APPROVED":
                                 du_name = du["name"]
                                 user_email = du.get("userEmail", "Unknown User")
-                                print(f"REVOKING: Unapproving BYOD binding '{du_name}' ({model}) for '{user_email}'...")
+                                print(f"REVOKING: Blocking BYOD binding '{du_name}' ({model}) for '{user_email}'...")
                                 
-                                del_req = service.devices().deviceUsers().delete(
+                                block_req = service.devices().deviceUsers().block(
                                     name=du_name,
-                                    customer=customer_id
+                                    body={"customer": customer_id}
                                 )
-                                del_req.execute()
+                                block_req.execute()
                                 total_revoked += 1
                                 
                         du_page_token = du_resp.get("nextPageToken")

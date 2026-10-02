@@ -25,6 +25,9 @@ export interface TenantConfig {
   revocation_action?: string;
   google_client_id?: string;
   default_locale?: string;
+  trusted_ip_ranges?: string[];
+  chaining_allowed_groups?: string[];
+  chaining_allowed_ous?: string[];
 }
 
 export interface GenerateResponse {

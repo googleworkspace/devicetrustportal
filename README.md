@@ -95,13 +95,14 @@ You only need two free tools installed on your computer to run the automated ins
    ```
    *(Your web browser will open automatically. Sign into the Google Workspace / Google Cloud account with administrator access to your target GCP Project).*
 
-3. **Download the Code Repository:**
+3. **Download (or Update) the Code Repository:**
    ```bash
-   # Clone the code repository from GitHub
+   # Fresh install: Clone the code repository from GitHub
    git clone https://github.com/googleworkspace/devicetrustportal.git
-
-   # Navigate into the project folder
    cd devicetrustportal
+
+   # Updating an existing checkout before redeploying:
+   git fetch origin && git reset --hard origin/main
    ```
 
 ---
@@ -119,7 +120,10 @@ chmod +x deploy.sh
 ```
 
 > [!TIP]
-> **Windows Users:** You can run `./deploy.sh` directly in Git Bash. If an error occurs, the script automatically pauses with `"Press [Enter] to close this window..."` so your terminal does not abruptly close, allowing you to read all diagnostics.
+> **Windows Git Bash (`MINGW64`) Notes:**
+> - `./deploy.sh` automatically checks if your local branch is behind `origin/main` and fast-forwards to the latest commit before deploying.
+> - `./deploy.sh` automatically configures `MSYS2_ARG_CONV_EXCL="--set-secrets;--set-env-vars;--update-env-vars;GOOGLE_APPLICATION_CREDENTIALS"` so container paths like `/secrets/dwd_key.json` are not converted into Windows `C:/Program Files/Git/secrets/dwd_key.json` paths.
+> - **Do NOT set `MSYS_NO_PATHCONV=1` or `MSYS2_ARG_CONV_EXCL="*"` globally** when running manual `gcloud` commands in Git Bash on Windows, as `gcloud` relies on MSYS path conversion to locate its internal `gcloud.py` script. If running manual `gcloud run services update` commands on Windows Git Bash, use `MSYS2_ARG_CONV_EXCL="--update-env-vars;--set-env-vars;--set-secrets"`.
 
 #### Optional Deployment Flags & Command-Line Options:
 You can pass command-line flags to customize execution or troubleshoot deployment:
@@ -184,28 +188,37 @@ The deployment wizard will guide you through the setup automatically. Here is wh
    - **Recommended for Schools & Hybrid Work (Default: N):** Press **N** (or Enter) to skip IAP Edge Defense. The portal runs in Standard Mode over public HTTPS, secured by Google Sign-In and **Trust Chaining (6-digit pairing codes)**. This ensures students and staff at home can approve personal devices to do homework using their school Chromebook.
    - **Strict Corporate Mode (Option Y):** Places Cloud Run behind Google Cloud IAP and an HTTPS Load Balancer, restricting portal access to campus IP subnets or company hardware. Only use this if your organization strictly requires device approvals to happen on-premises.
 
-7. **Install & Configure Google Endpoint Verification (Extension & ChromeOS Telemetry):**
+7. **Configure Google Workspace Device Telemetry, Profile Reporting & Endpoint Verification:**
    > [!IMPORTANT]
-   > **Why Enterprise-Enrollment is Not Enough for CAA:**
-   > For Context-Aware Access (CAA) to recognize a Chromebook as a "Company-owned device" (`device.is_corp_owned_device == true`), simply enterprise-enrolling it is not enough. CAA relies on Endpoint Verification, which requires specific ChromeOS reporting and telemetry settings to be actively broadcasting the device's status to the Admin console.
+   > **No CBCM Machine Enrollment Required for Personal BYOD Laptops:**
+   > Personal Windows and macOS laptops do **not** require Chrome Browser Cloud Management (CBCM) machine-level token enrollment (`CloudReportingEnabled` is ignored on unenrolled BYOD computers). Instead, personal laptops register and report telemetry in `PENDING_APPROVAL` status via **signed-in Managed Chrome Profile** settings (**Profile reporting** + **Chrome signals sharing**) combined with **Universal Device approvals**.
 
-   - **Part A: Enable ChromeOS Device Reporting (Device Settings):**
+   - **Part A: Enable ChromeOS Device Reporting (For Company-Owned Chromebooks):**
      - Open [admin.google.com > Devices > Chrome > Settings > Device settings](https://admin.google.com/ac/chrome/settings/device).
      - Scroll to **User and device reporting** and turn **ON**:
        1. **Report device OS information**
        2. **Report device hardware information**
        3. **Report device telemetry**
        4. **Report device user tracking**
-   - **Part B: Enable Device Signals & Endpoint Verification Globally (Universal Data Access):**
+   - **Part B: Enable Managed Chrome Profile Reporting & Signals Sharing (Mandatory for Windows/Mac BYOD):**
+     - Open [admin.google.com > Devices > Chrome > Settings > Users & browsers](https://admin.google.com/ac/chrome/settings/user).
+     - Select your target OU (or root domain) and configure the following **five** user/browser policies:
+       1. **Profile reporting** (`CloudProfileReportingEnabled`) → Set to **Enable profile reporting**.
+       2. **Chrome signals sharing** (`UserSecuritySignalsReporting` & `UserSecurityAuthenticatedReporting`) → Set to **Enable signals sharing**.
+       3. **Enterprise Hardware Platform API** (`EnterpriseHardwarePlatformAPIEnabled`) → Set to **Allow extensions to see hardware platform information**.
+       4. **Browser sign-in** → Set to **Force users to sign in to use the browser**.
+       5. **Managed accounts sign-in restriction** (`ManagedAccountsSigninRestriction`) → Set to **Block users from signing into secondary accounts** (`primary_account_strict`).
+     - *(Note on `chrome://policy` Precedence Warnings: Do not worry if machine-scoped precedence policies like `CloudPolicyOverridesPlatformPolicy` or `CloudUserPolicyOverridesCloudMachinePolicy` show an "Ignored because the policy is not set at the machine scope" notice on unenrolled BYOD laptops. You can leave Policy Precedence at default; `Cloud user` profile policies apply automatically).*
+   - **Part C: Enable Device Signals Globally (Universal Data Access):**
      - Open [admin.google.com > Devices > Mobile & endpoints > Settings > Universal > Data access](https://admin.google.com/ac/appsettings/724141353720?vid=EMM_UNIVERSAL_SETTINGS_VIEW) *(labeled **Universal** or **Universal settings** in the left menu)*.
      - Expand **Device signals** *(or **Endpoint verification**)* and check **both**:
        1. **Collect device signals from Chrome browser**
        2. **Collect device signals using endpoint verification** *(or **Monitor which devices access organization data**)*
-   - **Part C: Enable Device Approvals (Universal Security Settings):**
+   - **Part D: Enable Device Approvals (Universal Security Settings):**
      - Open [admin.google.com > Devices > Mobile & endpoints > Settings > Universal > Security](https://admin.google.com/ac/appsettings/724141353720?vid=EMM_UNIVERSAL_SETTINGS_VIEW).
      - Expand **Device approvals**, select **Require admin approval**, and enter an admin notification email address.
      - Verify that all target sub-OUs (e.g. `/Students`, `/Staff`, `/Admin`) inherit or explicitly enable **Require admin approval**.
-   - **Part D: Force-Install Extension via Admin Console (Managed Chrome Profiles):**
+   - **Part E: Force-Install Endpoint Verification Extension (Managed Chrome Profiles):**
      - Open [admin.google.com > Devices > Chrome > Apps & extensions > Users & browsers](https://admin.google.com/ac/chrome/apps/user).
      - In the left Organizational Unit tree, select your target OU (e.g. `gwfe.org`, `/Students`, or `/Staff`).
      - Click **Add (+) > Add Chrome app or extension by ID**, and enter Extension ID:
@@ -214,12 +227,13 @@ The deployment wizard will guide you through the setup automatically. Here is wh
        ```
      - In the right-hand options panel:
        - Under **Installation policy**, select **Force install + pin to browser toolbar**.
-       - ⚠️ **Critical (Required for Windows/Mac BYOD Registration):** Under **Certificate management**, turn **ON** both **Allow access to keys** (`KeyPermissions`) and **Allow enterprise challenge** (`AttestationExtensionAllowlist`). Without both toggles enabled, Chrome on Windows/macOS cannot complete the cryptographic enterprise challenge to register the hardware device in Cloud Identity.
+       - Under **Certificate management**, turn **ON** both **Allow access to keys** (`KeyPermissions`) and **Allow enterprise challenge** (`AttestationExtensionAllowlist`).
+       - *(Platform Note: In Chromium's policy engine, `KeyPermissions` and `AttestationExtensionAllowlist` are ChromeOS-only policies (`supported_on: ["chrome_os"]`) for Verified Access hardware TPM attestation. They will not appear in `chrome://policy` on Windows or macOS laptops—this is normal. Windows and macOS BYOD devices register via the Profile Reporting and Chrome Signals Sharing policies configured in Part B).*
      - Click **Save**.
-   - **Part E: Manual Install on Personal BYOD Test Devices:**
-     - On the personal Windows or Mac laptop, open Chrome and install [Google Endpoint Verification from the Chrome Web Store](https://chromewebstore.google.com/detail/endpoint-verification/callobklhcbilhphinckomhgkigmfocg).
-     - Sign into Chrome with your managed Workspace account (`student@yourdomain.com`) as a managed profile.
-     - Click the Endpoint Verification extension icon in the toolbar and click **Sync now** to immediately report hardware telemetry to Cloud Identity.
+   - **Part F: Testing on Personal BYOD Laptops:**
+     - On a personal Windows or Mac laptop, open Chrome and sign into the Chrome profile using your managed Google Workspace account (`user@yourdomain.com`).
+     - Verify the Endpoint Verification extension (`callobklhcbilhphinckomhgkigmfocg`) is installed and click **Sync now** (or verify `CloudProfileReportingEnabled` and `UserSecuritySignalsReporting` are `true` at `chrome://policy`).
+     - The device will immediately register in Cloud Identity in **Pending approval** (`PENDING_APPROVAL`) state and appear in the Device Trust Gateway Portal ready for approval.
 
 8. **Activate Workspace Policy (Context-Aware Access):**
    - Open [Google Workspace Admin Console > Security > Access and data control > Context-Aware Access](https://admin.google.com/ac/security/contextaware).

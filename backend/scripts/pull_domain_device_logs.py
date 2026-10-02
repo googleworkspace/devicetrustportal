@@ -14,7 +14,6 @@
 
 import os
 import sys
-import json
 from pathlib import Path
 
 # Ensure repository root is always in sys.path
@@ -26,6 +25,7 @@ import google.auth
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
+from backend.services.cloud_identity import resolve_dwd_key_path, normalize_customer_id
 
 def pull_device_audit_logs():
     """
@@ -36,8 +36,8 @@ def pull_device_audit_logs():
     print("           Google Workspace Domain Device Audit Log Investigator                   ")
     print("==================================================================================")
 
-    key_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "dwd_key.json")
-    admin_email = os.getenv("WORKSPACE_ADMIN_EMAIL")
+    key_path = resolve_dwd_key_path()
+    admin_email = (os.getenv("WORKSPACE_ADMIN_EMAIL") or "").strip()
 
     if not admin_email:
         print("INFO: WORKSPACE_ADMIN_EMAIL environment variable not set.")
@@ -49,12 +49,15 @@ def pull_device_audit_logs():
     ]
 
     try:
-        if key_path and os.path.exists(key_path) and admin_email:
+        if key_path and admin_email:
             credentials = service_account.Credentials.from_service_account_file(
                 key_path, scopes=scopes, subject=admin_email
             )
             print(f"INFO: Authenticated via Service Account using DWD subject '{admin_email}'.")
         else:
+            raw_env_cred = (os.getenv("GOOGLE_APPLICATION_CREDENTIALS") or "").strip()
+            if raw_env_cred and not os.path.exists(raw_env_cred):
+                os.environ.pop("GOOGLE_APPLICATION_CREDENTIALS", None)
             credentials, _ = google.auth.default(scopes=scopes)
             print("INFO: Authenticated via Application Default Credentials.")
 
@@ -64,7 +67,7 @@ def pull_device_audit_logs():
         print(f"ERROR: Failed to initialize Google API clients: {e}")
         return
 
-    customer_id = os.getenv("TENANT_CUSTOMER_ID", "customers/my_customer")
+    customer_id = normalize_customer_id(os.getenv("TENANT_CUSTOMER_ID", "customers/my_customer"))
 
     # 1. Query Cloud Identity Devices API
     print(f"\n--- 1. Querying Current Cloud Identity Registered Devices ({customer_id}) ---")

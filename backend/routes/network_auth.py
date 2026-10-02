@@ -15,7 +15,7 @@
 import ipaddress
 from typing import Optional
 from pydantic import BaseModel
-from fastapi import APIRouter, Header, HTTPException, Depends, Request
+from fastapi import APIRouter, HTTPException, Depends, Request
 from backend.services.config_service import config_service
 from backend.services.cloud_identity import cloud_identity_service
 from backend.routes.admin import get_current_user_email

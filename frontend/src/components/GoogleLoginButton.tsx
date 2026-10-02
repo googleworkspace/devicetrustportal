@@ -36,7 +36,11 @@ export const GoogleLoginButton: React.FC<Props> = ({ onLoginSuccess }) => {
           if (envId && envId !== "INITIAL_DEPLOY_PENDING") {
             setClientId(envId);
           } else {
-            sendClientLog("ERROR", "OAUTH_CLIENT_ID_MISSING", "No Google OAuth 2.0 Client ID configured in /api/config/public or environment");
+            sendClientLog(
+              "ERROR",
+              "OAUTH_CLIENT_ID_MISSING",
+              "No Google OAuth 2.0 Client ID configured in /api/config/public or environment"
+            );
           }
         }
       })
@@ -57,7 +61,11 @@ export const GoogleLoginButton: React.FC<Props> = ({ onLoginSuccess }) => {
 
   if (loading) {
     return (
-      <div style={{ padding: "12px", color: "#5f6368", fontStyle: "italic", fontSize: "14px" }}>
+      <div style={{ padding: "8px 0", color: "var(--dtg-text-secondary)", fontSize: "13px", display: "flex", alignItems: "center", gap: "8px" }}>
+        <span
+          className="dtg-spinner"
+          style={{ width: "16px", height: "16px", borderWidth: "2px", marginBottom: 0 }}
+        />
         Initializing Google Sign-In SDK...
       </div>
     );
@@ -65,21 +73,23 @@ export const GoogleLoginButton: React.FC<Props> = ({ onLoginSuccess }) => {
 
   if (!clientId) {
     return (
-      <div style={{ padding: "12px 16px", backgroundColor: "#fce8e6", color: "#c5221f", border: "1px solid #fad2cf", borderRadius: "6px", fontSize: "13px", marginTop: "15px", marginBottom: "15px" }}>
-        Google OAuth 2.0 Client ID is not configured (`GOOGLE_CLIENT_ID`). Please complete Phase 2/3 of `deploy.sh` or set `GOOGLE_CLIENT_ID` in your service environment.
+      <div className="dtg-alert dtg-alert-error" style={{ marginTop: "12px", marginBottom: "12px" }}>
+        <span>
+          Google OAuth 2.0 Client ID is not configured (<code>GOOGLE_CLIENT_ID</code>). Please complete Phase 2/3 of{" "}
+          <code>deploy.sh</code> or set <code>GOOGLE_CLIENT_ID</code> in your service environment.
+        </span>
       </div>
     );
   }
 
   return (
     <GoogleOAuthProvider key={clientId} clientId={clientId}>
-      <div style={{ marginTop: "15px", marginBottom: "15px" }}>
+      <div style={{ marginTop: "8px", marginBottom: "8px", overflowX: "auto" }}>
         <GoogleLogin
           onSuccess={(credentialResponse) => {
             const token = credentialResponse.credential;
             if (token) {
               localStorage.setItem("googleIdToken", token);
-              // Parse email from JWT payload (middle part)
               try {
                 const payload = JSON.parse(atob(token.split(".")[1]));
                 const email = payload.email;

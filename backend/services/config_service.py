@@ -14,9 +14,10 @@
 
 import os
 import json
-from typing import Dict, Any, List
+from typing import List
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv, set_key
+from backend.services.cloud_identity import resolve_dwd_key_path
 
 load_dotenv()
 
@@ -27,9 +28,9 @@ class TenantConfig(BaseModel):
     revocation_action: str = Field(default="BLOCK", description="Action when revoking a device: 'DELETE' or 'BLOCK'")
     google_client_id: str = Field(default="", description="Google OAuth 2.0 Client ID for frontend Google Sign-In")
     default_locale: str = Field(default="en", description="Default UI language code fallback for end users (e.g., 'en', 'es', 'fr', 'ja')")
-    trusted_ip_ranges: List[str] = Field(default=[], description="Deprecated")
-    chaining_allowed_groups: List[str] = Field(default=[], description="Deprecated")
-    chaining_allowed_ous: List[str] = Field(default=[], description="Deprecated")
+    trusted_ip_ranges: List[str] = Field(default=[], description="Trusted campus CIDR ranges for network-gated approvals")
+    chaining_allowed_groups: List[str] = Field(default=[], description="Google Groups authorized to perform trust chaining")
+    chaining_allowed_ous: List[str] = Field(default=[], description="Organizational Units authorized to perform trust chaining")
 
 class ConfigService:
     def __init__(self):
@@ -39,17 +40,9 @@ class ConfigService:
         
         if self.use_secret_manager:
             try:
-                raw_env_cred = (os.getenv("GOOGLE_APPLICATION_CREDENTIALS") or "").strip()
-                if raw_env_cred and not os.path.exists(raw_env_cred):
-                    recovered = None
-                    for candidate in ([f"/{raw_env_cred}"] if not raw_env_cred.startswith("/") else []) + ["/secrets/dwd_key.json", "dwd_key.json"]:
-                        if os.path.exists(candidate):
-                            recovered = candidate
-                            break
-                    if recovered:
-                        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = recovered
-                    else:
-                        os.environ.pop("GOOGLE_APPLICATION_CREDENTIALS", None)
+                resolved_key = resolve_dwd_key_path()
+                if not resolved_key and os.getenv("GOOGLE_APPLICATION_CREDENTIALS"):
+                    os.environ.pop("GOOGLE_APPLICATION_CREDENTIALS", None)
                 from google.cloud import secretmanager
                 self.sm_client = secretmanager.SecretManagerServiceClient()
             except Exception as e:

@@ -16,7 +16,7 @@ import random
 import datetime
 from typing import Optional, Dict, Any
 from pydantic import BaseModel
-from fastapi import APIRouter, Header, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends
 from backend.services.config_service import config_service
 from backend.services.directory_service import directory_service
 from backend.services.cloud_identity import cloud_identity_service
@@ -79,7 +79,9 @@ def consume_pairing_code(code: str) -> str:
                 
             expires_str = data.get("expires_at")
             expires_at = datetime.datetime.fromisoformat(expires_str) if isinstance(expires_str, str) else data.get("expires_at")
-            if datetime.datetime.utcnow() > expires_at:
+            if expires_at and expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=datetime.timezone.utc)
+            if expires_at and datetime.datetime.now(datetime.timezone.utc) > expires_at:
                 raise HTTPException(status_code=400, detail="Pairing code has expired")
                 
             return data["user_email"]

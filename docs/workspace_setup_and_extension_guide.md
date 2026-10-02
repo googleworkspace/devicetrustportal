@@ -17,10 +17,12 @@ This document outlines the mandatory Google Workspace Admin Console settings, ex
 
 ## 🏛 Executive Summary
 
-By default in Google Workspace:
+In Google Workspace:
 * **Mobile Devices (Android / iOS):** Require **Advanced Mobile Management** + **Require Admin Approval** to automatically enter a `PENDING_APPROVAL` / `BLOCKED` state upon enrollment.
-* **Computers (macOS / Windows / Linux):** Chrome Browser Profile Sync (*Chrome Signals Sharing / Fundamental Management*) registers computers with Cloud Identity as `APPROVED` upon initial Google sign-in.
-* **Solution:** To enforce strict gated access for desktop computers (Macs & PCs), administrators must **force-install the Endpoint Verification Chrome extension**, enforce **Context-Aware Access (CAA)** policies, and run the **Mass BYOD Revocation Sweep** (`backend/scripts/mass_revoke_byod_approvals.py`) to reset auto-approved desktop assets to `BLOCKED` until authorized via the **Device Trust Portal**.
+* **Computers (macOS / Windows / Linux):**
+  - Personal BYOD laptops do **not** require Chrome Browser Cloud Management (CBCM) machine enrollment (`CloudReportingEnabled` is ignored on unenrolled BYOD machines).
+  - When **Profile reporting** (`CloudProfileReportingEnabled`), **Chrome signals sharing** (`UserSecuritySignalsReporting` & `UserSecurityAuthenticatedReporting`), **Universal Device signals**, and **Require admin approval** are enabled together, newly signed-in managed Chrome profiles register directly in **Pending approval** (`Device.managementState = PENDING`, `DeviceUser.managementState = PENDING_APPROVAL`).
+  - If desktop devices signed in *before* these policies were enabled (or via legacy unauthenticated sync), they may have initialized as `APPROVED`; administrators can run the **Mass BYOD Revocation Sweep** (`backend/scripts/mass_revoke_byod_approvals.py`) to reset pre-existing BYOD assets to `BLOCKED` until authorized via the **Device Trust Portal**.
 
 ---
 
@@ -54,8 +56,8 @@ Activates device signal collection across your entire organization.
 * **Direct Link:** `https://admin.google.com/ac/appsettings/724141353720?vid=EMM_UNIVERSAL_SETTINGS_VIEW`
 * **Setting:** Expand **Device approvals**.
 * **Configuration:** Select **Require admin approval**.
-* **Email Notifications:** Enter the admin email address (e.g., `claycodes@gwfe.org`) to receive enrollment alerts.
-* ⚠️ **Important:** Verify that sub-OUs (like `/Admin`) inherit this setting or explicitly have **Require admin approval** selected.
+* **Email Notifications:** Enter the admin email address (e.g., `admin@yourdomain.com`) to receive enrollment alerts.
+* ⚠️ **Important:** Verify that sub-OUs (like `/Admin`, `/Staff`, `/Students`) inherit this setting or explicitly have **Require admin approval** selected.
 
 ### 4. Enable Advanced Mobile Management (Mobile Devices)
 * **Path:** `Devices > Mobile & endpoints > Settings > Universal settings > General`
@@ -63,18 +65,22 @@ Activates device signal collection across your entire organization.
 * **Configuration:** Set Android and iOS to **Advanced**.
 * **Purpose:** Forces new Android and iOS logins into a `PENDING_APPROVAL` state upon initial account sign-in.
 
-### 5. Force Managed Chrome Profile Sign-in (Chrome Browser Settings)
-To prevent employees and students from signing into corporate Workspace accounts inside unmanaged personal Chrome profiles:
-* **Path:** `Devices > Chrome > Settings > Users & browsers` *(or `Chrome browser > Settings > Users & browsers`)*
-* **Setting 1 (Browser Sign-in):** Find **Browser sign-in** and set to **Force users to sign in to use the browser**.
-* **Setting 2 (Managed Account Restriction):** Find **Managed accounts sign-in restriction** (`ManagedAccountsSigninRestriction`) and set to **Block users from signing into secondary accounts** (`primary_account_strict`).
-* **Purpose:** Ensures that all enterprise data access originates exclusively from an authenticated, policy-managed Google Workspace Chrome profile where the Endpoint Verification extension is forced.
+### 5. Enable Managed Chrome Profile Reporting, Signals Sharing & Sign-in Restrictions
+To enable zero-enrollment BYOD telemetry reporting and prevent employees/students from signing into corporate Workspace accounts inside unmanaged personal Chrome profiles:
+* **Path:** `Devices > Chrome > Settings > Users & browsers` (`https://admin.google.com/ac/chrome/settings/user`)
+* **Setting 1 (Profile Reporting):** Find **Profile reporting** (`CloudProfileReportingEnabled`) and set to **Enable profile reporting**.
+* **Setting 2 (Chrome Signals Sharing):** Find **Chrome signals sharing** (`UserSecuritySignalsReporting` & `UserSecurityAuthenticatedReporting`) and set to **Enable signals sharing**.
+* **Setting 3 (Enterprise Hardware Platform API):** Find **Enterprise Hardware Platform API** (`EnterpriseHardwarePlatformAPIEnabled`) and set to **Allow extensions to see hardware platform information**.
+* **Setting 4 (Browser Sign-in):** Find **Browser sign-in** and set to **Force users to sign in to use the browser**.
+* **Setting 5 (Managed Account Restriction):** Find **Managed accounts sign-in restriction** (`ManagedAccountsSigninRestriction`) and set to **Block users from signing into secondary accounts** (`primary_account_strict`).
+* **Purpose:** Ensures that all enterprise data access originates from an authenticated, policy-managed Google Workspace Chrome profile that reports hardware and OS signals directly to Cloud Identity without requiring CBCM machine enrollment.
+* *(Note on `chrome://policy` Precedence Warnings: Machine-scoped precedence policies like `CloudPolicyOverridesPlatformPolicy` and `CloudUserPolicyOverridesCloudMachinePolicy` are `per_profile: false`. If configured at the user/profile scope on an unenrolled BYOD laptop, `chrome://policy` will display a benign "Ignored because the policy is not set at the machine scope" notice. You can leave Policy Precedence at default; `Cloud user` profile policies apply automatically).*
 
 ---
 
 ## 🔌 Endpoint Verification Extension Force-Installation
 
-To ensure all Mac, Windows, and Linux devices report accurate telemetry and cryptographic challenges to Cloud Identity without relying on voluntary user installation, force-push the extension from the Admin Console.
+To ensure all Mac, Windows, Linux, and ChromeOS devices report accurate telemetry to Cloud Identity without relying on voluntary user installation, force-push the extension from the Admin Console.
 
 ### Extension Parameters
 | Parameter | Value |
@@ -86,8 +92,8 @@ To ensure all Mac, Windows, and Linux devices report accurate telemetry and cryp
 
 ### Force-Install Procedure
 1. Log into **Google Admin Console** (`admin.google.com`).
-2. Navigate to **Devices > Chrome > Apps & extensions > Users & browsers** *(or `Chrome browser > Apps & extensions > Users & browsers`)*.
-3. In the left-hand **Organizational Units** panel, select your top-level domain (`gwfe.org`) or target OU (`/Staff`, `/Admin`).
+2. Navigate to **Devices > Chrome > Apps & extensions > Users & browsers** (`https://admin.google.com/ac/chrome/apps/user`).
+3. In the left-hand **Organizational Units** panel, select your top-level domain or target OU (`/Students`, `/Staff`, `/Admin`).
 4. Click the yellow **`+`** button in the bottom right corner and select **Add Chrome app or extension by ID**.
 5. Paste the Extension ID:
    ```text
@@ -98,8 +104,9 @@ To ensure all Mac, Windows, and Linux devices report accurate telemetry and cryp
    * Once you click **Save**, a configuration side panel automatically opens on the right side of the screen. *(If closed, simply click on the `Endpoint Verification` row in the extensions table to open it).*
    * Under **Installation policy**, select **Force install + pin to browser toolbar**.
    * Scroll down inside the right-hand panel to the **Certificate management** section:
-     * Next to **Allow access to keys**, click **Turn on** (allows extension to access OS Keychain/TPM client certificates to sign telemetry).
-     * Next to **Allow enterprise challenge**, click **Turn on** (allows extension to respond to Context-Aware Access real-time attestation challenges).
+     * Next to **Allow access to keys** (`KeyPermissions`), click **Turn on**.
+     * Next to **Allow enterprise challenge** (`AttestationExtensionAllowlist`), click **Turn on**.
+   * *(Platform Note: In Chromium's policy engine, `KeyPermissions` and `AttestationExtensionAllowlist` are ChromeOS-only policies (`supported_on: ["chrome_os"]`) for Verified Access hardware TPM attestation. They will not appear in `chrome://policy` on Windows or macOS laptops—this is normal. Windows and macOS BYOD devices register via the Profile Reporting and Chrome Signals Sharing policies configured in Section 5).*
 8. Click **Save** at the top right of the page.
 
 ---
@@ -109,17 +116,18 @@ To ensure all Mac, Windows, and Linux devices report accurate telemetry and cryp
 Understanding how Google Cloud Identity treats different platform registrations:
 
 ```
-+-------------------+--------------------------------+-------------------------------------------------+
-| Platform Category | Required Management Type       | Default Initial State in Cloud Identity         |
-+-------------------+--------------------------------+-------------------------------------------------+
-| Android & iOS     | Advanced Mobile Management     | PENDING_APPROVAL / BLOCKED                      |
-+-------------------+--------------------------------+-------------------------------------------------+
-| macOS & Windows   | Endpoint Verification + CAA    | APPROVED by default upon initial Chrome sync    |
-+-------------------+--------------------------------+-------------------------------------------------+
++-------------------+---------------------------------------------+-------------------------------------------------+
+| Platform Category | Required Management & Policy Settings       | Initial State in Cloud Identity                 |
++-------------------+---------------------------------------------+-------------------------------------------------+
+| Android & iOS     | Advanced Mobile Management + Require Approv | PENDING_APPROVAL / BLOCKED                      |
++-------------------+---------------------------------------------+-------------------------------------------------+
+| macOS & Windows   | Profile Reporting + Chrome Signals Sharing  | PENDING (Device) / PENDING_APPROVAL (DeviceUser)|
+| (Managed Profile) | + Require Admin Approval                    |                                                 |
++-------------------+---------------------------------------------+-------------------------------------------------+
+| macOS & Windows   | Legacy Endpoint Verification Sync without   | APPROVED by default upon initial sync           |
+| (Pre-Policy Sync) | Profile Signals Sharing / Require Approval  | (Reset via mass_revoke_byod_approvals.py)       |
++-------------------+---------------------------------------------+-------------------------------------------------+
 ```
-
-### Why Desktop Computers Auto-Approve by Default
-When a user signs into Chrome browser on macOS or Windows without an active Context-Aware Access enforcement block, Chrome Profile Reporting registers the computer in Cloud Identity under **Fundamental Management**. Cloud Identity initializes `managementState` to `APPROVED` at `createTime`.
 
 ---
 

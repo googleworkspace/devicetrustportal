@@ -15,7 +15,7 @@
 from typing import Optional, Dict, Any
 from fastapi import APIRouter, Header, HTTPException
 from backend.services.config_service import config_service
-from backend.services.cloud_identity import cloud_identity_service
+from backend.services.cloud_identity import cloud_identity_service, normalize_customer_id
 from backend.services.directory_service import directory_service
 
 router = APIRouter(prefix="/api/cron", tags=["Cron"])
@@ -28,8 +28,8 @@ def sync_chromebook_fleet_inventory(customer_id: str) -> Dict[str, Any]:
             detail="Cloud Identity or Directory API service is not initialized with valid credentials."
         )
 
-    cust_key = customer_id.replace("customers/", "").strip() if customer_id else "my_customer"
-    ci_customer = f"customers/{cust_key}" if not customer_id.startswith("customers/") else customer_id
+    ci_customer = normalize_customer_id(customer_id)
+    cust_key = ci_customer.replace("customers/", "").strip() or "my_customer"
 
     try:
         page_token = None

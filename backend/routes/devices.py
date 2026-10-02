@@ -235,12 +235,14 @@ def crawl_devices_for_user(
                                 fetched_dev = cloud_identity_service.service.devices().get(
                                     name=parent_dev_name, customer=cid
                                 ).execute() or {}
-                                if isinstance(fetched_dev, dict) and fetched_dev:
+                                if isinstance(fetched_dev, dict) and isinstance(fetched_dev.get("name"), str) and fetched_dev.get("name"):
                                     device_map[parent_dev_name] = fetched_dev
                                     total_devices_scanned += 1
+                                else:
+                                    continue
                             except Exception as get_err:
                                 print(f"WARNING [devices.py]: Could not fetch parent device '{parent_dev_name}': {get_err}")
-                                device_map[parent_dev_name] = {"name": parent_dev_name}
+                                continue
 
                         if du_name not in seen_dus:
                             seen_dus.add(du_name)

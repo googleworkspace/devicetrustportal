@@ -15,9 +15,34 @@
  */
 
 import React, { useState, useEffect, useCallback } from "react";
-import { getMyDevices, approveDevice, revokeDevice, revokeDeviceBulk, checkIsAdmin, getPublicConfig, sendClientLog, DeviceUserItem } from "../services/api";
+import {
+  getMyDevices,
+  approveDevice,
+  revokeDevice,
+  revokeDeviceBulk,
+  checkIsAdmin,
+  getPublicConfig,
+  sendClientLog,
+  DeviceUserItem,
+} from "../services/api";
 import { GoogleLoginButton } from "../components/GoogleLoginButton";
 import { getTranslator } from "../i18n/translations";
+
+const renderPlatformIcon = (deviceType: string) => {
+  const upper = (deviceType || "").toUpperCase();
+  if (upper.includes("ANDROID") || upper.includes("IOS") || upper.includes("PHONE")) {
+    return (
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+        <path d="M17 1.01L7 1c-1.1 0-2 .9-2 2v18c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2V3c0-1.1-.9-1.99-2-1.99zM17 19H7V5h10v14z" />
+      </svg>
+    );
+  }
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M20 18c1.1 0 1.99-.9 1.99-2L22 6c0-1.1-.9-2-2-2H4c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2H0v2h24v-2h-4zM4 6h16v10H4V6z" />
+    </svg>
+  );
+};
 
 export const Dashboard: React.FC = () => {
   const [userEmail, setUserEmail] = useState(() => localStorage.getItem("userEmail") || "");
@@ -27,12 +52,18 @@ export const Dashboard: React.FC = () => {
   const t = getTranslator(locale);
 
   useEffect(() => {
-    getPublicConfig().then((data) => {
-      if (data?.default_locale && !localStorage.getItem("userLocale")) {
-        const browserLang = navigator.language?.slice(0, 2);
-        setLocale(["en", "es", "fr", "ja", "de", "pt", "zh", "it", "ko", "ar", "hi", "nl", "pl", "sv", "tr"].includes(browserLang) ? browserLang : data.default_locale);
-      }
-    }).catch(() => {});
+    getPublicConfig()
+      .then((data) => {
+        if (data?.default_locale && !localStorage.getItem("userLocale")) {
+          const browserLang = navigator.language?.slice(0, 2);
+          setLocale(
+            ["en", "es", "fr", "ja", "de", "pt", "zh", "it", "ko", "ar", "hi", "nl", "pl", "sv", "tr"].includes(browserLang)
+              ? browserLang
+              : data.default_locale
+          );
+        }
+      })
+      .catch(() => {});
   }, []);
 
   const [devices, setDevices] = useState<DeviceUserItem[]>([]);
@@ -154,7 +185,7 @@ export const Dashboard: React.FC = () => {
       }
 
       setDevices((prev) =>
-        prev.map((d) => (revokeTarget.includes(d.device_user_name) ? { ...d, approval_state: "UNMANAGED" } : d))
+        prev.map((d) => (revokeTarget.includes(d.device_user_name) ? { ...d, approval_state: "BLOCKED" } : d))
       );
       setMessage(`Successfully revoked approval for ${revokeTarget.length} device(s).`);
       sendClientLog("INFO", "REVOKE_DEVICE_SUCCESS", `Successfully revoked ${revokeTarget.length} device(s)`, {
@@ -177,6 +208,8 @@ export const Dashboard: React.FC = () => {
 
   const personalDevices = devices.filter((d) => d.owner_type !== "COMPANY");
   const companyDevices = devices.filter((d) => d.owner_type === "COMPANY");
+  const approvedByodCount = personalDevices.filter((d) => d.approval_state === "APPROVED").length;
+  const pendingByodCount = personalDevices.filter((d) => d.approval_state === "PENDING_APPROVAL").length;
 
   const handleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.checked) {
@@ -215,97 +248,138 @@ export const Dashboard: React.FC = () => {
   };
 
   return (
-    <div style={{ backgroundColor: "#f8f9fa", minHeight: "100vh", fontFamily: "'Google Sans', Roboto, Arial, sans-serif", color: "#202124" }}>
-      {/* Google Cloud Console / Workspace Top Navigation App Bar */}
-      <header style={{ backgroundColor: "#ffffff", borderBottom: "1px solid #dadce0", padding: "12px 24px", display: "flex", justifyContent: "space-between", alignItems: "center", position: "sticky", top: 0, zIndex: 1000, boxShadow: "0 1px 2px 0 rgba(60,64,67,0.1)" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
-          {/* Authentic Google Shield Lockup Icon */}
-          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M12 2L3 6V11C3 16.55 6.84 21.74 12 23C17.16 21.74 21 16.55 21 11V6L12 2Z" fill="#1a73e8"/>
-            <path d="M12 6V11H17C16.47 14.19 14.52 16.8 12 17.65V23C17.16 21.74 21 16.55 21 11H12V6Z" fill="#4285F4" opacity="0.8"/>
-            <path d="M10.5 15.5L6.5 11.5L7.91 10.09L10.5 12.67L16.09 7.09L17.5 8.5L10.5 15.5Z" fill="#ffffff"/>
-          </svg>
-          <div>
-            <h1 style={{ margin: 0, fontSize: "18px", fontWeight: 500, letterSpacing: "-0.2px", color: "#202124" }}>{t.portalTitle}</h1>
-            <div style={{ fontSize: "12px", color: "#5f6368", marginTop: "2px" }}>{t.subtitle}</div>
-          </div>
-        </div>
-        
-        <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-          <select
-            aria-label="Language Selector"
-            value={locale}
-            onChange={(e) => {
-              setLocale(e.target.value);
-              localStorage.setItem("userLocale", e.target.value);
-            }}
-            style={{ padding: "6px 12px", borderRadius: "4px", border: "1px solid #dadce0", fontSize: "13px", backgroundColor: "#ffffff", color: "#3c4043", cursor: "pointer", fontWeight: 500 }}
-          >
-            <option value="en">English (en)</option>
-            <option value="es">Español (es)</option>
-            <option value="fr">Français (fr)</option>
-            <option value="ja">日本語 (ja)</option>
-            <option value="de">Deutsch (de)</option>
-            <option value="pt">Português (Brasil) (pt-BR)</option>
-            <option value="zh">简体中文 (zh)</option>
-            <option value="it">Italiano (it)</option>
-            <option value="ko">한국어 (ko)</option>
-            <option value="ar">العربية (ar)</option>
-            <option value="hi">हिन्दी (hi)</option>
-            <option value="nl">Nederlands (nl)</option>
-            <option value="pl">Polski (pl)</option>
-            <option value="sv">Svenska (sv)</option>
-            <option value="tr">Türkçe (tr)</option>
-          </select>
-
-          {isAdmin && (
-            <a
-              href="#/admin"
-              style={{ padding: "6px 14px", backgroundColor: "#ffffff", color: "#1a73e8", border: "1px solid #dadce0", textDecoration: "none", borderRadius: "4px", fontWeight: 500, fontSize: "13px", display: "inline-flex", alignItems: "center", gap: "6px", boxShadow: "0 1px 2px 0 rgba(60,64,67,0.1)" }}
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/>
+    <div className="dtg-shell">
+      {/* Google Workspace Top Navigation App Bar */}
+      <header className="dtg-header">
+        <div className="dtg-header-inner">
+          <div className="dtg-brand">
+            <div className="dtg-brand-icon" aria-hidden="true">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M12 2L3 6V11C3 16.55 6.84 21.74 12 23C17.16 21.74 21 16.55 21 11V6L12 2Z" fill="#1a73e8" />
+                <path
+                  d="M12 6V11H17C16.47 14.19 14.52 16.8 12 17.65V23C17.16 21.74 21 16.55 21 11H12V6Z"
+                  fill="#4285F4"
+                  opacity="0.8"
+                />
+                <path d="M10.5 15.5L6.5 11.5L7.91 10.09L10.5 12.67L16.09 7.09L17.5 8.5L10.5 15.5Z" fill="#ffffff" />
               </svg>
-              {t.adminConfigTab}
-            </a>
-          )}
+            </div>
+            <div>
+              <h1 className="dtg-brand-title">{t.portalTitle}</h1>
+              <div className="dtg-brand-subtitle">{t.subtitle}</div>
+            </div>
+          </div>
+
+          <div className="dtg-header-actions">
+            <select
+              aria-label="Language Selector"
+              value={locale}
+              onChange={(e) => {
+                setLocale(e.target.value);
+                localStorage.setItem("userLocale", e.target.value);
+              }}
+              className="dtg-select"
+            >
+              <option value="en">English (en)</option>
+              <option value="es">Español (es)</option>
+              <option value="fr">Français (fr)</option>
+              <option value="ja">日本語 (ja)</option>
+              <option value="de">Deutsch (de)</option>
+              <option value="pt">Português (Brasil) (pt-BR)</option>
+              <option value="zh">简体中文 (zh)</option>
+              <option value="it">Italiano (it)</option>
+              <option value="ko">한국어 (ko)</option>
+              <option value="ar">العربية (ar)</option>
+              <option value="hi">हिन्दी (hi)</option>
+              <option value="nl">Nederlands (nl)</option>
+              <option value="pl">Polski (pl)</option>
+              <option value="sv">Svenska (sv)</option>
+              <option value="tr">Türkçe (tr)</option>
+            </select>
+
+            {isAdmin && (
+              <a href="#/admin" className="dtg-btn dtg-btn-outline">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z" />
+                </svg>
+                {t.adminConfigTab}
+              </a>
+            )}
+          </div>
         </div>
       </header>
 
-      <main style={{ padding: "24px", maxWidth: "1100px", margin: "0 auto" }}>
-        <style>
-          {`@keyframes spin { to { transform: rotate(360deg); } }`}
-        </style>
+      <main className="dtg-main">
         {/* Google Workspace Authentication Surface Card */}
-        <div style={{ backgroundColor: "#ffffff", padding: "24px", borderRadius: "8px", marginBottom: "24px", border: "1px solid #dadce0", boxShadow: "0 1px 2px 0 rgba(60,64,67,0.3)" }}>
-          <h3 style={{ marginTop: 0, marginBottom: "8px", fontSize: "16px", fontWeight: 500, color: "#202124" }}>{t.googleAuthTitle}</h3>
-          <p style={{ fontSize: "13px", color: "#5f6368", marginBottom: "16px", marginTop: 0 }}>
-            {t.signInPrompt}
-          </p>
-          
+        <div className="dtg-card">
+          <div className="dtg-card-header" style={{ marginBottom: userEmail ? "14px" : "10px" }}>
+            <div>
+              <h3 className="dtg-card-title">{t.googleAuthTitle}</h3>
+              <p className="dtg-card-desc">{t.signInPrompt}</p>
+            </div>
+          </div>
+
           {!userEmail ? (
-            <GoogleLoginButton onLoginSuccess={handleLoginSuccess} />
-          ) : (
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", backgroundColor: "#f8f9fa", padding: "12px 16px", borderRadius: "6px", border: "1px solid #dadce0", flexWrap: "wrap", gap: "12px" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-                <div style={{ width: "36px", height: "36px", borderRadius: "50%", backgroundColor: "#e8f0fe", color: "#1a73e8", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 500, fontSize: "15px" }}>
-                  {userEmail.charAt(0).toUpperCase()}
+            <>
+              <GoogleLoginButton onLoginSuccess={handleLoginSuccess} />
+              <div className="dtg-steps-grid">
+                <div className="dtg-step-item">
+                  <div className="dtg-step-num">1</div>
+                  <div>
+                    <div className="dtg-step-title">Sign In with Workspace</div>
+                    <div className="dtg-step-text">
+                      Authenticate with your corporate or school Google Workspace account.
+                    </div>
+                  </div>
                 </div>
-                <div>
-                  <span style={{ fontSize: "11px", color: "#5f6368", fontWeight: 500, display: "block", textTransform: "uppercase", letterSpacing: "0.5px" }}>{t.signedInAs}</span>
-                  <span style={{ fontSize: "14px", color: "#202124", fontWeight: 500 }}>{userEmail}</span>
+                <div className="dtg-step-item">
+                  <div className="dtg-step-num">2</div>
+                  <div>
+                    <div className="dtg-step-title">Sync Device Signals</div>
+                    <div className="dtg-step-text">
+                      Ensure Chrome Profile Reporting or Endpoint Verification is active on your device.
+                    </div>
+                  </div>
+                </div>
+                <div className="dtg-step-item">
+                  <div className="dtg-step-num">3</div>
+                  <div>
+                    <div className="dtg-step-title">Approve or Revoke Access</div>
+                    <div className="dtg-step-text">
+                      Approve pending personal devices or revoke lost/retired hardware in one click.
+                    </div>
+                  </div>
                 </div>
               </div>
-              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            </>
+          ) : (
+            <div className="dtg-session-bar">
+              <div className="dtg-user-profile">
+                <div className="dtg-avatar" aria-hidden="true">
+                  {userEmail.charAt(0).toUpperCase()}
+                </div>
+                <div className="dtg-user-meta">
+                  <span className="dtg-user-label">{t.signedInAs}</span>
+                  <span className="dtg-user-email">{userEmail}</span>
+                </div>
+              </div>
+              <div className="dtg-session-actions">
                 <button
                   onClick={loadDevices}
                   disabled={loadingDevices}
                   aria-label={t.refreshDevices}
-                  style={{ padding: "6px 14px", backgroundColor: "#ffffff", color: "#1a73e8", border: "1px solid #dadce0", borderRadius: "4px", cursor: loadingDevices ? "not-allowed" : "pointer", fontWeight: 500, fontSize: "13px", display: "inline-flex", alignItems: "center", gap: "6px", boxShadow: "0 1px 2px 0 rgba(60,64,67,0.1)", opacity: loadingDevices ? 0.7 : 1, transition: "all 0.15s ease" }}
+                  className="dtg-btn dtg-btn-outline"
                   title={t.refreshDevices}
                 >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style={{ animation: loadingDevices ? "spin 1s ease-in-out infinite" : "none" }}>
-                    <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="currentColor"
+                    style={{ animation: loadingDevices ? "dtg-spin 1s linear infinite" : "none" }}
+                    aria-hidden="true"
+                  >
+                    <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" />
                   </svg>
                   {t.refreshDevices}
                 </button>
@@ -319,7 +393,7 @@ export const Dashboard: React.FC = () => {
                     setIsAdmin(false);
                     setMessage("Signed out successfully.");
                   }}
-                  style={{ padding: "6px 14px", backgroundColor: "#ffffff", color: "#3c4043", border: "1px solid #dadce0", borderRadius: "4px", cursor: "pointer", fontWeight: 500, fontSize: "13px", transition: "all 0.15s ease" }}
+                  className="dtg-btn dtg-btn-neutral"
                 >
                   {t.signOut}
                 </button>
@@ -328,224 +402,436 @@ export const Dashboard: React.FC = () => {
           )}
         </div>
 
-      {message && (
-        <div role="status" aria-live="polite" style={{ padding: "12px 16px", backgroundColor: "#e8f0fe", border: "1px solid #d2e3fc", color: "#1a73e8", marginBottom: "20px", borderRadius: "6px", fontWeight: 500 }}>
-          {message}
-        </div>
-      )}
-
-      {!userEmail ? (
-        <div role="status" style={{ padding: "16px", backgroundColor: "#fef7e0", color: "#b06000", border: "1px solid #feefc3", borderRadius: "6px", fontWeight: 500 }}>
-          {t.signInPrompt}
-        </div>
-      ) : loadingDevices ? (
-        <div role="status" aria-live="polite" style={{ padding: "40px 20px", backgroundColor: "#ffffff", border: "1px solid #dadce0", borderRadius: "8px", textAlign: "center", marginTop: "10px", boxShadow: "0 1px 2px 0 rgba(60,64,67,0.3)" }}>
-          <div style={{ display: "inline-block", width: "40px", height: "40px", border: "4px solid rgba(26, 115, 232, 0.2)", borderRadius: "50%", borderTopColor: "#1a73e8", animation: "spin 1s ease-in-out infinite", marginBottom: "15px" }} />
-          <div style={{ fontWeight: 500, color: "#202124", fontSize: "16px", marginBottom: "6px" }}>{t.loadingDevices}</div>
-          <div style={{ color: "#5f6368", fontSize: "13px" }}>Securely verifying your hardware inventory for <b>{userEmail}</b>.</div>
-        </div>
-      ) : deviceError ? (
-        <div role="alert" style={{ padding: "16px", backgroundColor: "#fce8e6", color: "#c5221f", border: "1px solid #f8d7da", borderRadius: "6px", fontWeight: 500, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "10px" }}>
-          <span>{deviceError}</span>
-          <button
-            onClick={loadDevices}
-            disabled={loadingDevices}
-            style={{ padding: "6px 14px", backgroundColor: "#ffffff", color: "#c5221f", border: "1px solid #f8d7da", borderRadius: "4px", cursor: "pointer", fontWeight: 500, fontSize: "13px", display: "inline-flex", alignItems: "center", gap: "6px" }}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-              <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
-            </svg>
-            {t.refreshDevices}
-          </button>
-        </div>
-      ) : devices.length === 0 ? (
-        <div role="status" style={{ padding: "30px", backgroundColor: "#ffffff", color: "#5f6368", border: "1px solid #dadce0", borderRadius: "8px", textAlign: "center", boxShadow: "0 1px 2px 0 rgba(60,64,67,0.3)" }}>
-          <div style={{ fontSize: "16px", fontWeight: 500, marginBottom: "8px", color: "#202124" }}>{t.noApprovedDevices}</div>
-          <div style={{ fontSize: "14px", marginBottom: "16px" }}>We checked your inventory but found no approved devices matching <b>{userEmail}</b>.</div>
-          <button
-            onClick={loadDevices}
-            disabled={loadingDevices}
-            style={{ padding: "8px 16px", backgroundColor: "#1a73e8", color: "#ffffff", border: "none", borderRadius: "4px", cursor: loadingDevices ? "not-allowed" : "pointer", fontWeight: 500, fontSize: "13px", display: "inline-flex", alignItems: "center", gap: "6px", boxShadow: "0 1px 2px 0 rgba(60,64,67,0.2)", opacity: loadingDevices ? 0.7 : 1 }}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style={{ animation: loadingDevices ? "spin 1s ease-in-out infinite" : "none" }}>
-              <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
-            </svg>
-            {t.refreshDevices}
-          </button>
-        </div>
-      ) : (
-        <>
-          {/* Section 1: Personal BYOD Devices (Self-Service Approvals) */}
-          <section style={{ marginBottom: "32px" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px", flexWrap: "wrap", gap: "12px" }}>
+        {/* Summary Metric Cards when signed in and devices loaded */}
+        {userEmail && !loadingDevices && !deviceError && devices.length > 0 && (
+          <div className="dtg-stats-grid" aria-label="Device Inventory Summary">
+            <div className="dtg-stat-card">
               <div>
-                <h2 style={{ margin: 0, fontSize: "18px", fontWeight: 500, color: "#202124" }}>{t.personalDevicesTitle}</h2>
-                <div style={{ fontSize: "13px", color: "#5f6368", marginTop: "2px" }}>{t.personalDevicesSubtitle}</div>
+                <div className="dtg-stat-label">Total Registered</div>
+                <div className="dtg-stat-value">{devices.length}</div>
               </div>
-              <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-                <button
-                  onClick={loadDevices}
-                  disabled={loadingDevices}
-                  aria-label={t.refreshDevices}
-                  style={{ padding: "8px 14px", backgroundColor: "#ffffff", color: "#1a73e8", border: "1px solid #dadce0", borderRadius: "4px", cursor: loadingDevices ? "not-allowed" : "pointer", fontSize: "13px", fontWeight: 500, display: "inline-flex", alignItems: "center", gap: "6px", boxShadow: "0 1px 2px 0 rgba(60,64,67,0.1)", opacity: loadingDevices ? 0.7 : 1 }}
-                  title={t.refreshDevices}
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" style={{ animation: loadingDevices ? "spin 1s ease-in-out infinite" : "none" }}>
-                    <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
-                  </svg>
-                  {t.refreshDevices}
-                </button>
-                {selectedDevices.length > 0 && (
-                  <button
-                    onClick={() => initiateRevoke(selectedDevices)}
-                    style={{ padding: "8px 16px", backgroundColor: "#d93025", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", fontSize: "14px", fontWeight: 500 }}
-                  >
-                    ✕ {t.bulkRevokeSelected} ({selectedDevices.length})
-                  </button>
-                )}
+              <div
+                className="dtg-stat-icon"
+                style={{ backgroundColor: "var(--dtg-primary-soft)", color: "var(--dtg-primary)" }}
+                aria-hidden="true"
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M4 6h18V4H4c-1.1 0-2 .9-2 2v11H0v3h14v-3H4V6zm19 2h-6c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h6c.55 0 1-.45 1-1V9c0-.55-.45-1-1-1zm-1 9h-4v-7h4v7z" />
+                </svg>
               </div>
             </div>
 
-            {personalDevices.length === 0 ? (
-              <div role="status" style={{ padding: "20px", backgroundColor: "#ffffff", color: "#5f6368", border: "1px solid #dadce0", borderRadius: "8px", textAlign: "center", boxShadow: "0 1px 2px 0 rgba(60,64,67,0.3)" }}>
-                <div style={{ fontSize: "14px" }}>{t.noPersonalDevices}</div>
+            <div className="dtg-stat-card">
+              <div>
+                <div className="dtg-stat-label">{t.approvedStatus} (BYOD)</div>
+                <div className="dtg-stat-value" style={{ color: "var(--dtg-success)" }}>
+                  {approvedByodCount}
+                </div>
               </div>
-            ) : (
-              <table aria-label="Personal BYOD Devices Table" style={{ width: "100%", borderCollapse: "collapse", backgroundColor: "#ffffff", boxShadow: "0 1px 2px 0 rgba(60,64,67,0.3), 0 1px 3px 1px rgba(60,64,67,0.15)", borderRadius: "8px", overflow: "hidden" }}>
-                <thead>
-                  <tr style={{ backgroundColor: "#f8f9fa", borderBottom: "2px solid #dadce0" }}>
-                    <th scope="col" style={{ padding: "14px 16px", width: "40px", textAlign: "center" }}>
-                      <input
-                        type="checkbox"
-                        aria-label="Select all eligible personal devices"
-                        onChange={handleSelectAll}
-                        checked={
-                          personalDevices.filter((d) => d.approval_state === "APPROVED").length > 0 &&
-                          selectedDevices.length === personalDevices.filter((d) => d.approval_state === "APPROVED").length
-                        }
-                      />
-                    </th>
-                    <th scope="col" style={{ padding: "14px 16px", textAlign: "left", color: "#202124", fontSize: "14px", fontWeight: 500 }}>{t.deviceHeader}</th>
-                    <th scope="col" style={{ padding: "14px 16px", textAlign: "left", color: "#202124", fontSize: "14px", fontWeight: 500 }}>{t.osHeader}</th>
-                    <th scope="col" style={{ padding: "14px 16px", textAlign: "left", color: "#202124", fontSize: "14px", fontWeight: 500 }}>{t.idHeader}</th>
-                    <th scope="col" style={{ padding: "14px 16px", textAlign: "left", color: "#202124", fontSize: "14px", fontWeight: 500 }}>{t.statusHeader}</th>
-                    <th scope="col" style={{ padding: "14px 16px", textAlign: "left", color: "#202124", fontSize: "14px", fontWeight: 500 }}>{t.lastSyncHeader}</th>
-                    <th scope="col" style={{ padding: "14px 16px", textAlign: "center", color: "#202124", fontSize: "14px", fontWeight: 500 }}>{t.actionsHeader}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {personalDevices.map((d, i) => {
-                    const isRevokable = d.approval_state === "APPROVED";
-                    return (
-                      <tr key={i} style={{ borderBottom: "1px solid #eee", backgroundColor: selectedDevices.includes(d.device_user_name) ? "#fce8e6" : "inherit" }}>
-                        <td style={{ padding: "14px 16px", textAlign: "center" }}>
+              <div
+                className="dtg-stat-icon"
+                style={{ backgroundColor: "var(--dtg-success-bg)", color: "var(--dtg-success)" }}
+                aria-hidden="true"
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" />
+                </svg>
+              </div>
+            </div>
+
+            <div className={`dtg-stat-card ${pendingByodCount > 0 ? "dtg-stat-pending-active" : ""}`}>
+              <div>
+                <div className="dtg-stat-label">{t.pendingStatus}</div>
+                <div
+                  className="dtg-stat-value"
+                  style={{ color: pendingByodCount > 0 ? "var(--dtg-warning)" : "var(--dtg-text)" }}
+                >
+                  {pendingByodCount}
+                </div>
+              </div>
+              <div
+                className="dtg-stat-icon"
+                style={{ backgroundColor: "var(--dtg-warning-bg)", color: "var(--dtg-warning)" }}
+                aria-hidden="true"
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z" />
+                </svg>
+              </div>
+            </div>
+
+            <div className="dtg-stat-card">
+              <div>
+                <div className="dtg-stat-label">{t.companyDevicesTitle}</div>
+                <div className="dtg-stat-value" style={{ color: "var(--dtg-primary)" }}>
+                  {companyDevices.length}
+                </div>
+              </div>
+              <div
+                className="dtg-stat-icon"
+                style={{ backgroundColor: "var(--dtg-primary-soft)", color: "var(--dtg-primary)" }}
+                aria-hidden="true"
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 10.99h7c-.53 4.12-3.28 7.79-7 8.94V12H5V6.3l7-3.11v8.8z" />
+                </svg>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {message && (
+          <div
+            role="status"
+            aria-live="polite"
+            className={`dtg-alert ${
+              message.toLowerCase().includes("failed") || message.toLowerCase().includes("error")
+                ? "dtg-alert-error"
+                : "dtg-alert-info"
+            }`}
+          >
+            <span>{message}</span>
+          </div>
+        )}
+
+        {!userEmail ? (
+          <div role="status" className="dtg-alert dtg-alert-warning">
+            <span>{t.signInPrompt}</span>
+          </div>
+        ) : loadingDevices ? (
+          <div role="status" aria-live="polite" className="dtg-empty-state">
+            <div className="dtg-spinner" />
+            <div style={{ fontWeight: 600, color: "var(--dtg-text)", fontSize: "16px", marginBottom: "6px" }}>
+              {t.loadingDevices}
+            </div>
+            <div style={{ color: "var(--dtg-text-secondary)", fontSize: "13px" }}>
+              Securely verifying your hardware inventory for <b>{userEmail}</b>.
+            </div>
+          </div>
+        ) : deviceError ? (
+          <div role="alert" className="dtg-alert dtg-alert-error">
+            <span>{deviceError}</span>
+            <button
+              onClick={loadDevices}
+              disabled={loadingDevices}
+              className="dtg-btn dtg-btn-danger-outline"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" />
+              </svg>
+              {t.refreshDevices}
+            </button>
+          </div>
+        ) : devices.length === 0 ? (
+          <div role="status" className="dtg-empty-state">
+            <div style={{ fontSize: "16px", fontWeight: 600, marginBottom: "8px", color: "var(--dtg-text)" }}>
+              {t.noApprovedDevices}
+            </div>
+            <div style={{ fontSize: "14px", marginBottom: "18px", color: "var(--dtg-text-secondary)" }}>
+              We checked your inventory but found no registered devices matching <b>{userEmail}</b>.
+            </div>
+            <button
+              onClick={loadDevices}
+              disabled={loadingDevices}
+              className="dtg-btn dtg-btn-primary"
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="currentColor"
+                style={{ animation: loadingDevices ? "dtg-spin 1s linear infinite" : "none" }}
+                aria-hidden="true"
+              >
+                <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" />
+              </svg>
+              {t.refreshDevices}
+            </button>
+          </div>
+        ) : (
+          <>
+            {/* Section 1: Personal BYOD Devices (Self-Service Approvals) */}
+            <section className="dtg-section">
+              <div className="dtg-section-header">
+                <div>
+                  <h2 className="dtg-section-title">
+                    {t.personalDevicesTitle}
+                    <span className="dtg-section-count">{personalDevices.length}</span>
+                  </h2>
+                  <div className="dtg-section-subtitle">{t.personalDevicesSubtitle}</div>
+                </div>
+                <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
+                  <button
+                    onClick={loadDevices}
+                    disabled={loadingDevices}
+                    aria-label={t.refreshDevices}
+                    className="dtg-btn dtg-btn-outline"
+                    title={t.refreshDevices}
+                  >
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="currentColor"
+                      style={{ animation: loadingDevices ? "dtg-spin 1s linear infinite" : "none" }}
+                      aria-hidden="true"
+                    >
+                      <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" />
+                    </svg>
+                    {t.refreshDevices}
+                  </button>
+                  {selectedDevices.length > 0 && (
+                    <button
+                      onClick={() => initiateRevoke(selectedDevices)}
+                      className="dtg-btn dtg-btn-danger"
+                    >
+                      ✕ {t.bulkRevokeSelected} ({selectedDevices.length})
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {personalDevices.length === 0 ? (
+                <div role="status" className="dtg-empty-state" style={{ padding: "24px 16px" }}>
+                  <div style={{ fontSize: "14px", color: "var(--dtg-text-secondary)" }}>{t.noPersonalDevices}</div>
+                </div>
+              ) : (
+                <div className="dtg-table-wrap">
+                  <table aria-label="Personal BYOD Devices Table" className="dtg-table">
+                    <thead>
+                      <tr>
+                        <th scope="col" style={{ width: "44px", textAlign: "center" }}>
                           <input
                             type="checkbox"
-                            aria-label={`Select device ${d.model}`}
-                            checked={selectedDevices.includes(d.device_user_name)}
-                            onChange={() => handleSelectSingle(d.device_user_name)}
-                            disabled={!isRevokable}
+                            aria-label="Select all eligible personal devices"
+                            onChange={handleSelectAll}
+                            checked={
+                              approvedByodCount > 0 &&
+                              selectedDevices.length === approvedByodCount
+                            }
                           />
-                        </td>
-                        <td style={{ padding: "14px 16px", color: "#202124" }}>
-                          <div style={{ fontWeight: 500, fontSize: "14px" }}>{d.model}</div>
-                          <div style={{ fontSize: "11px", color: "#5f6368", fontWeight: 400, marginTop: "2px", textTransform: "uppercase" }}>
-                            {t.personalByodLabel}
-                          </div>
-                        </td>
-                        <td style={{ padding: "14px 15px", color: "#5f6368", fontSize: "14px" }}>{d.os_version} ({d.device_type})</td>
-                        <td style={{ padding: "14px 15px", fontFamily: "monospace", fontSize: "13px", color: "#3c4043" }}>
-                          <div>{d.serial_number !== "N/A" ? `${t.serialImeiPrefix} ${d.serial_number}` : t.virtualAssetLabel}</div>
-                        </td>
-                        <td style={{ padding: "14px 15px" }}>
-                          <span style={{ padding: "4px 8px", backgroundColor: d.approval_state === "APPROVED" ? "#e6f4ea" : "#fef7e0", color: d.approval_state === "APPROVED" ? "#137333" : "#b06000", borderRadius: "4px", fontWeight: "bold", fontSize: "12px", textTransform: "uppercase", border: `1px solid ${d.approval_state === "APPROVED" ? "#ceead6" : "#feefc3"}` }}>
-                            {d.approval_state === "APPROVED" ? t.approvedStatus : d.approval_state === "PENDING_APPROVAL" ? t.pendingStatus : t.revokedStatus}
-                          </span>
-                        </td>
-                        <td style={{ padding: "14px 15px", color: "#5f6368", fontSize: "13px" }}>{formatLastSync(d.last_sync_time)}</td>
-                        <td style={{ padding: "14px 15px", textAlign: "center" }}>
-                          {d.approval_state === "APPROVED" ? (
-                            <button
-                              onClick={() => initiateRevoke([d.device_user_name])}
-                              style={{ padding: "6px 12px", backgroundColor: "#d93025", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", fontSize: "12px", fontWeight: "bold" }}
-                            >
-                              ✕ {t.revokeAction}
-                            </button>
-                          ) : (
-                            <button
-                              onClick={() => handleApprove(d.device_user_name)}
-                              style={{ padding: "6px 12px", backgroundColor: "#137333", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", fontSize: "12px", fontWeight: "bold" }}
-                            >
-                              ✓ {t.approveAction}
-                            </button>
-                          )}
-                        </td>
+                        </th>
+                        <th scope="col">{t.deviceHeader}</th>
+                        <th scope="col">{t.osHeader}</th>
+                        <th scope="col">{t.idHeader}</th>
+                        <th scope="col">{t.statusHeader}</th>
+                        <th scope="col">{t.lastSyncHeader}</th>
+                        <th scope="col" style={{ textAlign: "center" }}>
+                          {t.actionsHeader}
+                        </th>
                       </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            )}
-          </section>
+                    </thead>
+                    <tbody>
+                      {personalDevices.map((d, i) => {
+                        const isRevokable = d.approval_state === "APPROVED";
+                        const isPending = d.approval_state === "PENDING_APPROVAL";
+                        const isSelected = selectedDevices.includes(d.device_user_name);
+                        const rowClass = isSelected
+                          ? "dtg-row-selected"
+                          : isPending
+                          ? "dtg-row-pending"
+                          : "";
+                        const badgeClass =
+                          d.approval_state === "APPROVED"
+                            ? "dtg-badge dtg-badge-approved"
+                            : isPending
+                            ? "dtg-badge dtg-badge-pending"
+                            : "dtg-badge dtg-badge-revoked";
 
-          {/* Section 2: Company-Owned Devices (Automatic Trust Anchors - Read-Only) */}
-          {companyDevices.length > 0 && (
-            <section style={{ marginBottom: "30px" }}>
-              <div style={{ marginBottom: "12px" }}>
-                <h2 style={{ margin: 0, fontSize: "18px", fontWeight: 500, color: "#202124" }}>{t.companyDevicesTitle}</h2>
-                <div style={{ fontSize: "13px", color: "#5f6368", marginTop: "2px" }}>{t.companyDevicesSubtitle}</div>
-              </div>
-
-              <table aria-label="Company-Owned Devices Table" style={{ width: "100%", borderCollapse: "collapse", backgroundColor: "#ffffff", boxShadow: "0 1px 2px 0 rgba(60,64,67,0.3), 0 1px 3px 1px rgba(60,64,67,0.15)", borderRadius: "8px", overflow: "hidden" }}>
-                <thead>
-                  <tr style={{ backgroundColor: "#f8f9fa", borderBottom: "2px solid #dadce0" }}>
-                    <th scope="col" style={{ padding: "14px 16px", textAlign: "left", color: "#202124", fontSize: "14px", fontWeight: 500 }}>{t.deviceHeader}</th>
-                    <th scope="col" style={{ padding: "14px 16px", textAlign: "left", color: "#202124", fontSize: "14px", fontWeight: 500 }}>{t.osHeader}</th>
-                    <th scope="col" style={{ padding: "14px 16px", textAlign: "left", color: "#202124", fontSize: "14px", fontWeight: 500 }}>{t.idHeader}</th>
-                    <th scope="col" style={{ padding: "14px 16px", textAlign: "left", color: "#202124", fontSize: "14px", fontWeight: 500 }}>{t.statusHeader}</th>
-                    <th scope="col" style={{ padding: "14px 16px", textAlign: "left", color: "#202124", fontSize: "14px", fontWeight: 500 }}>{t.lastSyncHeader}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {companyDevices.map((d, i) => (
-                    <tr key={i} style={{ borderBottom: "1px solid #eee" }}>
-                      <td style={{ padding: "14px 16px", color: "#202124" }}>
-                        <div style={{ fontWeight: 500, fontSize: "14px" }}>{d.model}</div>
-                        <div style={{ fontSize: "11px", color: "#1a73e8", fontWeight: 500, marginTop: "2px", textTransform: "uppercase" }}>
-                          {t.companyOwnedLabel}
-                        </div>
-                      </td>
-                      <td style={{ padding: "14px 15px", color: "#5f6368", fontSize: "14px" }}>{d.os_version} ({d.device_type})</td>
-                      <td style={{ padding: "14px 15px", fontFamily: "monospace", fontSize: "13px", color: "#3c4043" }}>
-                        <div>{d.serial_number !== "N/A" ? `${t.serialImeiPrefix} ${d.serial_number}` : t.virtualAssetLabel}</div>
-                      </td>
-                      <td style={{ padding: "14px 15px" }}>
-                        <span style={{ padding: "4px 8px", backgroundColor: "#e8f0fe", color: "#1a73e8", borderRadius: "4px", fontWeight: "bold", fontSize: "12px", textTransform: "uppercase", border: "1px solid #d2e3fc" }}>
-                          {t.immutableAnchorLabel}
-                        </span>
-                      </td>
-                      <td style={{ padding: "14px 15px", color: "#5f6368", fontSize: "13px" }}>{formatLastSync(d.last_sync_time)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                        return (
+                          <tr key={i} className={rowClass}>
+                            <td
+                              className="dtg-cell-checkbox"
+                              data-label="Select"
+                              style={{ textAlign: "center" }}
+                            >
+                              <input
+                                type="checkbox"
+                                aria-label={`Select device ${d.model}`}
+                                checked={isSelected}
+                                onChange={() => handleSelectSingle(d.device_user_name)}
+                                disabled={!isRevokable}
+                              />
+                            </td>
+                            <td className="dtg-cell-device" data-label={t.deviceHeader}>
+                              <div className="dtg-device-cell">
+                                <div className="dtg-platform-icon">{renderPlatformIcon(d.device_type)}</div>
+                                <div>
+                                  <div className="dtg-device-model">{d.model}</div>
+                                  <div
+                                    className="dtg-device-owner-tag"
+                                    style={{ color: "var(--dtg-text-secondary)" }}
+                                  >
+                                    {t.personalByodLabel}
+                                  </div>
+                                </div>
+                              </div>
+                            </td>
+                            <td data-label={t.osHeader} style={{ color: "var(--dtg-text-secondary)" }}>
+                              {d.os_version} ({d.device_type})
+                            </td>
+                            <td data-label={t.idHeader}>
+                              <span className="dtg-serial-chip">
+                                {d.serial_number !== "N/A"
+                                  ? `${t.serialImeiPrefix} ${d.serial_number}`
+                                  : t.virtualAssetLabel}
+                              </span>
+                            </td>
+                            <td data-label={t.statusHeader}>
+                              <span className={badgeClass}>
+                                <span className="dtg-badge-dot" />
+                                {d.approval_state === "APPROVED"
+                                  ? t.approvedStatus
+                                  : isPending
+                                  ? t.pendingStatus
+                                  : t.revokedStatus}
+                              </span>
+                            </td>
+                            <td
+                              data-label={t.lastSyncHeader}
+                              style={{ color: "var(--dtg-text-secondary)", fontSize: "13px" }}
+                            >
+                              {formatLastSync(d.last_sync_time)}
+                            </td>
+                            <td
+                              className="dtg-cell-actions"
+                              data-label={t.actionsHeader}
+                              style={{ textAlign: "center" }}
+                            >
+                              {d.approval_state === "APPROVED" ? (
+                                <button
+                                  onClick={() => initiateRevoke([d.device_user_name])}
+                                  className="dtg-btn dtg-btn-danger"
+                                >
+                                  ✕ {t.revokeAction}
+                                </button>
+                              ) : (
+                                <button
+                                  onClick={() => handleApprove(d.device_user_name)}
+                                  className="dtg-btn dtg-btn-success"
+                                >
+                                  ✓ {t.approveAction}
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </section>
-          )}
-        </>
-      )}
+
+            {/* Section 2: Company-Owned Devices (Automatic Trust Anchors - Read-Only) */}
+            {companyDevices.length > 0 && (
+              <section className="dtg-section">
+                <div className="dtg-section-header">
+                  <div>
+                    <h2 className="dtg-section-title">
+                      {t.companyDevicesTitle}
+                      <span className="dtg-section-count">{companyDevices.length}</span>
+                    </h2>
+                    <div className="dtg-section-subtitle">{t.companyDevicesSubtitle}</div>
+                  </div>
+                </div>
+
+                <div className="dtg-table-wrap">
+                  <table aria-label="Company-Owned Devices Table" className="dtg-table">
+                    <thead>
+                      <tr>
+                        <th scope="col">{t.deviceHeader}</th>
+                        <th scope="col">{t.osHeader}</th>
+                        <th scope="col">{t.idHeader}</th>
+                        <th scope="col">{t.statusHeader}</th>
+                        <th scope="col">{t.lastSyncHeader}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {companyDevices.map((d, i) => (
+                        <tr key={i}>
+                          <td className="dtg-cell-device" data-label={t.deviceHeader}>
+                            <div className="dtg-device-cell">
+                              <div className="dtg-platform-icon">{renderPlatformIcon(d.device_type)}</div>
+                              <div>
+                                <div className="dtg-device-model">{d.model}</div>
+                                <div
+                                  className="dtg-device-owner-tag"
+                                  style={{ color: "var(--dtg-primary)" }}
+                                >
+                                  {t.companyOwnedLabel}
+                                </div>
+                              </div>
+                            </div>
+                          </td>
+                          <td data-label={t.osHeader} style={{ color: "var(--dtg-text-secondary)" }}>
+                            {d.os_version} ({d.device_type})
+                          </td>
+                          <td data-label={t.idHeader}>
+                            <span className="dtg-serial-chip">
+                              {d.serial_number !== "N/A"
+                                ? `${t.serialImeiPrefix} ${d.serial_number}`
+                                : t.virtualAssetLabel}
+                            </span>
+                          </td>
+                          <td data-label={t.statusHeader}>
+                            <span className="dtg-badge dtg-badge-company">
+                              <span className="dtg-badge-dot" />
+                              {t.immutableAnchorLabel}
+                            </span>
+                          </td>
+                          <td
+                            data-label={t.lastSyncHeader}
+                            style={{ color: "var(--dtg-text-secondary)", fontSize: "13px" }}
+                          >
+                            {formatLastSync(d.last_sync_time)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            )}
+          </>
+        )}
       </main>
 
       {/* Revocation Confirmation Modal Overlay */}
       {showRevokeModal && (
-        <div style={{ position: "fixed", top: 0, left: 0, width: "100vw", height: "100vh", backgroundColor: "rgba(0,0,0,0.5)", display: "flex", justifyContent: "center", alignItems: "center", zIndex: 9999 }}>
-          <div style={{ backgroundColor: "#fff", padding: "30px", borderRadius: "8px", maxWidth: "500px", width: "90%", boxShadow: "0 4px 15px rgba(0,0,0,0.2)" }}>
-            <div style={{ fontSize: "20px", fontWeight: "bold", color: "#d93025", marginBottom: "15px", display: "flex", alignItems: "center", gap: "10px" }}>
+        <div className="dtg-modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="revoke-modal-title">
+          <div className="dtg-modal">
+            <div
+              id="revoke-modal-title"
+              style={{
+                fontSize: "19px",
+                fontWeight: 700,
+                color: "var(--dtg-danger)",
+                marginBottom: "12px",
+                display: "flex",
+                alignItems: "center",
+                gap: "8px",
+              }}
+            >
               {t.confirmRevocationTitle}
             </div>
-            <p style={{ color: "#202124", fontSize: "15px", lineHeight: "1.5", marginBottom: "15px" }}>
+            <p style={{ color: "var(--dtg-text)", fontSize: "14px", lineHeight: 1.5, marginBottom: "14px" }}>
               {t.confirmRevocationBody}
             </p>
-            <div style={{ maxHeight: "150px", overflowY: "auto", backgroundColor: "#f1f3f4", padding: "12px", borderRadius: "6px", marginBottom: "20px", fontSize: "13px", fontFamily: "monospace", color: "#3c4043" }}>
+            <div
+              style={{
+                maxHeight: "160px",
+                overflowY: "auto",
+                backgroundColor: "var(--dtg-surface-subtle)",
+                border: "1px solid var(--dtg-border-subtle)",
+                padding: "12px",
+                borderRadius: "6px",
+                marginBottom: "16px",
+                fontSize: "13px",
+                fontFamily: "monospace",
+                color: "#3c4043",
+              }}
+            >
               {revokeTarget.map((targetName, idx) => {
                 const matchingDev = devices.find((d) => d.device_user_name === targetName);
                 return (
@@ -555,21 +841,21 @@ export const Dashboard: React.FC = () => {
                 );
               })}
             </div>
-            <p style={{ color: "#5f6368", fontSize: "13px", marginBottom: "25px" }}>
+            <p style={{ color: "var(--dtg-text-secondary)", fontSize: "13px", marginBottom: "22px", lineHeight: 1.45 }}>
               {t.confirmRevocationWarning}
             </p>
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: "15px" }}>
+            <div className="dtg-modal-actions">
               <button
                 onClick={() => setShowRevokeModal(false)}
                 disabled={isRevoking}
-                style={{ padding: "10px 18px", backgroundColor: "#f1f3f4", color: "#3c4043", border: "none", borderRadius: "4px", cursor: "pointer", fontWeight: "bold", fontSize: "14px" }}
+                className="dtg-btn dtg-btn-neutral"
               >
                 {t.cancelAction}
               </button>
               <button
                 onClick={handleConfirmRevoke}
                 disabled={isRevoking}
-                style={{ padding: "10px 18px", backgroundColor: "#d93025", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", fontWeight: "bold", fontSize: "14px" }}
+                className="dtg-btn dtg-btn-danger"
               >
                 {isRevoking ? t.revokingAction : t.yesRevokeAction}
               </button>
