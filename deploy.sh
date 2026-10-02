@@ -17,9 +17,10 @@
 export LANG=C.UTF-8
 export LC_ALL=C.UTF-8
 
-# Prevent Git Bash / MSYS2 on Windows from converting POSIX paths (e.g. /secrets/dwd_key.json) into local Windows paths
-export MSYS_NO_PATHCONV=1
-export MSYS2_ARG_CONV_EXCL="*"
+# Prevent Git Bash / MSYS2 on Windows from converting container POSIX paths in gcloud flags
+# while still allowing MSYS2 to convert the Windows Cloud SDK path (/c/Program Files.../gcloud.py) for python.exe
+unset MSYS_NO_PATHCONV
+export MSYS2_ARG_CONV_EXCL="--set-secrets;--set-env-vars;--update-env-vars;GOOGLE_APPLICATION_CREDENTIALS"
 
 # Device Trust Gateway - Automated Deployment & Setup Script
 
