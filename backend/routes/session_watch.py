@@ -362,9 +362,60 @@ async def execute_live_reports_sweep(
             user_email=email,
             target_ous=getattr(config, "session_watch_target_ous", []),
             target_groups=getattr(config, "session_watch_target_groups", []),
-            exempt_admins=getattr(config, "session_watch_exempt_admins", True),
+            exempt_admins=getattr(config, "session_watch_exempt_admins", False),
             portal_admins=getattr(config, "portal_admins", []),
         )
+
+    is_dry_run = getattr(config, "session_watch_dry_run", False)
+    cid = normalize_customer_id(config.customer_id or "customers/my_customer")
+    checked_unapproved_by_user: Dict[str, Optional[Dict[str, Any]]] = {}
+
+    def _unapproved_device_checker(email: str, _login_epoch: float) -> Optional[Dict[str, Any]]:
+        norm_user = email.strip().lower()
+        if norm_user in checked_unapproved_by_user:
+            return checked_unapproved_by_user[norm_user]
+
+        found_dev: Optional[Dict[str, Any]] = None
+        if cloud_identity_service.service:
+            try:
+                from backend.routes.devices import crawl_devices_for_user
+
+                user_items, _ = crawl_devices_for_user(
+                    customer_id=cid,
+                    target_email=norm_user,
+                    query_filter=f"email:{norm_user}",
+                )
+                for item in user_items:
+                    if item.owner_type != "COMPANY" and item.approval_state == "PENDING_APPROVAL":
+                        found_dev = {
+                            "device_user_name": item.device_user_name,
+                            "model": item.model,
+                            "device_type": item.device_type,
+                            "serial_number": item.serial_number,
+                            "approval_state": item.approval_state,
+                        }
+                        if not is_dry_run:
+                            try:
+                                cloud_identity_service.revoke_device_user(
+                                    device_user_name=item.device_user_name,
+                                    customer_id=cid,
+                                    action="BLOCK",
+                                )
+                                session_guard.clear_unapproved_devices_for_user(
+                                    norm_user, device_user_name=item.device_user_name
+                                )
+                            except Exception as blk_err:
+                                print(
+                                    f"WARNING [session_watch.py]: Could not auto-block pending device '{item.device_user_name}': {blk_err}"
+                                )
+                        break
+            except Exception as ci_err:
+                print(
+                    f"WARNING [session_watch.py]: Unapproved device check notice for '{norm_user}': {ci_err}"
+                )
+
+        checked_unapproved_by_user[norm_user] = found_dev
+        return found_dev
 
     try:
         actions = session_guard.evaluate_login_batch(
@@ -372,7 +423,8 @@ async def execute_live_reports_sweep(
             now_epoch=now,
             persist_all_allowed=req_body.persist_all_allowed,
             scope_checker=_scope_checker,
-            dry_run=getattr(config, "session_watch_dry_run", False),
+            unapproved_device_checker=_unapproved_device_checker,
+            dry_run=is_dry_run,
         )
     except Exception as eval_err:
         raise HTTPException(
@@ -388,7 +440,7 @@ async def execute_live_reports_sweep(
     return {
         "status": "LIVE_SWEEP_COMPLETE",
         "triggered_by": "cloud_scheduler" if x_cloudscheduler else "portal_api",
-        "dry_run": getattr(config, "session_watch_dry_run", False),
+        "dry_run": is_dry_run,
         "lookback_minutes": req_body.lookback_minutes,
         "fetched_login_events": len(audit_events),
         "revoked_count": len(revoked),
@@ -420,8 +472,8 @@ async def get_session_watch_metrics() -> Dict[str, object]:
         "branch_variation": "poc/fundamentals-session-watch",
         "dry_run": getattr(config, "session_watch_dry_run", False),
         "session_watch_dry_run": getattr(config, "session_watch_dry_run", False),
-        "exempt_admins": getattr(config, "session_watch_exempt_admins", True),
-        "session_watch_exempt_admins": getattr(config, "session_watch_exempt_admins", True),
+        "exempt_admins": getattr(config, "session_watch_exempt_admins", False),
+        "session_watch_exempt_admins": getattr(config, "session_watch_exempt_admins", False),
         "target_ous": getattr(config, "session_watch_target_ous", []),
         "session_watch_target_ous": getattr(config, "session_watch_target_ous", []),
         "target_groups": getattr(config, "session_watch_target_groups", []),

@@ -32,7 +32,7 @@ export const AdminConfig: React.FC = () => {
   const [enforcementMode, setEnforcementMode] = useState("SESSION_WATCH");
   const [sessionWatchTargetOusInput, setSessionWatchTargetOusInput] = useState("");
   const [sessionWatchTargetGroupsInput, setSessionWatchTargetGroupsInput] = useState("");
-  const [sessionWatchExemptAdmins, setSessionWatchExemptAdmins] = useState(true);
+  const [sessionWatchExemptAdmins, setSessionWatchExemptAdmins] = useState(false);
   const [sessionWatchDryRun, setSessionWatchDryRun] = useState(false);
   const [sessionWatchOnboardingGraceMinutes, setSessionWatchOnboardingGraceMinutes] = useState(15);
   const [newAdminEmail, setNewAdminEmail] = useState("");
@@ -60,7 +60,7 @@ export const AdminConfig: React.FC = () => {
         setEnforcementMode(data.enforcement_mode || "SESSION_WATCH");
         setSessionWatchTargetOusInput((data.session_watch_target_ous || []).join(", "));
         setSessionWatchTargetGroupsInput((data.session_watch_target_groups || []).join(", "));
-        setSessionWatchExemptAdmins(data.session_watch_exempt_admins !== false);
+        setSessionWatchExemptAdmins(Boolean(data.session_watch_exempt_admins));
         setSessionWatchDryRun(Boolean(data.session_watch_dry_run));
         setSessionWatchOnboardingGraceMinutes(data.session_watch_onboarding_grace_minutes || 15);
         setLoading(false);

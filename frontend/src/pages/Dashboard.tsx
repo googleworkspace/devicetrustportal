@@ -50,6 +50,48 @@ const renderPlatformIcon = (deviceType: string) => {
   );
 };
 
+const detectBrowserPlatform = (): "CHROME_OS" | "MAC_OS" | "WINDOWS" | "ANDROID" | "IOS" | "UNKNOWN" => {
+  if (typeof navigator === "undefined" || !navigator.userAgent) return "UNKNOWN";
+  const ua = navigator.userAgent;
+  if (ua.includes("CrOS")) return "CHROME_OS";
+  if (ua.includes("iPhone") || ua.includes("iPad")) return "IOS";
+  if (ua.includes("Android")) return "ANDROID";
+  if (ua.includes("Macintosh") || ua.includes("Mac OS X")) return "MAC_OS";
+  if (ua.includes("Windows")) return "WINDOWS";
+  return "UNKNOWN";
+};
+
+const selectPlatformMatchedDevice = (list: DeviceUserItem[]): DeviceUserItem | undefined => {
+  const platform = detectBrowserPlatform();
+  if (platform === "CHROME_OS") {
+    return list.find(
+      (d) =>
+        (d.owner_type === "COMPANY" || (d.device_type || "").toUpperCase().includes("CHROME")) &&
+        d.approval_state === "APPROVED" &&
+        d.serial_number &&
+        d.serial_number !== "N/A"
+    );
+  }
+  if (platform !== "UNKNOWN") {
+    return list.find((d) => {
+      if (d.approval_state !== "APPROVED" || !d.serial_number || d.serial_number === "N/A") {
+        return false;
+      }
+      const dtype = (d.device_type || "").toUpperCase();
+      const osVer = (d.os_version || "").toUpperCase();
+      if (platform === "MAC_OS") return dtype.includes("MAC") || osVer.includes("MAC");
+      if (platform === "WINDOWS") return dtype.includes("WINDOWS") || osVer.includes("WINDOWS");
+      if (platform === "ANDROID") return dtype.includes("ANDROID") || osVer.includes("ANDROID");
+      if (platform === "IOS") return dtype.includes("IOS") || osVer.includes("IOS");
+      return false;
+    });
+  }
+  return (
+    list.find((d) => d.owner_type === "COMPANY" && d.serial_number && d.serial_number !== "N/A") ||
+    list.find((d) => d.approval_state === "APPROVED" && d.serial_number && d.serial_number !== "N/A")
+  );
+};
+
 export const Dashboard: React.FC = () => {
   const [userEmail, setUserEmail] = useState(() => localStorage.getItem("userEmail") || "");
   const [message, setMessage] = useState("");
@@ -96,6 +138,33 @@ export const Dashboard: React.FC = () => {
     loadSessionWatchStatus();
   }, [loadSessionWatchStatus]);
 
+  // Proactively renew Google Sign-In ID token before its 60-minute expiration
+  useEffect(() => {
+    if (!authToken || !userEmail) return;
+    let timerId: ReturnType<typeof setTimeout> | null = null;
+    try {
+      const parts = authToken.split(".");
+      if (parts.length === 3) {
+        const payload = JSON.parse(atob(parts[1]));
+        if (payload?.exp) {
+          const expiresAtMs = payload.exp * 1000;
+          const refreshDelayMs = Math.max(30000, expiresAtMs - Date.now() - 5 * 60 * 1000);
+          timerId = setTimeout(() => {
+            const googleAccounts = (window as any).google?.accounts?.id;
+            if (googleAccounts && typeof googleAccounts.prompt === "function") {
+              googleAccounts.prompt();
+            }
+          }, refreshDelayMs);
+        }
+      }
+    } catch (_) {
+      // Ignore non-JWT mock tokens in tests
+    }
+    return () => {
+      if (timerId) clearTimeout(timerId);
+    };
+  }, [authToken, userEmail]);
+
   const [devices, setDevices] = useState<DeviceUserItem[]>([]);
   const [loadingDevices, setLoadingDevices] = useState(false);
   const [deviceError, setDeviceError] = useState("");
@@ -120,11 +189,10 @@ export const Dashboard: React.FC = () => {
           setDevices(list);
           setLoadingDevices(false);
 
-          // Auto-attest current browser session if user has an approved or company device and no pending BYOD devices
+          // Auto-attest current browser session ONLY if the current browser OS matches an approved/company device
+          // and the user has no unapproved PENDING_APPROVAL BYOD devices
           const hasPending = list.some((d) => d.approval_state === "PENDING_APPROVAL");
-          const trustedCandidate =
-            list.find((d) => d.owner_type === "COMPANY" && d.serial_number && d.serial_number !== "N/A") ||
-            list.find((d) => d.approval_state === "APPROVED" && d.serial_number && d.serial_number !== "N/A");
+          const trustedCandidate = selectPlatformMatchedDevice(list);
           if (
             !hasPending &&
             trustedCandidate &&
@@ -344,12 +412,8 @@ export const Dashboard: React.FC = () => {
     if (!userEmail) return;
     setSessionWatchLoading(true);
     setMessage("");
-    const candidateDevice =
-      companyDevices.find((d) => d.serial_number && d.serial_number !== "N/A") ||
-      personalDevices.find(
-        (d) => d.approval_state === "APPROVED" && d.serial_number && d.serial_number !== "N/A"
-      ) ||
-      devices.find((d) => d.serial_number && d.serial_number !== "N/A");
+    const platform = detectBrowserPlatform();
+    const candidateDevice = selectPlatformMatchedDevice(devices);
 
     const serialToAttest =
       candidateDevice?.serial_number && candidateDevice.serial_number !== "N/A"
@@ -357,7 +421,9 @@ export const Dashboard: React.FC = () => {
         : candidateDevice?.device_user_name.split("/")[1] || "";
 
     if (!serialToAttest) {
-      setMessage("Failed to attest session: No approved device serial or ID found for your account.");
+      setMessage(
+        `Failed to attest session: No approved ${platform !== "UNKNOWN" ? platform + " " : ""}device found on your account for this browser.`
+      );
       setSessionWatchLoading(false);
       return;
     }
@@ -648,15 +714,15 @@ export const Dashboard: React.FC = () => {
                       fontWeight: 600,
                       padding: "3px 9px",
                       borderRadius: "999px",
-                      backgroundColor: sessionWatchData.session_watch_exempt_admins !== false ? "#e6f4ea" : "#fce8e6",
-                      color: sessionWatchData.session_watch_exempt_admins !== false ? "#137333" : "#d93025",
+                      backgroundColor: sessionWatchData.session_watch_exempt_admins === true ? "#e6f4ea" : "#fce8e6",
+                      color: sessionWatchData.session_watch_exempt_admins === true ? "#137333" : "#d93025",
                       border:
-                        sessionWatchData.session_watch_exempt_admins !== false
+                        sessionWatchData.session_watch_exempt_admins === true
                           ? "1px solid #ceead6"
                           : "1px solid #fad2cf",
                     }}
                   >
-                    Admin Safe-Harbor: {sessionWatchData.session_watch_exempt_admins !== false ? "Exempt" : "Enforced"}
+                    Admin Safe-Harbor: {sessionWatchData.session_watch_exempt_admins === true ? "Exempt" : "Enforced"}
                   </span>
                 </div>
 

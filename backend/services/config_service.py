@@ -44,8 +44,8 @@ class TenantConfig(BaseModel):
         description="Google Groups scoped for CAA-Free Session Watch enforcement (e.g. ['session-watch-pilot@gwfe.org'])",
     )
     session_watch_exempt_admins: bool = Field(
-        default=True,
-        description="Automatically exempt Workspace Super Admins and Portal Admins from users.signOut circuit breaker",
+        default=False,
+        description="Optional Admin Safe-Harbor: exempt Workspace Super Admins and Portal Admins from users.signOut circuit breaker",
     )
     session_watch_dry_run: bool = Field(
         default=False,
@@ -100,7 +100,7 @@ class ConfigService:
             local_admins.append(env_admin)
 
         default_mode = env_mode if env_mode in ("CAA", "SESSION_WATCH") else "SESSION_WATCH"
-        exempt_admins_env = os.getenv("TENANT_SESSION_WATCH_EXEMPT_ADMINS", "true").lower() != "false"
+        exempt_admins_env = os.getenv("TENANT_SESSION_WATCH_EXEMPT_ADMINS", "false").lower() == "true"
         dry_run_env = os.getenv("TENANT_SESSION_WATCH_DRY_RUN", "false").lower() == "true"
 
         return TenantConfig(

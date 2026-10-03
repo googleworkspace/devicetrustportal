@@ -572,13 +572,13 @@ def get_my_approved_devices(user_email: str = Depends(get_current_user_email)):
                         primary.os_version = other.os_version
                 deduped_devices.append(primary)
 
-    # Warm SessionGuard approved serial cache and auto-grant onboarding grace if user has both an anchor and a pending BYOD device
-    has_trusted_anchor = False
-    has_pending_byod = False
+    # Warm SessionGuard approved serial cache and register any PENDING_APPROVAL BYOD devices
+    # Note: Onboarding grace leases are NEVER auto-granted here; the user must explicitly click
+    # "+ Add Personal Device (15m Grace Pass)" or generate a Trust Chaining code.
     warm_records: List[DeviceRecord] = []
+    session_guard.clear_unapproved_devices_for_user(target_email)
     for d in deduped_devices:
         if d.owner_type == "COMPANY" or d.approval_state == "APPROVED":
-            has_trusted_anchor = True
             if is_valid_serial(d.serial_number):
                 warm_records.append(
                     DeviceRecord(
@@ -589,19 +589,18 @@ def get_my_approved_devices(user_email: str = Depends(get_current_user_email)):
                         assigned_user=target_email,
                     )
                 )
-        elif d.approval_state == "PENDING_APPROVAL":
-            has_pending_byod = True
+        elif d.owner_type != "COMPANY" and d.approval_state == "PENDING_APPROVAL":
+            session_guard.record_unapproved_device(
+                user_email=target_email,
+                device_user_name=d.device_user_name,
+                model=d.model,
+                device_type=d.device_type,
+                serial_number=d.serial_number,
+                approval_state=d.approval_state,
+            )
 
     if warm_records:
         session_guard.load_device_inventory(warm_records)
-
-    has_lease, _ = session_guard.has_active_onboarding_lease(target_email)
-    if has_trusted_anchor and has_pending_byod and not has_lease:
-        session_guard.grant_onboarding_lease(
-            user_email=target_email,
-            minutes=config.session_watch_onboarding_grace_minutes,
-            reason="PENDING_BYOD_APPROVAL"
-        )
 
     print(f"INFO [devices.py]: Matched {total_devices_matched} Cloud Identity assets and {len(directory_cbs)} Directory Chromebooks. Deduplicated {len(my_devices)} down to {len(deduped_devices)} primary device bindings.")
     return deduped_devices

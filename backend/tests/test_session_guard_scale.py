@@ -267,6 +267,84 @@ class SessionGuardScaleTest(unittest.TestCase):
         self.assertEqual(live_decisions["rogue@district.edu"], "REVOKE_SIGN_OUT")
         self.assertEqual(revoked_users, ["rogue@district.edu"])
 
+    def test_same_ip_unapproved_mac_is_not_masked_by_chromebook_attestation(self) -> None:
+        revoked_users: list[str] = []
+        guard = SessionGuardService(
+            sqlite_path=":memory:",
+            attestation_ttl_sec=14400,
+            grace_window_sec=60,
+            signout_cooldown_sec=300,
+            signout_callback=lambda email: revoked_users.append(email) or True,
+        )
+        now = 1800000000.0
+        guard.load_device_inventory(
+            [
+                DeviceRecord(
+                    device_id="dev-cb-1",
+                    serial_number="5CD91558HD",
+                    device_type="CHROMEOS",
+                    status="ACTIVE",
+                    assigned_user="claycodes@gwfe.org",
+                    org_unit_path="/",
+                )
+            ]
+        )
+
+        # 1. Chromebook attests from shared Wi-Fi NAT IP 108.6.43.131
+        cb_accepted, cb_reason = guard.record_extension_attestation(
+            user_email="claycodes@gwfe.org",
+            serial_number="5CD91558HD",
+            ip_address="108.6.43.131",
+            user_agent="Mozilla/5.0 (X11; CrOS x86_64 14541.0.0) AppleWebKit/537.36",
+            now_epoch=now,
+        )
+        self.assertTrue(cb_accepted)
+        self.assertIn("Verified CHROMEOS device", cb_reason)
+
+        # 2. Unapproved Mac on the SAME Wi-Fi IP 108.6.43.131 attempts to attest with Chromebook serial -> rejected!
+        mac_accepted, mac_reason = guard.record_extension_attestation(
+            user_email="claycodes@gwfe.org",
+            serial_number="5CD91558HD",
+            ip_address="108.6.43.131",
+            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+            now_epoch=now + 5.0,
+        )
+        self.assertFalse(mac_accepted)
+        self.assertIn("OS platform mismatch", mac_reason)
+
+        # 3. Unapproved Mac is detected in Cloud Identity as PENDING_APPROVAL (no onboarding grace lease granted)
+        guard.record_unapproved_device(
+            user_email="claycodes@gwfe.org",
+            device_user_name="devices/mac-1/deviceUsers/du-1",
+            device_type="MAC_OS",
+            model="MacBook Pro",
+            serial_number="N/A",
+            approval_state="PENDING_APPROVAL",
+            last_sync_epoch=now + 10.0,
+        )
+
+        # 4. Login sweep evaluates login from 108.6.43.131 -> must NOT be masked by Chromebook IP attestation;
+        #    must execute REVOKE_SIGN_OUT!
+        actions = guard.evaluate_login_batch(
+            [
+                LoginAuditEvent(
+                    event_id="evt-shared-ip-mac",
+                    user_email="claycodes@gwfe.org",
+                    ip_address="108.6.43.131",
+                    timestamp_epoch=now + 15.0,
+                )
+            ],
+            now_epoch=now + 30.0,
+            persist_all_allowed=True,
+            dry_run=False,
+        )
+        self.assertEqual(len(actions), 1)
+        self.assertEqual(actions[0].decision, "REVOKE_SIGN_OUT")
+        self.assertIn("Unapproved BYOD device", actions[0].reason)
+        self.assertEqual(revoked_users, ["claycodes@gwfe.org"])
+
 
 if __name__ == "__main__":
     unittest.main()
+
+

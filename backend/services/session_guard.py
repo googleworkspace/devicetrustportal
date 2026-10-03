@@ -123,6 +123,8 @@ class SessionGuardService:
         # Temporary personal-device onboarding grace leases (email -> expires_at_epoch)
         self._onboarding_leases: Dict[str, float] = {}
         self._onboarding_lease_reasons: Dict[str, str] = {}
+        # Active unapproved BYOD devices indexed by lowercase user_email -> {device_user_name -> metadata}
+        self._unapproved_devices: Dict[str, Dict[str, Dict[str, Any]]] = {}
         # Recent signOut timestamps indexed by user_email to avoid API storms
         self._recent_signouts: Dict[str, float] = {}
 
@@ -182,6 +184,65 @@ class SessionGuardService:
             self.metrics["inventory_devices_cached"] = len(self._approved_serials)
         return count
 
+    def record_unapproved_device(
+        self,
+        user_email: str,
+        device_user_name: str,
+        model: str = "Personal Device",
+        device_type: str = "BYOD",
+        serial_number: str = "",
+        approval_state: str = "PENDING_APPROVAL",
+        last_sync_epoch: Optional[float] = None,
+    ) -> None:
+        """Tracks an unapproved (PENDING_APPROVAL or recently synced BLOCKED) BYOD device for a user
+        so same-IP Chromebook attestations cannot mask an unapproved personal device login.
+        """
+        email_key = user_email.strip().lower()
+        du_key = (device_user_name or serial_number or model).strip()
+        if not email_key or not du_key:
+            return
+        with self._lock:
+            user_map = self._unapproved_devices.setdefault(email_key, {})
+            user_map[du_key] = {
+                "device_user_name": du_key,
+                "model": model or "Personal Device",
+                "device_type": (device_type or "BYOD").upper(),
+                "serial_number": (serial_number or "").strip().upper(),
+                "approval_state": (approval_state or "PENDING_APPROVAL").upper(),
+                "last_sync_epoch": last_sync_epoch if last_sync_epoch is not None else time.time(),
+            }
+
+    def clear_unapproved_devices_for_user(
+        self, user_email: str, device_user_name: str = "", serial_number: str = ""
+    ) -> None:
+        """Clears unapproved device tracking when a user's personal device is approved."""
+        email_key = user_email.strip().lower()
+        clean_serial = (serial_number or "").strip().upper()
+        with self._lock:
+            user_map = self._unapproved_devices.get(email_key)
+            if not user_map:
+                return
+            if not device_user_name and not clean_serial:
+                self._unapproved_devices.pop(email_key, None)
+                return
+            keys_to_remove = [
+                k
+                for k, v in user_map.items()
+                if k == device_user_name
+                or (clean_serial and v.get("serial_number") == clean_serial)
+            ]
+            for k in keys_to_remove:
+                user_map.pop(k, None)
+            if not user_map:
+                self._unapproved_devices.pop(email_key, None)
+
+    def get_unapproved_devices(self, user_email: str) -> List[Dict[str, Any]]:
+        """Returns tracked unapproved BYOD devices for a user."""
+        email_key = user_email.strip().lower()
+        with self._lock:
+            user_map = self._unapproved_devices.get(email_key, {})
+            return list(user_map.values())
+
     def promote_approved_device(
         self,
         device_id: str = "",
@@ -213,6 +274,9 @@ class SessionGuardService:
             self.metrics["inventory_devices_cached"] = len(self._approved_serials)
             self._onboarding_leases.pop(email_key, None)
             self._onboarding_lease_reasons.pop(email_key, None)
+        self.clear_unapproved_devices_for_user(
+            user_email=email_key, device_user_name=device_id, serial_number=clean_serial
+        )
 
         if ip_address and ip_address.strip():
             self.record_extension_attestation(
@@ -311,6 +375,19 @@ class SessionGuardService:
         if not device:
             return False, f"Serial '{serial_key}' is not in approved district inventory."
 
+        # Prevent a non-ChromeOS browser (e.g. Mac/Windows/Mobile) from spoofing attestation using a ChromeOS serial
+        ua_upper = (user_agent or "").upper()
+        if (
+            device.device_type.upper() == "CHROMEOS"
+            and ua_upper
+            and "CROS" not in ua_upper
+            and any(os_token in ua_upper for os_token in ("MACINTOSH", "MAC OS X", "WINDOWS NT", "IPHONE", "IPAD", "ANDROID"))
+        ):
+            return (
+                False,
+                f"OS platform mismatch: cannot attest a non-ChromeOS browser session using ChromeOS serial '{serial_key}'.",
+            )
+
         attestation = SessionAttestation(
             user_email=email_key,
             serial_number=serial_key,
@@ -360,13 +437,15 @@ class SessionGuardService:
         now_epoch: Optional[float] = None,
         persist_all_allowed: bool = False,
         scope_checker: Optional[Callable[[str], Tuple[bool, str]]] = None,
+        unapproved_device_checker: Optional[Callable[[str, float], Optional[Dict[str, Any]]]] = None,
         dry_run: bool = False,
     ) -> List[EnforcementAction]:
         """Evaluates a window of Admin SDK Reports `login` events and executes batched signOuts.
 
-        Uses O(1) hash lookups for inventory/attestation matching, respects personal-device
-        onboarding grace leases and OU/Group rollout scopes, and batches `users.signOut` calls
-        (`BatchHttpRequest` up to 50 calls/request) to stay well within the 2,400 QPM Directory API quota.
+        Uses O(1) hash lookups for inventory/attestation matching, respects explicit personal-device
+        onboarding grace leases and OU/Group rollout scopes, detects unapproved BYOD devices even on
+        shared Wi-Fi/NAT IPs, and batches `users.signOut` calls (`BatchHttpRequest` up to 50 calls/request)
+        to stay well within the 2,400 QPM Directory API quota.
         """
         now = now_epoch if now_epoch is not None else time.time()
         now_iso = datetime.datetime.fromtimestamp(now, tz=datetime.timezone.utc).isoformat()
@@ -384,28 +463,7 @@ class SessionGuardService:
             email_key = ev.user_email.strip().lower()
             age_sec = max(0.0, now - ev.timestamp_epoch)
 
-            # 1. Check for matching verified device attestation in RAM
-            matched_att = self._find_matching_attestation(
-                email_key, ev.ip_address, ev.timestamp_epoch
-            )
-            if matched_att is not None:
-                self.metrics["allowed_attested"] += 1
-                if persist_all_allowed:
-                    actions.append(
-                        EnforcementAction(
-                            event_id=ev.event_id,
-                            user_email=email_key,
-                            ip_address=ev.ip_address,
-                            decision="ALLOW_ATTESTED",
-                            reason=f"Verified district device {matched_att.serial_number}",
-                            matched_serial=matched_att.serial_number,
-                            detection_latency_sec=age_sec,
-                            timestamp_iso=now_iso,
-                        )
-                    )
-                continue
-
-            # 2. Check for active personal-device onboarding grace lease
+            # 1. Check for explicit active personal-device onboarding grace lease first
             has_lease, rem_sec = self.has_active_onboarding_lease(email_key, now_epoch=now)
             if has_lease:
                 self.metrics["allowed_onboarding_grace"] += 1
@@ -424,7 +482,7 @@ class SessionGuardService:
                     )
                 continue
 
-            # 3. Check OU / Group rollout scope and Admin Safe-Harbor exemption
+            # 2. Check OU / Group rollout scope and Admin Safe-Harbor exemption
             if scope_checker is not None:
                 in_scope, scope_reason = scope_checker(email_key)
                 if not in_scope:
@@ -444,17 +502,57 @@ class SessionGuardService:
                         )
                     continue
 
-            # 4. If event just occurred (< grace_window_sec), defer so extension heartbeat can arrive
-            if age_sec < self.grace_window_sec and not ev.is_suspicious:
-                self.metrics["deferred_grace_window"] += 1
-                continue
+            # 3. Check if the user has an unapproved BYOD device (PENDING_APPROVAL or recently synced BLOCKED).
+            # Even if the user also has an attested Chromebook on the same Wi-Fi IP, an unapproved BYOD device
+            # without an active Onboarding Grace Lease must not be masked by same-IP attestation.
+            unapproved_dev: Optional[Dict[str, Any]] = None
+            tracked_unapproved = self.get_unapproved_devices(email_key)
+            if tracked_unapproved:
+                unapproved_dev = tracked_unapproved[0]
+            elif unapproved_device_checker is not None:
+                unapproved_dev = unapproved_device_checker(email_key, ev.timestamp_epoch)
 
-            # 5. Check signOut cooldown so we don't repeatedly call signOut for the same event
+            if unapproved_dev is None:
+                # 4. Check for matching verified device attestation in RAM
+                matched_att = self._find_matching_attestation(
+                    email_key, ev.ip_address, ev.timestamp_epoch
+                )
+                if matched_att is not None:
+                    self.metrics["allowed_attested"] += 1
+                    if persist_all_allowed:
+                        actions.append(
+                            EnforcementAction(
+                                event_id=ev.event_id,
+                                user_email=email_key,
+                                ip_address=ev.ip_address,
+                                decision="ALLOW_ATTESTED",
+                                reason=f"Verified district device {matched_att.serial_number}",
+                                matched_serial=matched_att.serial_number,
+                                detection_latency_sec=age_sec,
+                                timestamp_iso=now_iso,
+                            )
+                        )
+                    continue
+
+                # 5. If event just occurred (< grace_window_sec), defer so extension heartbeat can arrive
+                if age_sec < self.grace_window_sec and not ev.is_suspicious:
+                    self.metrics["deferred_grace_window"] += 1
+                    continue
+
+            # 6. Check signOut cooldown so we don't repeatedly call signOut for the same event
             last_signout = self._recent_signouts.get(email_key, 0.0)
             if (now - last_signout) < self.signout_cooldown_sec:
                 continue
 
-            # 6. Audit Dry-Run Mode vs. Active Circuit-Breaker Enforcement
+            unapproved_desc = (
+                f"Unapproved BYOD device '{unapproved_dev.get('model', 'Personal Device')}' "
+                f"({unapproved_dev.get('device_type', 'BYOD')}, state={unapproved_dev.get('approval_state', 'PENDING_APPROVAL')}) "
+                f"detected on IP {ev.ip_address}"
+                if unapproved_dev
+                else f"Login session has no matching district device attestation (IP {ev.ip_address}, login_type={ev.login_type})"
+            )
+
+            # 7. Audit Dry-Run Mode vs. Active Circuit-Breaker Enforcement
             if dry_run:
                 self.metrics["audit_would_signout"] += 1
                 actions.append(
@@ -463,10 +561,7 @@ class SessionGuardService:
                         user_email=email_key,
                         ip_address=ev.ip_address,
                         decision="AUDIT_WOULD_SIGN_OUT",
-                        reason=(
-                            "[Audit Dry-Run] Unattested login session detected "
-                            f"(IP {ev.ip_address}, login_type={ev.login_type}); signOut skipped in dry-run mode."
-                        ),
+                        reason=f"[Audit Dry-Run] {unapproved_desc}; signOut skipped in dry-run mode.",
                         matched_serial=None,
                         detection_latency_sec=age_sec,
                         timestamp_iso=now_iso,
@@ -474,17 +569,14 @@ class SessionGuardService:
                 )
                 continue
 
-            # 7. Unattested / unapproved device session detected -> Queue `users.signOut`
+            # 8. Unattested / unapproved device session detected -> Queue `users.signOut`
             self._recent_signouts[email_key] = now
             action = EnforcementAction(
                 event_id=ev.event_id,
                 user_email=email_key,
                 ip_address=ev.ip_address,
                 decision="REVOKE_SIGN_OUT",
-                reason=(
-                    "Login session has no matching district device attestation "
-                    f"(IP {ev.ip_address}, login_type={ev.login_type})."
-                ),
+                reason=f"{unapproved_desc}.",
                 matched_serial=None,
                 detection_latency_sec=age_sec,
                 timestamp_iso=now_iso,
