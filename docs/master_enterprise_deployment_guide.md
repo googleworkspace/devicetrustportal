@@ -445,3 +445,10 @@ If you misplaced your unique Cloud Run portal URL after deployment:
 | **User sees duplicate Mac entries in Portal** | Hardware serial asset vs. Extension virtual cert vs. Legacy browser profile | The portal backend automatically deduplicates rows, prioritizing physical serial assets (`Serial: C02F30BV0KPF`). Instruct users to approve the physical serial row. |
 | **Context-Aware Access not blocking unapproved devices** | CAA Access Level is not assigned to apps, or policy is not set to Block | Go to `Security > Access and data control > Context-Aware Access > Assign to apps`. Select your target OU (e.g. `Students`), assign `Approved Devices Only` to the Workspace Apps of your choice (eg. Gmail, Drive…), set policy enforcement to **Block**, and enable **Apply to Google desktop and mobile apps**. |
 | **Endpoint Verification telemetry missing** | Extension lacks key/challenge permissions | Ensure **Allow access to keys** and **Allow enterprise challenge** are set to **ON** in extension policy. |
+| **Personal Windows/Mac laptop not registering as Pending** | Chrome Profile Reporting or Chrome Signals Sharing is not enabled for the user's OU | Enable **Profile reporting** (`CloudProfileReportingEnabled`), **Chrome signals sharing** (`UserSecuritySignalsReporting` & `UserSecurityAuthenticatedReporting`), and **Enterprise Hardware Platform API** under `Devices > Chrome > Settings > Users & browsers`. |
+| **Windows Git Bash (`MINGW64`) `gcloud.py: No such file or directory`** | Global `MSYS_NO_PATHCONV=1` or `MSYS2_ARG_CONV_EXCL="*"` broke `gcloud`'s internal wrapper path | Run `unset MSYS_NO_PATHCONV` and use `MSYS2_ARG_CONV_EXCL="--set-secrets;--set-env-vars;--update-env-vars;GOOGLE_APPLICATION_CREDENTIALS"`. |
+
+### 🤖 AI-Assisted Troubleshooting with Gemini
+For a complete root-cause playbook—including `chrome://policy` diagnostics, Windows Git Bash path handling, Cloud Run `[CLIENT_LOG]` telemetry analysis, and a ready-to-copy prompt for **Gemini**—see:
+👉 **[docs/troubleshooting_guide.md](troubleshooting_guide.md)**
+

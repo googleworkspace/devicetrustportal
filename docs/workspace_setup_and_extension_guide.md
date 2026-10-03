@@ -233,3 +233,6 @@ To fully authorize your Mac, click **`[✓ Approve]`** on the row displaying you
 | **Mac bypasses CAA block** | Context-Aware Access policy is not assigned to Workspace apps | Open `Security > Context-Aware Access > Assign to apps` and bind the `Approved Devices Only` access level to Gmail/Drive. |
 | **Endpoint Verification not reporting** | Extension is missing or blocked | Force-install Extension ID `callobklhcbilhphinckomhgkigmfocg` in Chrome Policy. |
 | **Stale Mac retains access** | Mass revocation sweep has not run since device initial sync | Execute `backend/scripts/mass_revoke_byod_approvals.py` or trigger the `/api/cron/cleanup` endpoint. |
+
+For complete troubleshooting playbooks—including `chrome://policy` precedence notices, Windows Git Bash (`MINGW64`) path handling, and **AI-assisted diagnostics with Gemini**—see **[docs/troubleshooting_guide.md](troubleshooting_guide.md)**.
+

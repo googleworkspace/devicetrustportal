@@ -18,6 +18,7 @@ The **Device Trust Gateway** is a secure bridge application designed for organiz
 11. [Configuration & Admin UI](#-configuration--admin-ui)
 12. [Firewall, Network Allowlist & Anti-Spoofing](#-firewall-network-allowlist--anti-spoofing)
 13. [🔒 Identity-Aware Proxy (IAP) Edge Gating](#-identity-aware-proxy-iap-edge-gating)
+14. [🛠️ Troubleshooting & AI Diagnostics with Gemini](#-troubleshooting--ai-diagnostics-with-gemini)
 
 ---
 
@@ -28,6 +29,7 @@ The Gateway leverages Google Workspace Context-Aware Access (CAA) to establish a
 For complete documentation detailing supported Workspace editions, end-user flows, Console settings, force-installing extensions, CAA rules, and deployment options:
 👉 **[docs/master_enterprise_deployment_guide.md](docs/master_enterprise_deployment_guide.md)** — **Master Enterprise Guide**: Comprehensive blueprint covering portal concepts, Workspace licensing, end-user flows, complete Admin Console checklist, and deployment walkthroughs.
 👉 **[docs/workspace_setup_and_extension_guide.md](docs/workspace_setup_and_extension_guide.md)** — Step-by-step Google Workspace Console settings, Extension Force-Install ID, Mobile vs. Desktop approval behavior, and Mass Baseline Revocation.
+👉 **[docs/troubleshooting_guide.md](docs/troubleshooting_guide.md)** — **Troubleshooting & AI Diagnostics Guide**: Real-world root-cause playbooks (`chrome://policy` diagnostics, Windows Git Bash path handling, DWD/Cloud Identity debugging) and copy-paste prompts for troubleshooting with **Gemini**.
 👉 **[docs/caa_architecture_overview.md](docs/caa_architecture_overview.md)** — Enterprise zero-trust architecture whitepaper.
 
 ### Key Architectural Principles:
@@ -523,3 +525,28 @@ When deploying the Device Trust Gateway, administrators must decide how the port
 For full architectural blueprints, diagrams, and Access Context Manager setup guides:
 👉 **[docs/caa_architecture_overview.md](docs/caa_architecture_overview.md)** — Comprehensive Zero-Trust & IAP Architecture Whitepaper
 👉 **[docs/master_enterprise_deployment_guide.md](docs/master_enterprise_deployment_guide.md)** — Master Enterprise Deployment Guide
+
+---
+
+## 🛠️ Troubleshooting & AI Diagnostics with Gemini
+
+If personal BYOD devices are not appearing as **Pending approval**, if you see unexpected warnings in `chrome://policy`, or if `gcloud` encounters path issues on Windows Git Bash (`MINGW64`), see our dedicated guide:
+
+👉 **[docs/troubleshooting_guide.md](docs/troubleshooting_guide.md)** — **Full Troubleshooting & AI Diagnostics Guide**
+
+### Quick AI-Assisted Triage with Gemini
+The portal automatically streams frontend browser events (`[CLIENT_LOG]`) directly into Cloud Run server logs alongside backend Cloud Identity API traces (`[devices.py]`, `[cloud_identity.py]`). You can export a diagnostic bundle and ask **Gemini** to pinpoint the exact configuration fix:
+
+1. **Export Cloud Run Server + Client Telemetry Logs:**
+   ```bash
+   gcloud logging read \
+     'resource.type="cloud_run_revision" AND resource.labels.service_name="device-trust-gateway"' \
+     --project=YOUR_GCP_PROJECT_ID \
+     --limit=150 \
+     --format=json > cloud_run_logs.json
+   ```
+2. **Export Chrome Policies from the Test Device:**
+   Open `chrome://policy` on the test laptop, click **Reload policies**, and click **Export to JSON** (`policies.json`).
+3. **Ask Gemini:**
+   Attach `cloud_run_logs.json` and `policies.json` to Gemini (along with the prompt template in **[docs/troubleshooting_guide.md](docs/troubleshooting_guide.md)**) to automatically verify Domain-Wide Delegation scopes, `WORKSPACE_ADMIN_EMAIL` impersonation, Cloud Identity device states, and Chrome Profile Reporting policies (`CloudProfileReportingEnabled`, `UserSecuritySignalsReporting`, `UserSecurityAuthenticatedReporting`).
+
