@@ -376,3 +376,52 @@ class SessionGuardService:
             "timestamp": action.timestamp_iso,
         }
         return json.dumps(payload, sort_keys=True)
+
+    def get_recent_actions(self, limit: int = 25) -> List[Dict[str, Any]]:
+        """Returns the most recent session enforcement decisions from the SQLite audit log."""
+        cur = self._conn.cursor()
+        cur.execute(
+            """
+            SELECT event_id, user_email, ip_address, decision, reason,
+                   matched_serial, detection_latency_sec, timestamp_iso
+            FROM session_enforcement_log
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (max(1, min(200, limit)),),
+        )
+        rows = cur.fetchall()
+        return [
+            {
+                "event_id": r[0],
+                "user_email": r[1],
+                "ip_address": r[2],
+                "decision": r[3],
+                "reason": r[4],
+                "matched_serial": r[5],
+                "detection_latency_sec": round(float(r[6]), 2),
+                "timestamp_iso": r[7],
+            }
+            for r in rows
+        ]
+
+    def get_active_attestations(self, now_epoch: Optional[float] = None) -> List[Dict[str, Any]]:
+        """Returns active non-expired browser attestations in memory."""
+        now = now_epoch if now_epoch is not None else time.time()
+        cutoff = now - self.attestation_ttl_sec
+        result: List[Dict[str, Any]] = []
+        for email_key, att_list in self._active_attestations.items():
+            for att in att_list:
+                if att.attested_at_epoch >= cutoff:
+                    result.append(
+                        {
+                            "user_email": att.user_email,
+                            "serial_number": att.serial_number,
+                            "ip_address": att.ip_address,
+                            "attested_at_iso": datetime.datetime.fromtimestamp(
+                                att.attested_at_epoch, tz=datetime.timezone.utc
+                            ).isoformat(),
+                            "session_id": att.session_id,
+                        }
+                    )
+        return result

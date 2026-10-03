@@ -153,7 +153,10 @@ describe("Dashboard Page", () => {
 
     await waitFor(() => {
       expect(screen.getByText("Personal BYOD Devices")).toBeInTheDocument();
-      expect(screen.getByText("Company-Owned Devices")).toBeInTheDocument();
+      expect(screen.getAllByText("Company-Owned Devices").length).toBeGreaterThan(0);
+      expect(screen.getByTestId("enforcement-mode-badge")).toHaveTextContent(
+        "CAA-FREE SESSION WATCH (FUNDAMENTALS)"
+      );
     });
 
     // Check personal BYOD device has checkbox & revoke button

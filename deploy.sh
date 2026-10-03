@@ -54,6 +54,7 @@ GCP_PROJECT="${GCP_PROJECT:-}"
 GCP_REGION="${GCP_REGION:-us-central1}"
 DEPLOY_TARGET="${DEPLOY_TARGET:-}"
 WORKSPACE_ADMIN_EMAIL="${WORKSPACE_ADMIN_EMAIL:-}"
+ENFORCEMENT_MODE="${ENFORCEMENT_MODE:-}"
 
 # Help / Usage function
 show_help() {
@@ -68,6 +69,9 @@ Options:
   --project <PROJECT_ID>      Specify the Google Cloud Project ID
   --region <REGION>           Specify the GCP Cloud Run / Scheduler region (default: us-central1)
   --target <1|2>              Specify deployment target (1: Google Cloud Run, 2: On-Premise Docker)
+  --mode <SESSION_WATCH|CAA>  Enforcement architecture mode:
+                                SESSION_WATCH: CAA-Free Session Watch & users.signOut Circuit Breaker (Fundamentals)
+                                CAA:           Standard Context-Aware Access (Enterprise Plus)
   -h, --help                  Show this help message and exit
 
 Environment Variables:
@@ -76,10 +80,11 @@ Environment Variables:
   GCP_PROJECT                 Google Cloud Project ID
   GCP_REGION                  Google Cloud Region (default: us-central1)
   WORKSPACE_ADMIN_EMAIL       Workspace Super Administrator email for Domain-Wide Delegation
+  ENFORCEMENT_MODE            'SESSION_WATCH' (CAA-Free Fundamentals) or 'CAA' (Enterprise Plus)
 
 Examples:
-  ./deploy.sh --verbose
-  ./deploy.sh -v --project my-gcp-project-id
+  ./deploy.sh --verbose --mode SESSION_WATCH
+  ./deploy.sh -v --project devicetrustportal --mode SESSION_WATCH
   ./deploy.sh --skip-billing-check
   VERBOSE=true ./deploy.sh
 EOF
@@ -106,6 +111,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --target)
             DEPLOY_TARGET="$2"
+            shift 2
+            ;;
+        --mode)
+            ENFORCEMENT_MODE=$(echo "$2" | tr '[:lower:]' '[:upper:]' | tr '-' '_' | xargs)
             shift 2
             ;;
         -h|--help)
@@ -372,13 +381,13 @@ setup_domain_wide_delegation() {
     
     echo -e "\n${RED}===================================================================================================${NC}"
     echo -e "${YELLOW}🔑 REQUIRED WORKSPACE ADMIN CONSOLE ACTION:${NC}"
-    echo -e "To authorize this Service Account to read Chromebook fleets and approve BYOD devices:"
+    echo -e "To authorize this Service Account to read Chromebook fleets, approve BYOD devices, and run CAA-Free Session Watch:"
     echo -e "  1. Open the Google Workspace Admin Console: https://admin.google.com/ac/owl/domainwidedelegation"
-    echo -e "  2. Click ${YELLOW}'Add new'${NC}."
+    echo -e "  2. Click ${YELLOW}'Add new'${NC} (or ${YELLOW}'Edit'${NC} if Client ID ${CLIENT_ID} is already registered)."
     echo -e "  3. In the ${YELLOW}'Client ID'${NC} field, copy and paste this exact numeric ID:"
     echo -e "     ${GREEN}${CLIENT_ID}${NC}"
     echo -e "  4. In the ${YELLOW}'OAuth Scopes'${NC} field, copy and paste this exact comma-separated string:"
-    echo -e "     ${GREEN}https://www.googleapis.com/auth/cloud-identity.devices,https://www.googleapis.com/auth/admin.directory.user.readonly,https://www.googleapis.com/auth/admin.directory.group.member.readonly,https://www.googleapis.com/auth/admin.directory.device.chromeos.readonly${NC}"
+    echo -e "     ${GREEN}https://www.googleapis.com/auth/cloud-identity.devices,https://www.googleapis.com/auth/admin.directory.user.readonly,https://www.googleapis.com/auth/admin.directory.group.member.readonly,https://www.googleapis.com/auth/admin.directory.device.chromeos.readonly,https://www.googleapis.com/auth/admin.reports.audit.readonly,https://www.googleapis.com/auth/admin.directory.user.security${NC}"
     echo -e "  5. Click ${YELLOW}'Authorize'${NC}."
     echo -e "${RED}===================================================================================================${NC}\n"
     
@@ -938,29 +947,97 @@ EOF
     fi
 }
 
+# Helper function for CAA-Free Session Watch Cloud Scheduler 2-Minute Sweep setup
+configure_session_watch_scheduler() {
+    local GATEWAY_URL="$1"
+    echo -e "\n${YELLOW}===================================================================================================${NC}"
+    echo -e "${YELLOW}      CAA-Free Session Watch & users.signOut Circuit Breaker Scheduler (Fundamentals)              ${NC}"
+    echo -e "${YELLOW}===================================================================================================${NC}"
+    echo -e "In CAA-Free Mode (${GREEN}SESSION_WATCH${NC}), the gateway enforces approved devices without Context-Aware Access"
+    echo -e "by sweeping Google Workspace ${GREEN}login${NC} audit events every 2 minutes and executing ${GREEN}users.signOut${NC}"
+    echo -e "for any session without a matching district device attestation."
+    echo ""
+    read -p "Configure 2-Minute Cloud Scheduler Login Audit Sweep ('session-watch-login-sweep')? (Y/n) [Default: Y]: " DO_SWEEP_CRON
+    DO_SWEEP_CRON=$(echo "${DO_SWEEP_CRON:-y}" | tr -d '\r' | xargs)
+
+    if [[ "$DO_SWEEP_CRON" =~ ^[Yy]$ ]]; then
+        GATEWAY_URL="${GATEWAY_URL%/}"
+        local SCHEDULER_REGION="${GCP_REGION:-us-central1}"
+        echo -e "\n${BLUE}Configuring 2-Minute Cloud Scheduler Job 'session-watch-login-sweep' in '$SCHEDULER_REGION'...${NC}"
+        local sched_err
+        sched_err=$(mktemp)
+        if ! gcloud scheduler jobs create http session-watch-login-sweep \
+            --schedule="*/2 * * * *" \
+            --uri="${GATEWAY_URL}/api/session-watch/live-sweep" \
+            --http-method=POST \
+            --headers="X-Cloudscheduler=true,Content-Type=application/json" \
+            --message-body='{"lookback_minutes":15,"persist_all_allowed":true}' \
+            --location="$SCHEDULER_REGION" \
+            --project="$GCP_PROJECT" \
+            --description="Every 2 minutes: sweeps Admin SDK Reports login events and executes users.signOut on unattested sessions" --quiet 2>"$sched_err"; then
+            if grep -qi "ALREADY_EXISTS" "$sched_err"; then
+                gcloud scheduler jobs update http session-watch-login-sweep \
+                    --schedule="*/2 * * * *" \
+                    --uri="${GATEWAY_URL}/api/session-watch/live-sweep" \
+                    --http-method=POST \
+                    --headers="X-Cloudscheduler=true,Content-Type=application/json" \
+                    --message-body='{"lookback_minutes":15,"persist_all_allowed":true}' \
+                    --location="$SCHEDULER_REGION" \
+                    --project="$GCP_PROJECT" --quiet 2>/dev/null || true
+                log_success "Updated existing 'session-watch-login-sweep' Cloud Scheduler job (runs every 2 minutes)."
+            else
+                log_warn "Scheduler creation notice: $(cat "$sched_err")"
+            fi
+        else
+            log_success "Created 'session-watch-login-sweep' Cloud Scheduler job (runs every 2 minutes)."
+        fi
+        rm -f "$sched_err"
+    else
+        echo -e "${BLUE}Skipping 2-minute Session Watch Cloud Scheduler job setup.${NC}"
+    fi
+}
+
 # Helper function for printing final completion summary banner
 print_final_summary() {
     local PORTAL_URL="$1"
+    local MODE="${ENFORCEMENT_MODE:-SESSION_WATCH}"
     echo -e "\n${GREEN}===================================================================================================${NC}"
-    echo -e "${GREEN}🎉 DEVICE TRUST GATEWAY FULLY DEPLOYED & CONFIGURED!                                              ${NC}"
+    echo -e "${GREEN}🎉 DEVICE TRUST GATEWAY FULLY DEPLOYED & CONFIGURED! (Mode: ${MODE})                               ${NC}"
     echo -e "${GREEN}===================================================================================================${NC}"
     echo -e "Access your live self-service portals and admin configuration dashboards below:"
     echo ""
     echo -e "  🌐 ${YELLOW}Main Gateway Portal:${NC}       ${PORTAL_URL}/#/"
     echo -e "  ⚙️ ${YELLOW}Admin Configuration UI:${NC}    ${PORTAL_URL}/#/admin"
+    echo -e "  📊 ${YELLOW}Session Watch Telemetry:${NC}   ${PORTAL_URL}/api/session-watch/metrics"
     echo ""
-    echo -e "${BLUE}Next Steps & Mandatory Google Workspace Policy Checklist:${NC}"
-    echo -e "  1. ${YELLOW}Device Approvals:${NC} Devices > Mobile & endpoints > Settings > Universal > Security > Device approvals"
-    echo -e "     → Select ${GREEN}Require admin approval${NC} (verify inheritance across sub-OUs)"
-    echo -e "  2. ${YELLOW}Device Signals:${NC}   Devices > Mobile & endpoints > Settings > Universal > Data access > Device signals"
-    echo -e "     → Check ${GREEN}Collect device signals from Chrome browser${NC} & ${GREEN}Collect device signals using endpoint verification${NC}"
-    echo -e "  3. ${YELLOW}Chrome Profile:${NC}   Devices > Chrome > Settings > Users & browsers"
-    echo -e "     → Enable ${GREEN}Profile reporting${NC}, ${GREEN}Chrome signals sharing${NC}, & ${GREEN}Enterprise Hardware Platform API${NC}"
-    echo -e "     → Set ${GREEN}Browser sign-in${NC} to Force sign-in & ${GREEN}Managed accounts sign-in restriction${NC} to Block secondary accounts"
-    echo -e "  4. ${YELLOW}EV Extension:${NC}     Devices > Chrome > Apps & extensions > Users & browsers (${GREEN}callobklhcbilhphinckomhgkigmfocg${NC})"
-    echo -e "     → Set to ${GREEN}Force install${NC}; under Certificate management, turn ON ${GREEN}Allow access to keys${NC} & ${GREEN}Allow enterprise challenge${NC}"
-    echo -e "  5. ${YELLOW}Context-Aware Access (CAA) Custom Access Level:${NC}"
-    echo -e "     ${GREEN}device.is_corp_owned_device == true || device.is_admin_approved_device == true${NC}"
+    if [ "$MODE" = "SESSION_WATCH" ]; then
+        echo -e "${BLUE}Next Steps & Mandatory Google Workspace Checklist (CAA-Free Education Fundamentals):${NC}"
+        echo -e "  1. ${YELLOW}Domain-Wide Delegation Scopes:${NC} https://admin.google.com/ac/owl/domainwidedelegation"
+        echo -e "     → Ensure the Service Account Client ID includes all 6 scopes (especially:"
+        echo -e "       ${GREEN}https://www.googleapis.com/auth/admin.reports.audit.readonly${NC} and"
+        echo -e "       ${GREEN}https://www.googleapis.com/auth/admin.directory.user.security${NC})"
+        echo -e "  2. ${YELLOW}Chrome Extension Attestation:${NC} Devices > Chrome > Apps & extensions > Users & browsers"
+        echo -e "     → Force-install your district Session Watch / Endpoint extension so managed browsers send"
+        echo -e "       heartbeats to ${GREEN}${PORTAL_URL}/api/session-watch/attest${NC}"
+        echo -e "  3. ${YELLOW}Verify Live Portal Distinction:${NC}"
+        echo -e "     → Open ${GREEN}${PORTAL_URL}/#/${NC} and confirm the ${CYAN}⚡ CAA-FREE SESSION WATCH (FUNDAMENTALS)${NC} badge"
+        echo -e "       and live Circuit Breaker telemetry card are active."
+        echo -e "  4. ${YELLOW}No Context-Aware Access License Required:${NC}"
+        echo -e "     → Unattested external logins are automatically revoked via ${GREEN}admin.directory_v1.users.signOut${NC}."
+    else
+        echo -e "${BLUE}Next Steps & Mandatory Google Workspace Policy Checklist (Standard CAA Mode):${NC}"
+        echo -e "  1. ${YELLOW}Device Approvals:${NC} Devices > Mobile & endpoints > Settings > Universal > Security > Device approvals"
+        echo -e "     → Select ${GREEN}Require admin approval${NC} (verify inheritance across sub-OUs)"
+        echo -e "  2. ${YELLOW}Device Signals:${NC}   Devices > Mobile & endpoints > Settings > Universal > Data access > Device signals"
+        echo -e "     → Check ${GREEN}Collect device signals from Chrome browser${NC} & ${GREEN}Collect device signals using endpoint verification${NC}"
+        echo -e "  3. ${YELLOW}Chrome Profile:${NC}   Devices > Chrome > Settings > Users & browsers"
+        echo -e "     → Enable ${GREEN}Profile reporting${NC}, ${GREEN}Chrome signals sharing${NC}, & ${GREEN}Enterprise Hardware Platform API${NC}"
+        echo -e "     → Set ${GREEN}Browser sign-in${NC} to Force sign-in & ${GREEN}Managed accounts sign-in restriction${NC} to Block secondary accounts"
+        echo -e "  4. ${YELLOW}EV Extension:${NC}     Devices > Chrome > Apps & extensions > Users & browsers (${GREEN}callobklhcbilhphinckomhgkigmfocg${NC})"
+        echo -e "     → Set to ${GREEN}Force install${NC}; under Certificate management, turn ON ${GREEN}Allow access to keys${NC} & ${GREEN}Allow enterprise challenge${NC}"
+        echo -e "  5. ${YELLOW}Context-Aware Access (CAA) Custom Access Level:${NC}"
+        echo -e "     ${GREEN}device.is_corp_owned_device == true || device.is_admin_approved_device == true${NC}"
+    fi
     echo -e "${GREEN}===================================================================================================${NC}\n"
 
     if [[ "$OSTYPE" == "msys"* ]] || [[ "$OSTYPE" == "win32"* ]] || [[ "$OSTYPE" == "cygwin"* ]] || [[ -n "$WINDIR" ]] || [[ -n "$COMSPEC" ]]; then
@@ -993,6 +1070,22 @@ deploy_gcp_cloud_run() {
         GCP_REGION=${INPUT_REGION:-$GCP_REGION}
     fi
     GCP_REGION=$(echo "$GCP_REGION" | tr -d '\r' | xargs)
+
+    if [ -z "$ENFORCEMENT_MODE" ]; then
+        echo ""
+        echo "Select Enforcement Architecture Variation:"
+        echo "  1) CAA-Free Session Watch & users.signOut Circuit Breaker (Education Fundamentals - No CAA Required) [Default]"
+        echo "  2) Standard Context-Aware Access (Enterprise Plus / Endpoint Verification)"
+        echo ""
+        read -p "Enter mode [1-2] (default: 1): " MODE_OPT
+        MODE_OPT=$(echo "${MODE_OPT:-1}" | tr -d '\r' | xargs)
+        if [ "$MODE_OPT" = "2" ]; then
+            ENFORCEMENT_MODE="CAA"
+        else
+            ENFORCEMENT_MODE="SESSION_WATCH"
+        fi
+    fi
+    log_info "Selected Enforcement Architecture Mode: ${ENFORCEMENT_MODE}"
     
     echo -e "\n${BLUE}[1/7] Setting active GCP project to '$GCP_PROJECT'...${NC}"
     log_debug "Executing: gcloud config set project \"$GCP_PROJECT\""
@@ -1031,6 +1124,9 @@ deploy_gcp_cloud_run() {
     # Ensure DWD credentials and Admin Email are established before initializing config
     if [ -z "$WORKSPACE_ADMIN_EMAIL" ]; then
         setup_domain_wide_delegation
+    else
+        SA_NAME="device-trust-gateway-sa"
+        DWD_SA_EMAIL="${SA_NAME}@${GCP_PROJECT}.iam.gserviceaccount.com"
     fi
     
     echo -e "\n${BLUE}[4/7] Initializing Secret Manager for dynamic admin configuration...${NC}"
@@ -1050,11 +1146,25 @@ deploy_gcp_cloud_run() {
         if [ -n "$WORKSPACE_ADMIN_EMAIL" ]; then
             INIT_ADMINS="[\"$WORKSPACE_ADMIN_EMAIL\"]"
         fi
-        DEFAULT_CONFIG="{\"customer_id\": \"customers/my_customer\", \"inactivity_threshold_days\": 90, \"revocation_action\": \"BLOCK\", \"default_locale\": \"en\", \"portal_admins\": ${INIT_ADMINS}, \"trusted_ip_ranges\": [], \"chaining_allowed_groups\": [], \"chaining_allowed_ous\": []}"
+        DEFAULT_CONFIG="{\"customer_id\": \"customers/my_customer\", \"inactivity_threshold_days\": 90, \"revocation_action\": \"BLOCK\", \"default_locale\": \"en\", \"portal_admins\": ${INIT_ADMINS}, \"trusted_ip_ranges\": [], \"chaining_allowed_groups\": [], \"chaining_allowed_ous\": [], \"enforcement_mode\": \"${ENFORCEMENT_MODE}\"}"
         echo -n "$DEFAULT_CONFIG" | gcloud secrets versions add "$SECRET_NAME" --data-file=- --project="$GCP_PROJECT" --quiet
-        log_success "Secret '$SECRET_NAME' created with initial default configuration."
+        log_success "Secret '$SECRET_NAME' created with initial default configuration (mode=${ENFORCEMENT_MODE})."
     else
         log_success "Secret '$SECRET_NAME' already exists in project."
+        # Update enforcement_mode in Secret Manager if python3 is available
+        EXISTING_PAYLOAD=$(gcloud secrets versions access latest --secret="$SECRET_NAME" --project="$GCP_PROJECT" 2>/dev/null || echo "{}")
+        if command -v python3 &>/dev/null && [ -n "$EXISTING_PAYLOAD" ]; then
+            UPDATED_PAYLOAD=$(python3 -c "
+import json
+data = json.loads('''$EXISTING_PAYLOAD''') if '''$EXISTING_PAYLOAD''' != '{}' else {}
+data['enforcement_mode'] = '${ENFORCEMENT_MODE}'
+print(json.dumps(data))
+" 2>/dev/null || true)
+            if [ -n "$UPDATED_PAYLOAD" ]; then
+                echo -n "$UPDATED_PAYLOAD" | gcloud secrets versions add "$SECRET_NAME" --data-file=- --project="$GCP_PROJECT" --quiet 2>/dev/null || true
+                log_success "Updated Secret Manager enforcement_mode to '${ENFORCEMENT_MODE}'."
+            fi
+        fi
     fi
     rm -f "$sec_desc_err"
     
@@ -1113,7 +1223,7 @@ deploy_gcp_cloud_run() {
             --allow-unauthenticated \
             --service-account="$DWD_SA_EMAIL" \
             --set-secrets="/secrets/dwd_key.json=device_trust_gateway_dwd_key:latest" \
-            --set-env-vars="USE_SECRET_MANAGER=true,SECRET_NAME=$SECRET_NAME,GOOGLE_CLOUD_PROJECT=$GCP_PROJECT,WORKSPACE_ADMIN_EMAIL=$WORKSPACE_ADMIN_EMAIL,GOOGLE_APPLICATION_CREDENTIALS=/secrets/dwd_key.json"
+            --set-env-vars="USE_SECRET_MANAGER=true,SECRET_NAME=$SECRET_NAME,GOOGLE_CLOUD_PROJECT=$GCP_PROJECT,WORKSPACE_ADMIN_EMAIL=$WORKSPACE_ADMIN_EMAIL,ENFORCEMENT_MODE=$ENFORCEMENT_MODE,GOOGLE_APPLICATION_CREDENTIALS=/secrets/dwd_key.json"
         
         raw_service_url=$(gcloud run services describe device-trust-gateway --platform managed --region "$GCP_REGION" --project "$GCP_PROJECT" --format="value(status.url)" 2>/dev/null || true)
     else
@@ -1127,7 +1237,7 @@ deploy_gcp_cloud_run() {
             --format="value(status.url)" \
             --quiet \
             --set-secrets="/secrets/dwd_key.json=device_trust_gateway_dwd_key:latest" \
-            --set-env-vars="USE_SECRET_MANAGER=true,SECRET_NAME=$SECRET_NAME,GOOGLE_CLOUD_PROJECT=$GCP_PROJECT,WORKSPACE_ADMIN_EMAIL=$WORKSPACE_ADMIN_EMAIL,GOOGLE_APPLICATION_CREDENTIALS=/secrets/dwd_key.json" 2>"$deploy_err" || true)
+            --set-env-vars="USE_SECRET_MANAGER=true,SECRET_NAME=$SECRET_NAME,GOOGLE_CLOUD_PROJECT=$GCP_PROJECT,WORKSPACE_ADMIN_EMAIL=$WORKSPACE_ADMIN_EMAIL,ENFORCEMENT_MODE=$ENFORCEMENT_MODE,GOOGLE_APPLICATION_CREDENTIALS=/secrets/dwd_key.json" 2>"$deploy_err" || true)
     fi
     
     if [ -z "$raw_service_url" ]; then
@@ -1186,7 +1296,7 @@ deploy_gcp_cloud_run() {
             --allow-unauthenticated \
             --service-account="$DWD_SA_EMAIL" \
             --set-secrets="/secrets/dwd_key.json=device_trust_gateway_dwd_key:latest" \
-            --set-env-vars="USE_SECRET_MANAGER=true,SECRET_NAME=$SECRET_NAME,GOOGLE_CLOUD_PROJECT=$GCP_PROJECT,WORKSPACE_ADMIN_EMAIL=$WORKSPACE_ADMIN_EMAIL,GOOGLE_CLIENT_ID=$GOOGLE_CLIENT_ID,GOOGLE_APPLICATION_CREDENTIALS=/secrets/dwd_key.json"
+            --set-env-vars="USE_SECRET_MANAGER=true,SECRET_NAME=$SECRET_NAME,GOOGLE_CLOUD_PROJECT=$GCP_PROJECT,WORKSPACE_ADMIN_EMAIL=$WORKSPACE_ADMIN_EMAIL,GOOGLE_CLIENT_ID=$GOOGLE_CLIENT_ID,ENFORCEMENT_MODE=$ENFORCEMENT_MODE,GOOGLE_APPLICATION_CREDENTIALS=/secrets/dwd_key.json"
     else
         if ! gcloud run deploy device-trust-gateway \
             --image "$IMAGE_TAG" \
@@ -1197,7 +1307,7 @@ deploy_gcp_cloud_run() {
             --service-account="$DWD_SA_EMAIL" \
             --quiet \
             --set-secrets="/secrets/dwd_key.json=device_trust_gateway_dwd_key:latest" \
-            --set-env-vars="USE_SECRET_MANAGER=true,SECRET_NAME=$SECRET_NAME,GOOGLE_CLOUD_PROJECT=$GCP_PROJECT,WORKSPACE_ADMIN_EMAIL=$WORKSPACE_ADMIN_EMAIL,GOOGLE_CLIENT_ID=$GOOGLE_CLIENT_ID,GOOGLE_APPLICATION_CREDENTIALS=/secrets/dwd_key.json" 2>"$final_deploy_err"; then
+            --set-env-vars="USE_SECRET_MANAGER=true,SECRET_NAME=$SECRET_NAME,GOOGLE_CLOUD_PROJECT=$GCP_PROJECT,WORKSPACE_ADMIN_EMAIL=$WORKSPACE_ADMIN_EMAIL,GOOGLE_CLIENT_ID=$GOOGLE_CLIENT_ID,ENFORCEMENT_MODE=$ENFORCEMENT_MODE,GOOGLE_APPLICATION_CREDENTIALS=/secrets/dwd_key.json" 2>"$final_deploy_err"; then
             log_error "Phase 3 Cloud Run configuration update failed:"
             cat "$final_deploy_err"
             rm -f "$final_deploy_err"
@@ -1212,7 +1322,11 @@ deploy_gcp_cloud_run() {
     
     execute_mass_revocation_prompt
     configure_inventory_seeding "$SERVICE_URL"
-    configure_iap_edge_defense
+    if [ "$ENFORCEMENT_MODE" = "SESSION_WATCH" ]; then
+        configure_session_watch_scheduler "$SERVICE_URL"
+    else
+        configure_iap_edge_defense
+    fi
     print_final_summary "$SERVICE_URL"
 }
 
@@ -1236,6 +1350,7 @@ TENANT_DEFAULT_LOCALE=en
 TENANT_TRUSTED_IPS=[]
 TENANT_CHAINING_GROUPS=[]
 TENANT_CHAINING_OUS=[]
+TENANT_ENFORCEMENT_MODE=${ENFORCEMENT_MODE:-SESSION_WATCH}
 EOF
         log_success "Baseline .env created."
     else
@@ -1267,8 +1382,9 @@ echo -e "${BLUE}=========================================================${NC}"
 
 if command -v git &>/dev/null && [ -d ".git" ]; then
     LOCAL_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
-    log_info "Local Git revision: ${LOCAL_COMMIT}"
-    if [ "${DTG_SKIP_GIT_UPDATE:-false}" != "true" ]; then
+    CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
+    log_info "Local Git branch: ${CURRENT_BRANCH} (revision: ${LOCAL_COMMIT})"
+    if [ "${DTG_SKIP_GIT_UPDATE:-false}" != "true" ] && [ "$CURRENT_BRANCH" = "main" ]; then
         if git fetch origin main --quiet 2>/dev/null; then
             REMOTE_COMMIT=$(git rev-parse --short origin/main 2>/dev/null || echo "")
             if [ -n "$REMOTE_COMMIT" ] && [ "$LOCAL_COMMIT" != "$REMOTE_COMMIT" ]; then

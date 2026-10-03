@@ -23,7 +23,12 @@ import {
   checkIsAdmin,
   getPublicConfig,
   sendClientLog,
+  getSessionWatchMetrics,
+  syncSessionWatchInventory,
+  attestBrowserSession,
+  runLiveLoginSweep,
   DeviceUserItem,
+  SessionWatchMetricsResponse,
 } from "../services/api";
 import { GoogleLoginButton } from "../components/GoogleLoginButton";
 import { getTranslator } from "../i18n/translations";
@@ -49,22 +54,45 @@ export const Dashboard: React.FC = () => {
   const [message, setMessage] = useState("");
   const [authToken, setAuthToken] = useState(() => localStorage.getItem("googleIdToken") || "");
   const [locale, setLocale] = useState(() => localStorage.getItem("userLocale") || "en");
+  const [enforcementMode, setEnforcementMode] = useState<string>("SESSION_WATCH");
+  const [sessionWatchData, setSessionWatchData] = useState<SessionWatchMetricsResponse | null>(null);
+  const [sessionWatchLoading, setSessionWatchLoading] = useState(false);
   const t = getTranslator(locale);
 
-  useEffect(() => {
-    getPublicConfig()
-      .then((data) => {
-        if (data?.default_locale && !localStorage.getItem("userLocale")) {
-          const browserLang = navigator.language?.slice(0, 2);
-          setLocale(
-            ["en", "es", "fr", "ja", "de", "pt", "zh", "it", "ko", "ar", "hi", "nl", "pl", "sv", "tr"].includes(browserLang)
-              ? browserLang
-              : data.default_locale
-          );
+  const loadSessionWatchStatus = useCallback(() => {
+    if (typeof getSessionWatchMetrics !== "function") return;
+    const p = getSessionWatchMetrics();
+    if (p && typeof p.then === "function") {
+      p.then((res) => {
+        setSessionWatchData(res);
+        if (res?.enforcement_mode) {
+          setEnforcementMode(res.enforcement_mode);
         }
-      })
-      .catch(() => {});
+      }).catch(() => {});
+    }
   }, []);
+
+  useEffect(() => {
+    if (typeof getPublicConfig === "function") {
+      const p = getPublicConfig();
+      if (p && typeof p.then === "function") {
+        p.then((data) => {
+          if (data?.enforcement_mode) {
+            setEnforcementMode(data.enforcement_mode);
+          }
+          if (data?.default_locale && !localStorage.getItem("userLocale")) {
+            const browserLang = navigator.language?.slice(0, 2);
+            setLocale(
+              ["en", "es", "fr", "ja", "de", "pt", "zh", "it", "ko", "ar", "hi", "nl", "pl", "sv", "tr"].includes(browserLang)
+                ? browserLang
+                : data.default_locale
+            );
+          }
+        }).catch(() => {});
+      }
+    }
+    loadSessionWatchStatus();
+  }, [loadSessionWatchStatus]);
 
   const [devices, setDevices] = useState<DeviceUserItem[]>([]);
   const [loadingDevices, setLoadingDevices] = useState(false);
@@ -81,44 +109,50 @@ export const Dashboard: React.FC = () => {
     if (userEmail) {
       setLoadingDevices(true);
       setDeviceError("");
-      sendClientLog("INFO", "LOAD_DEVICES_START", `Requesting /api/devices/my-devices for ${userEmail}`);
+      if (typeof sendClientLog === "function") {
+        sendClientLog("INFO", "LOAD_DEVICES_START", `Requesting /api/devices/my-devices for ${userEmail}`);
+      }
       getMyDevices()
         .then((data) => {
           const list = Array.isArray(data) ? data : [];
           setDevices(list);
           setLoadingDevices(false);
-          if (list.length === 0) {
-            sendClientLog(
-              "WARNING",
-              "LOAD_DEVICES_EMPTY",
-              `Portal UI received 0 devices for ${userEmail}`,
-              { count: 0 }
-            );
-          } else {
-            sendClientLog(
-              "INFO",
-              "LOAD_DEVICES_SUCCESS",
-              `Portal UI rendered ${list.length} device(s) for ${userEmail}`,
-              {
-                count: list.length,
-                devices: list.map((d) => ({
-                  device_user_name: d.device_user_name,
-                  device_type: d.device_type,
-                  model: d.model,
-                  approval_state: d.approval_state,
-                  owner_type: d.owner_type,
-                })),
-              }
-            );
+          if (typeof sendClientLog === "function") {
+            if (list.length === 0) {
+              sendClientLog(
+                "WARNING",
+                "LOAD_DEVICES_EMPTY",
+                `Portal UI received 0 devices for ${userEmail}`,
+                { count: 0 }
+              );
+            } else {
+              sendClientLog(
+                "INFO",
+                "LOAD_DEVICES_SUCCESS",
+                `Portal UI rendered ${list.length} device(s) for ${userEmail}`,
+                {
+                  count: list.length,
+                  devices: list.map((d) => ({
+                    device_user_name: d.device_user_name,
+                    device_type: d.device_type,
+                    model: d.model,
+                    approval_state: d.approval_state,
+                    owner_type: d.owner_type,
+                  })),
+                }
+              );
+            }
           }
         })
         .catch((err) => {
           const errMsg = `Failed to load approved devices: ${err.message}`;
           setDeviceError(errMsg);
           setLoadingDevices(false);
-          sendClientLog("ERROR", "LOAD_DEVICES_ERROR", errMsg, {
-            error: err?.message || String(err),
-          });
+          if (typeof sendClientLog === "function") {
+            sendClientLog("ERROR", "LOAD_DEVICES_ERROR", errMsg, {
+              error: err?.message || String(err),
+            });
+          }
         });
     } else {
       setDevices([]);
@@ -127,12 +161,13 @@ export const Dashboard: React.FC = () => {
 
   useEffect(() => {
     loadDevices();
+    loadSessionWatchStatus();
     if (userEmail) {
       checkIsAdmin().then(setIsAdmin);
     } else {
       setIsAdmin(false);
     }
-  }, [userEmail, authToken, loadDevices]);
+  }, [userEmail, authToken, loadDevices, loadSessionWatchStatus]);
 
   const handleLoginSuccess = (email: string, token: string) => {
     setUserEmail(email);
@@ -247,6 +282,73 @@ export const Dashboard: React.FC = () => {
     }
   };
 
+  const handleSyncInventory = async () => {
+    setSessionWatchLoading(true);
+    setMessage("");
+    try {
+      const res = await syncSessionWatchInventory();
+      setMessage(
+        `Session Watch inventory synced: ${res.inventory_devices_cached} approved device serial(s) cached in memory.`
+      );
+      loadSessionWatchStatus();
+    } catch (e: any) {
+      setMessage(`Failed to sync Session Watch inventory: ${e.message}`);
+    } finally {
+      setSessionWatchLoading(false);
+    }
+  };
+
+  const handleAttestCurrentSession = async () => {
+    if (!userEmail) return;
+    setSessionWatchLoading(true);
+    setMessage("");
+    const candidateDevice =
+      companyDevices.find((d) => d.serial_number && d.serial_number !== "N/A") ||
+      personalDevices.find(
+        (d) => d.approval_state === "APPROVED" && d.serial_number && d.serial_number !== "N/A"
+      ) ||
+      devices.find((d) => d.serial_number && d.serial_number !== "N/A");
+
+    const serialToAttest =
+      candidateDevice?.serial_number && candidateDevice.serial_number !== "N/A"
+        ? candidateDevice.serial_number
+        : candidateDevice?.device_user_name.split("/")[1] || "";
+
+    if (!serialToAttest) {
+      setMessage("Failed to attest session: No approved device serial or ID found for your account.");
+      setSessionWatchLoading(false);
+      return;
+    }
+
+    try {
+      const res = await attestBrowserSession(userEmail, serialToAttest);
+      setMessage(
+        `Session Attested: ${res.message} (IP: ${res.client_ip})`
+      );
+      loadSessionWatchStatus();
+    } catch (e: any) {
+      setMessage(`Failed to attest browser session: ${e.message}`);
+    } finally {
+      setSessionWatchLoading(false);
+    }
+  };
+
+  const handleRunLiveSweep = async () => {
+    setSessionWatchLoading(true);
+    setMessage("");
+    try {
+      const res = await runLiveLoginSweep(15);
+      setMessage(
+        `Live Login Sweep Complete: Evaluated ${res.fetched_login_events} domain login event(s) from Reports API; executed ${res.revoked_count} users.signOut revocation(s).`
+      );
+      loadSessionWatchStatus();
+    } catch (e: any) {
+      setMessage(`Failed to execute live login sweep: ${e.message}`);
+    } finally {
+      setSessionWatchLoading(false);
+    }
+  };
+
   return (
     <div className="dtg-shell">
       {/* Google Workspace Top Navigation App Bar */}
@@ -265,7 +367,33 @@ export const Dashboard: React.FC = () => {
               </svg>
             </div>
             <div>
-              <h1 className="dtg-brand-title">{t.portalTitle}</h1>
+              <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+                <h1 className="dtg-brand-title">{t.portalTitle}</h1>
+                <span
+                  data-testid="enforcement-mode-badge"
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "5px",
+                    padding: "3px 10px",
+                    borderRadius: "999px",
+                    fontSize: "11px",
+                    fontWeight: 700,
+                    letterSpacing: "0.02em",
+                    backgroundColor:
+                      enforcementMode === "SESSION_WATCH" ? "#e8f0fe" : "#e6f4ea",
+                    color: enforcementMode === "SESSION_WATCH" ? "#1967d2" : "#137333",
+                    border:
+                      enforcementMode === "SESSION_WATCH"
+                        ? "1px solid #aecbfa"
+                        : "1px solid #ceead6",
+                  }}
+                >
+                  {enforcementMode === "SESSION_WATCH"
+                    ? "⚡ CAA-FREE SESSION WATCH (FUNDAMENTALS)"
+                    : "🛡️ CONTEXT-AWARE ACCESS (ENTERPRISE)"}
+                </span>
+              </div>
               <div className="dtg-brand-subtitle">{t.subtitle}</div>
             </div>
           </div>
@@ -310,6 +438,124 @@ export const Dashboard: React.FC = () => {
       </header>
 
       <main className="dtg-main">
+        {enforcementMode === "SESSION_WATCH" && (
+          <div
+            className="dtg-card"
+            style={{
+              borderLeft: "4px solid #1a73e8",
+              background: "linear-gradient(180deg, rgba(232,240,254,0.45) 0%, #ffffff 100%)",
+              marginBottom: "18px",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "flex-start",
+                gap: "12px",
+                flexWrap: "wrap",
+              }}
+            >
+              <div>
+                <div
+                  style={{
+                    fontSize: "12px",
+                    fontWeight: 700,
+                    color: "#1967d2",
+                    textTransform: "uppercase",
+                    letterSpacing: "0.04em",
+                    marginBottom: "4px",
+                  }}
+                >
+                  Active Variation: poc/fundamentals-session-watch (No Context-Aware Access Required)
+                </div>
+                <h3 className="dtg-card-title" style={{ marginBottom: "4px" }}>
+                  CAA-Free Session Watch &amp; <code>users.signOut</code> Circuit Breaker
+                </h3>
+                <p className="dtg-card-desc" style={{ margin: 0 }}>
+                  Enforces district hardware inventory on Google Workspace for Education Fundamentals by correlating Chrome extension heartbeats (<code>/api/session-watch/attest</code>) against Admin SDK Reports <code>login</code> audit sweeps and revoking unattested sessions via <code>admin.directory_v1.users.signOut</code>.
+                </p>
+              </div>
+              {userEmail && (
+                <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    onClick={handleSyncInventory}
+                    disabled={sessionWatchLoading}
+                    className="dtg-btn dtg-btn-outline"
+                  >
+                    Sync Inventory Cache
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleAttestCurrentSession}
+                    disabled={sessionWatchLoading || devices.length === 0}
+                    className="dtg-btn dtg-btn-outline"
+                  >
+                    Attest This Session
+                  </button>
+                  {isAdmin && (
+                    <button
+                      type="button"
+                      onClick={handleRunLiveSweep}
+                      disabled={sessionWatchLoading}
+                      className="dtg-btn dtg-btn-primary"
+                    >
+                      Run Live Login Sweep
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {sessionWatchData && (
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+                  gap: "10px",
+                  marginTop: "14px",
+                  paddingTop: "12px",
+                  borderTop: "1px solid var(--dtg-border-subtle)",
+                }}
+              >
+                <div>
+                  <div style={{ fontSize: "11px", color: "var(--dtg-text-secondary)", fontWeight: 600 }}>
+                    Cached Inventory Serials
+                  </div>
+                  <div style={{ fontSize: "18px", fontWeight: 700, color: "var(--dtg-text)" }}>
+                    {sessionWatchData.metrics.inventory_devices_cached}
+                  </div>
+                </div>
+                <div>
+                  <div style={{ fontSize: "11px", color: "var(--dtg-text-secondary)", fontWeight: 600 }}>
+                    Active Attestations
+                  </div>
+                  <div style={{ fontSize: "18px", fontWeight: 700, color: "var(--dtg-success)" }}>
+                    {sessionWatchData.active_attestations?.length || 0}
+                  </div>
+                </div>
+                <div>
+                  <div style={{ fontSize: "11px", color: "var(--dtg-text-secondary)", fontWeight: 600 }}>
+                    Logins Evaluated
+                  </div>
+                  <div style={{ fontSize: "18px", fontWeight: 700, color: "var(--dtg-text)" }}>
+                    {sessionWatchData.metrics.login_events_evaluated}
+                  </div>
+                </div>
+                <div>
+                  <div style={{ fontSize: "11px", color: "var(--dtg-text-secondary)", fontWeight: 600 }}>
+                    users.signOut Revocations
+                  </div>
+                  <div style={{ fontSize: "18px", fontWeight: 700, color: "var(--dtg-danger)" }}>
+                    {sessionWatchData.metrics.signouts_executed}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Google Workspace Authentication Surface Card */}
         <div className="dtg-card">
           <div className="dtg-card-header" style={{ marginBottom: userEmail ? "14px" : "10px" }}>

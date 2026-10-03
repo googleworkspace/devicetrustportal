@@ -28,6 +28,44 @@ export interface TenantConfig {
   trusted_ip_ranges?: string[];
   chaining_allowed_groups?: string[];
   chaining_allowed_ous?: string[];
+  enforcement_mode?: string;
+}
+
+export interface SessionWatchMetricsResponse {
+  enforcement_mode: string;
+  branch_variation: string;
+  metrics: {
+    inventory_devices_cached: number;
+    attestations_received: number;
+    login_events_evaluated: number;
+    allowed_attested: number;
+    deferred_grace_window: number;
+    signouts_executed: number;
+    reports_api_calls: number;
+    directory_api_calls: number;
+    directory_batch_http_calls: number;
+  };
+  quotas: {
+    reports_api_qpm_limit: number;
+    directory_api_qpm_limit: number;
+  };
+  active_attestations: Array<{
+    user_email: string;
+    serial_number: string;
+    ip_address: string;
+    attested_at_iso: string;
+    session_id: string;
+  }>;
+  recent_actions: Array<{
+    event_id: string;
+    user_email: string;
+    ip_address: string;
+    decision: string;
+    reason: string;
+    matched_serial?: string | null;
+    detection_latency_sec: number;
+    timestamp_iso: string;
+  }>;
 }
 
 export interface GenerateResponse {
@@ -140,7 +178,12 @@ export const checkIsAdmin = async (): Promise<boolean> => {
   }
 };
 
-export const getPublicConfig = async (): Promise<{ google_client_id: string; default_locale?: string }> => {
+export const getPublicConfig = async (): Promise<{
+  google_client_id: string;
+  default_locale?: string;
+  enforcement_mode?: string;
+  branch_variation?: string;
+}> => {
   const response = await fetch(`${API_BASE_URL}/api/config/public`);
   return response.json();
 };
@@ -231,6 +274,69 @@ export const revokeDeviceBulk = async (deviceUserNames: string[]): Promise<{ sta
     method: "POST",
     headers: getHeaders(),
     body: JSON.stringify({ device_user_names: deviceUserNames }),
+  });
+  return response.json();
+};
+
+export const getSessionWatchMetrics = async (): Promise<SessionWatchMetricsResponse> => {
+  const response = await fetchWithAuth(`${API_BASE_URL}/api/session-watch/metrics`, {
+    headers: getHeaders(),
+  });
+  return response.json();
+};
+
+export const syncSessionWatchInventory = async (): Promise<{
+  status: string;
+  loaded_count: number;
+  inventory_devices_cached: number;
+  warnings: string[];
+}> => {
+  const response = await fetchWithAuth(`${API_BASE_URL}/api/session-watch/sync-inventory`, {
+    method: "POST",
+    headers: getHeaders(),
+  });
+  return response.json();
+};
+
+export const attestBrowserSession = async (
+  userEmail: string,
+  serialNumber: string
+): Promise<{
+  status: string;
+  user_email: string;
+  serial_number: string;
+  client_ip: string;
+  message: string;
+}> => {
+  const response = await fetchWithAuth(`${API_BASE_URL}/api/session-watch/attest`, {
+    method: "POST",
+    headers: getHeaders(),
+    body: JSON.stringify({
+      user_email: userEmail,
+      serial_number: serialNumber,
+      session_id: `portal-${Date.now()}`,
+    }),
+  });
+  return response.json();
+};
+
+export const runLiveLoginSweep = async (
+  lookbackMinutes: number = 15
+): Promise<{
+  status: string;
+  fetched_login_events: number;
+  revoked_count: number;
+  revoked_users: string[];
+  actions: Array<any>;
+  metrics: Record<string, number>;
+}> => {
+  const response = await fetchWithAuth(`${API_BASE_URL}/api/session-watch/live-sweep`, {
+    method: "POST",
+    headers: getHeaders(),
+    body: JSON.stringify({
+      lookback_minutes: lookbackMinutes,
+      persist_all_allowed: true,
+    }),
   });
   return response.json();
 };

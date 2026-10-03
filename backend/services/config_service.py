@@ -31,6 +31,10 @@ class TenantConfig(BaseModel):
     trusted_ip_ranges: List[str] = Field(default=[], description="Trusted campus CIDR ranges for network-gated approvals")
     chaining_allowed_groups: List[str] = Field(default=[], description="Google Groups authorized to perform trust chaining")
     chaining_allowed_ous: List[str] = Field(default=[], description="Organizational Units authorized to perform trust chaining")
+    enforcement_mode: str = Field(
+        default="SESSION_WATCH",
+        description="Enforcement architecture mode: 'SESSION_WATCH' (CAA-Free Education Fundamentals) or 'CAA' (Context-Aware Access)",
+    )
 
 class ConfigService:
     def __init__(self):
@@ -52,6 +56,7 @@ class ConfigService:
     def get_tenant_config(self) -> TenantConfig:
         env_admin = os.getenv("WORKSPACE_ADMIN_EMAIL", "").lower().strip()
         env_client_id = os.getenv("GOOGLE_CLIENT_ID", "") or os.getenv("REACT_APP_GOOGLE_CLIENT_ID", "")
+        env_mode = (os.getenv("ENFORCEMENT_MODE") or os.getenv("TENANT_ENFORCEMENT_MODE") or "").strip().upper()
         
         if self.use_secret_manager and self.project_id:
             try:
@@ -59,6 +64,8 @@ class ConfigService:
                 response = self.sm_client.access_secret_version(request={"name": name})
                 payload = response.payload.data.decode("UTF-8")
                 data = json.loads(payload)
+                if "enforcement_mode" not in data and env_mode in ("CAA", "SESSION_WATCH"):
+                    data["enforcement_mode"] = env_mode
                 config = TenantConfig(**data)
                 if env_admin and env_admin not in [a.lower().strip() for a in config.portal_admins]:
                     config.portal_admins.append(env_admin)
@@ -72,6 +79,8 @@ class ConfigService:
         if env_admin and env_admin not in [a.lower().strip() for a in local_admins]:
             local_admins.append(env_admin)
 
+        default_mode = env_mode if env_mode in ("CAA", "SESSION_WATCH") else "SESSION_WATCH"
+
         return TenantConfig(
             customer_id=os.getenv("TENANT_CUSTOMER_ID", "customers/my_customer"),
             inactivity_threshold_days=int(os.getenv("TENANT_INACTIVITY_THRESHOLD", 90)),
@@ -81,7 +90,8 @@ class ConfigService:
             default_locale=os.getenv("TENANT_DEFAULT_LOCALE", "en"),
             trusted_ip_ranges=json.loads(os.getenv("TENANT_TRUSTED_IPS", '[]')),
             chaining_allowed_groups=json.loads(os.getenv("TENANT_CHAINING_GROUPS", '[]')),
-            chaining_allowed_ous=json.loads(os.getenv("TENANT_CHAINING_OUS", '[]'))
+            chaining_allowed_ous=json.loads(os.getenv("TENANT_CHAINING_OUS", '[]')),
+            enforcement_mode=default_mode,
         )
 
     def update_tenant_config(self, config: TenantConfig) -> bool:
@@ -112,6 +122,7 @@ class ConfigService:
         set_key(dotenv_path, "TENANT_TRUSTED_IPS", json.dumps(config.trusted_ip_ranges))
         set_key(dotenv_path, "TENANT_CHAINING_GROUPS", json.dumps(config.chaining_allowed_groups))
         set_key(dotenv_path, "TENANT_CHAINING_OUS", json.dumps(config.chaining_allowed_ous))
+        set_key(dotenv_path, "TENANT_ENFORCEMENT_MODE", config.enforcement_mode)
         
         load_dotenv(dotenv_path, override=True)
         return True

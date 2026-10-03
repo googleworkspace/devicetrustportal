@@ -19,13 +19,13 @@ from pydantic import BaseModel
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from backend.routes import admin, chaining, network_auth, cron, webhook, devices
+from backend.routes import admin, chaining, network_auth, cron, webhook, devices, session_watch
 from backend.services.config_service import config_service
 
 app = FastAPI(
     title="Device Trust Gateway API",
-    description="Secure gateway bridge for managing Google Workspace / Cloud Identity device approvals.",
-    version="1.0.0"
+    description="Secure gateway bridge for managing Google Workspace / Cloud Identity device approvals and CAA-Free Session Watch.",
+    version="1.1.0-session-watch"
 )
 
 app.add_middleware(
@@ -52,10 +52,16 @@ app.include_router(network_auth.router)
 app.include_router(cron.router)
 app.include_router(webhook.router)
 app.include_router(devices.router)
+app.include_router(session_watch.router)
 
 @app.get("/health")
 def health_check():
-    return {"status": "OK"}
+    config = config_service.get_tenant_config()
+    return {
+        "status": "OK",
+        "enforcement_mode": getattr(config, "enforcement_mode", "SESSION_WATCH"),
+        "branch_variation": "poc/fundamentals-session-watch",
+    }
 
 @app.post("/api/client-logs")
 def receive_client_log(payload: ClientLogRequest, request: Request):
@@ -78,7 +84,9 @@ def get_public_config():
     config = config_service.get_tenant_config()
     return {
         "google_client_id": getattr(config, "google_client_id", "") or "",
-        "default_locale": getattr(config, "default_locale", "en")
+        "default_locale": getattr(config, "default_locale", "en"),
+        "enforcement_mode": getattr(config, "enforcement_mode", "SESSION_WATCH"),
+        "branch_variation": "poc/fundamentals-session-watch",
     }
 
 # Serve React static frontend build files

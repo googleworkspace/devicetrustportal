@@ -29,6 +29,7 @@ export const AdminConfig: React.FC = () => {
   const [portalAdmins, setPortalAdmins] = useState<string[]>([]);
   const [googleClientId, setGoogleClientId] = useState("");
   const [defaultLocale, setDefaultLocale] = useState("en");
+  const [enforcementMode, setEnforcementMode] = useState("SESSION_WATCH");
   const [newAdminEmail, setNewAdminEmail] = useState("");
   const [showAddAdminModal, setShowAddAdminModal] = useState(false);
 
@@ -51,6 +52,7 @@ export const AdminConfig: React.FC = () => {
         setPortalAdmins(data.portal_admins || []);
         setGoogleClientId(data.google_client_id || "");
         setDefaultLocale(data.default_locale || "en");
+        setEnforcementMode(data.enforcement_mode || "SESSION_WATCH");
         setLoading(false);
         sendClientLog("INFO", "ADMIN_CONFIG_LOADED", `Admin config loaded for ${userEmail}`);
       } catch (e: any) {
@@ -96,6 +98,7 @@ export const AdminConfig: React.FC = () => {
       trusted_ip_ranges: config?.trusted_ip_ranges || [],
       chaining_allowed_groups: config?.chaining_allowed_groups || [],
       chaining_allowed_ous: config?.chaining_allowed_ous || [],
+      enforcement_mode: enforcementMode,
     };
 
     try {
@@ -107,6 +110,7 @@ export const AdminConfig: React.FC = () => {
         inactivity_threshold_days: updatedConfig.inactivity_threshold_days,
         portal_admins_count: updatedConfig.portal_admins.length,
         default_locale: updatedConfig.default_locale,
+        enforcement_mode: updatedConfig.enforcement_mode,
       });
     } catch (err: any) {
       const errMsg = `Update failed: ${err.message}`;
@@ -223,6 +227,60 @@ export const AdminConfig: React.FC = () => {
           <p style={{ fontSize: "13px", color: "var(--dtg-text-secondary)", margin: "0 0 24px 0" }}>
             {t.generalSecurityPoliciesDesc}
           </p>
+
+          <div
+            style={{
+              marginBottom: "24px",
+              padding: "16px",
+              borderRadius: "8px",
+              border:
+                enforcementMode === "SESSION_WATCH"
+                  ? "1.5px solid #1a73e8"
+                  : "1px solid var(--dtg-border)",
+              backgroundColor:
+                enforcementMode === "SESSION_WATCH"
+                  ? "rgba(26, 115, 232, 0.06)"
+                  : "var(--dtg-surface-subtle)",
+            }}
+          >
+            <label
+              htmlFor="enforcement-mode-select"
+              style={{
+                display: "block",
+                fontWeight: 600,
+                marginBottom: "6px",
+                color: "var(--dtg-text)",
+                fontSize: "14px",
+              }}
+            >
+              Enforcement Architecture Variation:
+            </label>
+            <select
+              id="enforcement-mode-select"
+              value={enforcementMode}
+              onChange={(e) => setEnforcementMode(e.target.value)}
+              className="dtg-select"
+              style={{ width: "100%", padding: "10px 12px", fontSize: "14px", marginBottom: "8px" }}
+            >
+              <option value="SESSION_WATCH">
+                ⚡ CAA-Free Session Watch &amp; users.signOut Circuit Breaker (Education Fundamentals)
+              </option>
+              <option value="CAA">
+                🛡️ Standard Context-Aware Access (Enterprise Plus / Endpoint Verification)
+              </option>
+            </select>
+            <span style={{ fontSize: "12px", color: "var(--dtg-text-secondary)", display: "block", lineHeight: 1.5 }}>
+              {enforcementMode === "SESSION_WATCH" ? (
+                <>
+                  <b>CAA-Free Mode Active (poc/fundamentals-session-watch):</b> Does not require Context-Aware Access licenses. Enforces approved devices via O(1) inventory cache, Chrome extension attestation (<code>/api/session-watch/attest</code>), Admin SDK Reports API login sweeps (<code>admin.reports.audit.readonly</code>), and automated <code>users.signOut</code> circuit breaker (<code>admin.directory.user.security</code>).
+                </>
+              ) : (
+                <>
+                  <b>Standard CAA Mode Active:</b> Uses Google Workspace Context-Aware Access CEL rules (<code>device.is_corp_owned_device || device.is_admin_approved_device</code>) to block unapproved devices inline at login.
+                </>
+              )}
+            </span>
+          </div>
 
           <div style={{ marginBottom: "22px" }}>
             <label
