@@ -18,9 +18,10 @@ from __future__ import annotations
 
 import time
 from typing import Any, Dict, List, Optional
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from backend.routes.admin import get_current_user_email
 from backend.services.cloud_identity import cloud_identity_service, normalize_customer_id
 from backend.services.config_service import config_service
 from backend.services.directory_service import directory_service
@@ -49,6 +50,18 @@ class ExtensionAttestRequest(BaseModel):
         description="Hardware serial from chrome.enterprise.deviceAttributes or signed BYOD token",
     )
     session_id: Optional[str] = Field(default="", description="Browser session nonce")
+
+
+class OnboardingLeaseRequest(BaseModel):
+    user_email: Optional[str] = Field(default=None, description="Signed-in Google Workspace user email")
+    minutes: Optional[int] = Field(
+        default=None,
+        description="Optional override for onboarding grace window in minutes",
+    )
+    duration_minutes: Optional[int] = Field(
+        default=None,
+        description="Optional override for onboarding grace window in minutes (defaults to tenant config)",
+    )
 
 
 class LoginEventPayload(BaseModel):
@@ -113,11 +126,12 @@ def _sync_live_inventory() -> Dict[str, Any]:
     if cloud_identity_service.service:
         ci_customer = normalize_customer_id(customer_id)
         try:
-            resp = (
-                cloud_identity_service.service.devices()
-                .list(customer=ci_customer, pageSize=200)
-                .execute()
-            )
+            with cloud_identity_service._lock:
+                resp = (
+                    cloud_identity_service.service.devices()
+                    .list(customer=ci_customer, pageSize=200)
+                    .execute()
+                )
             for dev in resp.get("devices", []) or []:
                 serial = (dev.get("serialNumber") or "").strip().upper()
                 dev_name = dev.get("name", "")
@@ -172,6 +186,57 @@ def _sync_live_inventory() -> Dict[str, Any]:
 async def sync_session_watch_inventory() -> Dict[str, Any]:
     """Synchronizes the in-memory O(1) device inventory cache from live Directory & Cloud Identity APIs."""
     return _sync_live_inventory()
+
+
+@router.post("/onboarding-lease")
+async def start_onboarding_grace_lease(
+    request: Request,
+    body: Optional[OnboardingLeaseRequest] = None,
+) -> Dict[str, Any]:
+    """Grants a temporary onboarding grace lease (default 15m) so a user adding/approving a personal
+    BYOD device is never signed out by the background Session Watch sweep mid-enrollment.
+    """
+    import datetime
+
+    req_body = body or OnboardingLeaseRequest()
+    target_email = (req_body.user_email or "").strip().lower()
+    if not target_email:
+        auth_header = request.headers.get("Authorization")
+        if auth_header:
+            target_email = get_current_user_email(authorization=auth_header).strip().lower()
+    if not target_email:
+        raise HTTPException(status_code=400, detail="user_email or Authorization bearer token is required")
+
+    config = config_service.get_tenant_config()
+    requested_min = req_body.minutes or req_body.duration_minutes
+    minutes = (
+        requested_min
+        if requested_min and requested_min > 0
+        else getattr(config, "session_watch_onboarding_grace_minutes", 15)
+    )
+    duration_sec = max(60, int(minutes) * 60)
+    now = time.time()
+    expires_at = session_guard.grant_onboarding_lease(
+        user_email=target_email,
+        duration_sec=duration_sec,
+        now_epoch=now,
+        reason="PORTAL_ADD_PERSONAL_DEVICE",
+    )
+    expires_iso = datetime.datetime.fromtimestamp(
+        expires_at, tz=datetime.timezone.utc
+    ).isoformat()
+    return {
+        "status": "LEASE_ACTIVE",
+        "user_email": target_email,
+        "minutes": int(minutes),
+        "duration_minutes": int(minutes),
+        "remaining_seconds": int(round(expires_at - now)),
+        "expires_at_iso": expires_iso,
+        "message": (
+            f"15-Minute Personal Device Onboarding Pass Active for {target_email} "
+            f"(until {expires_iso}). Background users.signOut is paused while you sign in and approve your personal device."
+        ),
+    }
 
 
 @router.post("/attest")
@@ -242,6 +307,16 @@ async def execute_live_reports_sweep(
 ) -> Dict[str, Any]:
     """Pulls live login events from Admin SDK Reports API (`activities.list`) and executes `users.signOut` on unattested sessions."""
     req_body = body or LiveSweepRequest()
+    config = config_service.get_tenant_config()
+
+    # If tenant is currently in CAA mode and triggered by scheduler, skip Session Watch sweep
+    if x_cloudscheduler and getattr(config, "enforcement_mode", "SESSION_WATCH") == "CAA":
+        return {
+            "status": "SKIPPED_CAA_MODE",
+            "triggered_by": "cloud_scheduler",
+            "message": "Tenant is configured for Context-Aware Access (CAA) mode; skipping Session Watch sweep.",
+        }
+
     if session_guard.metrics["inventory_devices_cached"] == 0:
         try:
             _sync_live_inventory()
@@ -282,11 +357,22 @@ async def execute_live_reports_sweep(
         for ev in raw_events
     ]
 
+    def _scope_checker(email: str) -> tuple[bool, str]:
+        return directory_service.is_user_in_session_watch_scope(
+            user_email=email,
+            target_ous=getattr(config, "session_watch_target_ous", []),
+            target_groups=getattr(config, "session_watch_target_groups", []),
+            exempt_admins=getattr(config, "session_watch_exempt_admins", True),
+            portal_admins=getattr(config, "portal_admins", []),
+        )
+
     try:
         actions = session_guard.evaluate_login_batch(
             audit_events,
             now_epoch=now,
             persist_all_allowed=req_body.persist_all_allowed,
+            scope_checker=_scope_checker,
+            dry_run=getattr(config, "session_watch_dry_run", False),
         )
     except Exception as eval_err:
         raise HTTPException(
@@ -298,12 +384,15 @@ async def execute_live_reports_sweep(
         print(session_guard.format_cloud_logging_entry(action), flush=True)
 
     revoked = [a for a in actions if a.decision == "REVOKE_SIGN_OUT"]
+    audit_only = [a for a in actions if a.decision == "AUDIT_WOULD_SIGN_OUT"]
     return {
         "status": "LIVE_SWEEP_COMPLETE",
         "triggered_by": "cloud_scheduler" if x_cloudscheduler else "portal_api",
+        "dry_run": getattr(config, "session_watch_dry_run", False),
         "lookback_minutes": req_body.lookback_minutes,
         "fetched_login_events": len(audit_events),
         "revoked_count": len(revoked),
+        "audit_would_signout_count": len(audit_only),
         "revoked_users": [a.user_email for a in revoked],
         "actions": [
             {
@@ -324,17 +413,28 @@ async def execute_live_reports_sweep(
 
 @router.get("/metrics")
 async def get_session_watch_metrics() -> Dict[str, object]:
-    """Returns live quota utilization and enforcement metrics."""
+    """Returns live quota utilization, rollout scope, onboarding leases, and enforcement metrics."""
     config = config_service.get_tenant_config()
     return {
         "enforcement_mode": getattr(config, "enforcement_mode", "SESSION_WATCH"),
         "branch_variation": "poc/fundamentals-session-watch",
+        "dry_run": getattr(config, "session_watch_dry_run", False),
+        "session_watch_dry_run": getattr(config, "session_watch_dry_run", False),
+        "exempt_admins": getattr(config, "session_watch_exempt_admins", True),
+        "session_watch_exempt_admins": getattr(config, "session_watch_exempt_admins", True),
+        "target_ous": getattr(config, "session_watch_target_ous", []),
+        "session_watch_target_ous": getattr(config, "session_watch_target_ous", []),
+        "target_groups": getattr(config, "session_watch_target_groups", []),
+        "session_watch_target_groups": getattr(config, "session_watch_target_groups", []),
+        "onboarding_grace_minutes": getattr(config, "session_watch_onboarding_grace_minutes", 15),
+        "session_watch_onboarding_grace_minutes": getattr(config, "session_watch_onboarding_grace_minutes", 15),
         "metrics": session_guard.metrics,
         "quotas": {
             "reports_api_qpm_limit": session_guard.REPORTS_API_QPM_LIMIT,
             "directory_api_qpm_limit": session_guard.DIRECTORY_API_QPM_LIMIT,
         },
         "active_attestations": session_guard.get_active_attestations(),
+        "active_onboarding_leases": session_guard.get_active_onboarding_leases(),
         "recent_actions": session_guard.get_recent_actions(limit=20),
     }
 

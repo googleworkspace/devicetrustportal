@@ -161,6 +161,112 @@ class SessionGuardScaleTest(unittest.TestCase):
             f"({guard.metrics['directory_batch_http_calls']} BatchHttpRequest)"
         )
 
+    def test_personal_device_onboarding_grace_ou_group_scoping_and_dry_run(self) -> None:
+        revoked_users = []
+        guard = SessionGuardService(
+            sqlite_path=":memory:",
+            attestation_ttl_sec=14400,
+            grace_window_sec=45,
+            signout_cooldown_sec=300,
+            signout_callback=lambda email: revoked_users.append(email) or True,
+        )
+
+        now = 1791036000.0
+        # 1. Grant 15-minute onboarding grace pass to teacher1@district.edu who is adding a personal device
+        expires_at = guard.grant_onboarding_lease(
+            user_email="teacher1@district.edu",
+            minutes=15,
+            reason="PORTAL_ADD_PERSONAL_DEVICE",
+            now_epoch=now,
+        )
+        self.assertEqual(expires_at, now + 900.0)
+        has_lease, rem_sec = guard.has_active_onboarding_lease("teacher1@district.edu", now_epoch=now + 120.0)
+        self.assertTrue(has_lease)
+        self.assertEqual(rem_sec, 780.0)
+
+        # 2. Evaluate login events at now + 120s with OU/Admin scope checker:
+        #    - admin@district.edu is exempt via scope_checker -> SKIP_OUT_OF_SCOPE
+        #    - teacher1@district.edu is in onboarding grace -> ALLOW_ONBOARDING_GRACE
+        #    - rogue@district.edu has no attestation & no lease -> AUDIT_WOULD_SIGN_OUT in dry_run=True
+        events = [
+            LoginAuditEvent(
+                event_id="evt-admin-1",
+                user_email="admin@district.edu",
+                ip_address="203.0.113.5",
+                timestamp_epoch=now,
+            ),
+            LoginAuditEvent(
+                event_id="evt-teacher-byod-1",
+                user_email="teacher1@district.edu",
+                ip_address="198.51.100.42",
+                timestamp_epoch=now,
+            ),
+            LoginAuditEvent(
+                event_id="evt-rogue-1",
+                user_email="rogue@district.edu",
+                ip_address="198.51.100.99",
+                timestamp_epoch=now,
+            ),
+        ]
+
+        def mock_scope_checker(email: str) -> tuple[bool, str]:
+            if email == "admin@district.edu":
+                return False, "EXEMPT_ADMIN"
+            return True, "OU_MATCH:/Students"
+
+        dry_actions = guard.evaluate_login_batch(
+            events,
+            now_epoch=now + 120.0,
+            persist_all_allowed=True,
+            scope_checker=mock_scope_checker,
+            dry_run=True,
+        )
+        self.assertEqual(len(revoked_users), 0)
+        decisions = {a.user_email: a.decision for a in dry_actions}
+        self.assertEqual(decisions["admin@district.edu"], "SKIP_OUT_OF_SCOPE")
+        self.assertEqual(decisions["teacher1@district.edu"], "ALLOW_ONBOARDING_GRACE")
+        self.assertEqual(decisions["rogue@district.edu"], "AUDIT_WOULD_SIGN_OUT")
+
+        # 3. Promote teacher1@district.edu's newly approved personal device -> clears lease & attests session
+        promoted_serial = guard.promote_approved_device(
+            user_email="teacher1@district.edu",
+            device_id="devices/byod-99/deviceUsers/teacher1",
+            serial_number="MAC-BYOD-99",
+            ip_address="198.51.100.42",
+            now_epoch=now + 130.0,
+        )
+        self.assertEqual(promoted_serial, "MAC-BYOD-99")
+        has_lease_after, _ = guard.has_active_onboarding_lease("teacher1@district.edu", now_epoch=now + 130.0)
+        self.assertFalse(has_lease_after)
+
+        # 4. Run live enforcement (dry_run=False) on a new event batch:
+        #    teacher1@district.edu is now ALLOW_ATTESTED; rogue@district.edu is REVOKE_SIGN_OUT
+        live_events = [
+            LoginAuditEvent(
+                event_id="evt-teacher-byod-2",
+                user_email="teacher1@district.edu",
+                ip_address="198.51.100.42",
+                timestamp_epoch=now + 135.0,
+            ),
+            LoginAuditEvent(
+                event_id="evt-rogue-2",
+                user_email="rogue@district.edu",
+                ip_address="198.51.100.99",
+                timestamp_epoch=now + 135.0,
+            ),
+        ]
+        live_actions = guard.evaluate_login_batch(
+            live_events,
+            now_epoch=now + 240.0,
+            persist_all_allowed=True,
+            scope_checker=mock_scope_checker,
+            dry_run=False,
+        )
+        live_decisions = {a.user_email: a.decision for a in live_actions}
+        self.assertEqual(live_decisions["teacher1@district.edu"], "ALLOW_ATTESTED")
+        self.assertEqual(live_decisions["rogue@district.edu"], "REVOKE_SIGN_OUT")
+        self.assertEqual(revoked_users, ["rogue@district.edu"])
+
 
 if __name__ == "__main__":
     unittest.main()

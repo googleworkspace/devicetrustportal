@@ -534,7 +534,10 @@
   border: 1px solid var(--dtg-border);
   border-radius: var(--dtg-radius-md);
   box-shadow: var(--dtg-shadow-sm);
-  overflow: hidden;
+  max-height: 440px;
+  overflow-y: auto;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .dtg-table {
@@ -548,6 +551,11 @@
 }
 
 .dtg-table th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background-color: var(--dtg-surface-subtle);
+  box-shadow: 0 1px 0 var(--dtg-border);
   padding: 13px 16px;
   text-align: left;
   color: var(--dtg-text-secondary);

@@ -29,17 +29,30 @@ export interface TenantConfig {
   chaining_allowed_groups?: string[];
   chaining_allowed_ous?: string[];
   enforcement_mode?: string;
+  session_watch_target_ous?: string[];
+  session_watch_target_groups?: string[];
+  session_watch_exempt_admins?: boolean;
+  session_watch_dry_run?: boolean;
+  session_watch_onboarding_grace_minutes?: number;
 }
 
 export interface SessionWatchMetricsResponse {
   enforcement_mode: string;
   branch_variation: string;
+  session_watch_target_ous?: string[];
+  session_watch_target_groups?: string[];
+  session_watch_exempt_admins?: boolean;
+  session_watch_dry_run?: boolean;
+  session_watch_onboarding_grace_minutes?: number;
   metrics: {
     inventory_devices_cached: number;
     attestations_received: number;
     login_events_evaluated: number;
     allowed_attested: number;
     deferred_grace_window: number;
+    onboarding_grace_allowed?: number;
+    skipped_out_of_scope?: number;
+    audit_would_signout?: number;
     signouts_executed: number;
     reports_api_calls: number;
     directory_api_calls: number;
@@ -55,6 +68,12 @@ export interface SessionWatchMetricsResponse {
     ip_address: string;
     attested_at_iso: string;
     session_id: string;
+  }>;
+  active_onboarding_leases?: Array<{
+    user_email: string;
+    expires_at_iso: string;
+    remaining_seconds: number;
+    reason: string;
   }>;
   recent_actions: Array<{
     event_id: string;
@@ -87,6 +106,7 @@ export interface DeviceUserItem {
   approval_state: string;
   owner_type: string;
   last_sync_time: string;
+  annotated_user?: string;
 }
 
 export const sendClientLog = (
@@ -320,10 +340,28 @@ export const attestBrowserSession = async (
   return response.json();
 };
 
+export const startOnboardingLease = async (
+  minutes?: number
+): Promise<{
+  status: string;
+  user_email: string;
+  expires_at_iso: string;
+  minutes: number;
+  message: string;
+}> => {
+  const response = await fetchWithAuth(`${API_BASE_URL}/api/session-watch/onboarding-lease`, {
+    method: "POST",
+    headers: getHeaders(),
+    body: JSON.stringify({ minutes }),
+  });
+  return response.json();
+};
+
 export const runLiveLoginSweep = async (
   lookbackMinutes: number = 15
 ): Promise<{
   status: string;
+  dry_run?: boolean;
   fetched_login_events: number;
   revoked_count: number;
   revoked_users: string[];

@@ -16,10 +16,12 @@ import os
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone
 from pydantic import BaseModel
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request
 from backend.services.config_service import config_service
 from backend.services.cloud_identity import cloud_identity_service, normalize_customer_id
 from backend.services.directory_service import directory_service
+from backend.services.session_guard import DeviceRecord
+from backend.routes.session_watch import session_guard
 from backend.routes.admin import get_current_user_email
 
 router = APIRouter(prefix="/api/devices", tags=["Devices"])
@@ -48,6 +50,7 @@ class DeviceUserItem(BaseModel):
     approval_state: str
     owner_type: str
     last_sync_time: str
+    annotated_user: Optional[str] = ""
 
 class DeviceActionRequest(BaseModel):
     device_user_name: str
@@ -172,8 +175,9 @@ def crawl_devices_for_user(
             list_kwargs["filter"] = query_filter
 
         try:
-            request = cloud_identity_service.service.devices().list(**list_kwargs)
-            response = request.execute() or {}
+            with cloud_identity_service._lock:
+                request = cloud_identity_service.service.devices().list(**list_kwargs)
+                response = request.execute() or {}
         except Exception as list_err:
             print(f"WARNING [devices.py]: Failed to fetch page of devices: {list_err}")
             if not next_page_token:
@@ -215,8 +219,9 @@ def crawl_devices_for_user(
                 }
                 if du_wildcard_token:
                     du_w_kwargs["pageToken"] = du_wildcard_token
-                du_w_req = cloud_identity_service.service.devices().deviceUsers().list(**du_w_kwargs)
-                du_w_resp = du_w_req.execute() or {}
+                with cloud_identity_service._lock:
+                    du_w_req = cloud_identity_service.service.devices().deviceUsers().list(**du_w_kwargs)
+                    du_w_resp = du_w_req.execute() or {}
                 du_w_list = du_w_resp.get("deviceUsers") or []
                 if not isinstance(du_w_list, list):
                     du_w_list = []
@@ -232,9 +237,10 @@ def crawl_devices_for_user(
                         parent_dev_name = du_name.split("/deviceUsers/")[0]
                         if parent_dev_name not in device_map:
                             try:
-                                fetched_dev = cloud_identity_service.service.devices().get(
-                                    name=parent_dev_name, customer=cid
-                                ).execute() or {}
+                                with cloud_identity_service._lock:
+                                    fetched_dev = cloud_identity_service.service.devices().get(
+                                        name=parent_dev_name, customer=cid
+                                    ).execute() or {}
                                 if isinstance(fetched_dev, dict) and isinstance(fetched_dev.get("name"), str) and fetched_dev.get("name"):
                                     device_map[parent_dev_name] = fetched_dev
                                     total_devices_scanned += 1
@@ -265,6 +271,7 @@ def crawl_devices_for_user(
                                     approval_state=state,
                                     owner_type=meta["owner_type"],
                                     last_sync_time=effective_sync,
+                                    annotated_user=norm_email,
                                 )
                             )
 
@@ -291,8 +298,9 @@ def crawl_devices_for_user(
                 }
                 if du_page_token:
                     du_kwargs["pageToken"] = du_page_token
-                du_req = cloud_identity_service.service.devices().deviceUsers().list(**du_kwargs)
-                du_resp = du_req.execute() or {}
+                with cloud_identity_service._lock:
+                    du_req = cloud_identity_service.service.devices().deviceUsers().list(**du_kwargs)
+                    du_resp = du_req.execute() or {}
 
                 du_list = du_resp.get("deviceUsers") or []
                 if not isinstance(du_list, list):
@@ -324,7 +332,8 @@ def crawl_devices_for_user(
                                     serial_number=meta["serial_number"],
                                     approval_state=state,
                                     owner_type=meta["owner_type"],
-                                    last_sync_time=effective_sync
+                                    last_sync_time=effective_sync,
+                                    annotated_user=norm_email,
                                 )
                             )
 
@@ -433,6 +442,7 @@ def get_my_approved_devices(user_email: str = Depends(get_current_user_email)):
             cb_os = extract_field(cb, "os_version", default="ChromeOS")
             cb_sync = normalize_sync_time(cb.get("last_sync_time"))
             cb_du_name = str(cb.get("device_user_name") or f"directory/devices/{cb_serial}/deviceUsers/{target_email}").strip()
+            cb_annotated_user = extract_field(cb, "annotated_user", default="").lower()
 
             # Check if this physical hardware serial is already in my_devices (case-insensitive)
             existing_match = None
@@ -442,6 +452,8 @@ def get_my_approved_devices(user_email: str = Depends(get_current_user_email)):
             if existing_match:
                 existing_match.owner_type = "COMPANY"
                 existing_match.approval_state = "APPROVED"
+                if cb_annotated_user:
+                    existing_match.annotated_user = cb_annotated_user
                 cb_time_key = sync_time_sort_key(cb_sync)
                 ex_time_key = sync_time_sort_key(existing_match.last_sync_time)
                 if cb_time_key > 0 and (ex_time_key < 0 or cb_time_key > ex_time_key):
@@ -465,7 +477,8 @@ def get_my_approved_devices(user_email: str = Depends(get_current_user_email)):
                         serial_number=cb_serial,
                         approval_state=extract_field(cb, "approval_state", default="APPROVED").upper(),
                         owner_type=extract_field(cb, "owner_type", default="COMPANY").upper(),
-                        last_sync_time=cb_sync
+                        last_sync_time=cb_sync,
+                        annotated_user=cb_annotated_user,
                     )
                 )
     except Exception as e:
@@ -510,6 +523,9 @@ def get_my_approved_devices(user_email: str = Depends(get_current_user_email)):
                         existing.approval_state = "APPROVED"
                         if e_owner != "COMPANY" or s_owner == "COMPANY":
                             existing.device_user_name = s_item.device_user_name
+
+                    if not existing.annotated_user and s_item.annotated_user:
+                        existing.annotated_user = s_item.annotated_user
 
                     s_time_key = sync_time_sort_key(s_item.last_sync_time)
                     e_time_key = sync_time_sort_key(existing.last_sync_time)
@@ -556,11 +572,46 @@ def get_my_approved_devices(user_email: str = Depends(get_current_user_email)):
                         primary.os_version = other.os_version
                 deduped_devices.append(primary)
 
+    # Warm SessionGuard approved serial cache and auto-grant onboarding grace if user has both an anchor and a pending BYOD device
+    has_trusted_anchor = False
+    has_pending_byod = False
+    warm_records: List[DeviceRecord] = []
+    for d in deduped_devices:
+        if d.owner_type == "COMPANY" or d.approval_state == "APPROVED":
+            has_trusted_anchor = True
+            if is_valid_serial(d.serial_number):
+                warm_records.append(
+                    DeviceRecord(
+                        device_id=d.device_user_name,
+                        serial_number=d.serial_number.strip().upper(),
+                        device_type="CHROMEOS" if d.owner_type == "COMPANY" else "CLOUD_IDENTITY_APPROVED",
+                        status="APPROVED",
+                        assigned_user=target_email,
+                    )
+                )
+        elif d.approval_state == "PENDING_APPROVAL":
+            has_pending_byod = True
+
+    if warm_records:
+        session_guard.load_device_inventory(warm_records)
+
+    has_lease, _ = session_guard.has_active_onboarding_lease(target_email)
+    if has_trusted_anchor and has_pending_byod and not has_lease:
+        session_guard.grant_onboarding_lease(
+            user_email=target_email,
+            minutes=config.session_watch_onboarding_grace_minutes,
+            reason="PENDING_BYOD_APPROVAL"
+        )
+
     print(f"INFO [devices.py]: Matched {total_devices_matched} Cloud Identity assets and {len(directory_cbs)} Directory Chromebooks. Deduplicated {len(my_devices)} down to {len(deduped_devices)} primary device bindings.")
     return deduped_devices
 
 @router.post("/approve")
-def approve_device(request: DeviceActionRequest, user_email: str = Depends(get_current_user_email)):
+def approve_device(
+    request: DeviceActionRequest,
+    http_request: Request = None,
+    user_email: str = Depends(get_current_user_email)
+):
     if not cloud_identity_service.service:
         err_detail = getattr(cloud_identity_service, "init_error", None) or "Missing or invalid Domain-Wide Delegation credentials."
         raise HTTPException(status_code=500, detail=f"Cloud Identity API service is not initialized ({err_detail}).")
@@ -573,6 +624,27 @@ def approve_device(request: DeviceActionRequest, user_email: str = Depends(get_c
         operation = cloud_identity_service.approve_device_user(
             device_user_name=request.device_user_name,
             customer_id=cid
+        )
+        # Immediately promote device in SessionGuard so active sessions are not terminated by login sweep
+        serial_num = ""
+        target_owner_email = user_email
+        try:
+            parent_dev = request.device_user_name.split("/deviceUsers/")[0]
+            if not parent_dev.startswith("directory/"):
+                with cloud_identity_service._lock:
+                    dev_resp = cloud_identity_service.service.devices().get(name=parent_dev, customer=cid).execute() or {}
+                serial_num = extract_field(dev_resp, "serialNumber", "deviceSerialNumber", default="")
+        except Exception:
+            pass
+        client_ip = None
+        if http_request is not None:
+            forwarded = http_request.headers.get("x-forwarded-for", "")
+            client_ip = forwarded.split(",")[0].strip() if forwarded else (http_request.client.host if http_request.client else None)
+        session_guard.promote_approved_device(
+            user_email=target_owner_email,
+            device_id=request.device_user_name,
+            serial_number=serial_num,
+            ip_address=client_ip,
         )
         return {"status": "SUCCESS", "operation": operation}
     except HTTPException:
@@ -594,8 +666,9 @@ def revoke_device(request: DeviceActionRequest, user_email: str = Depends(get_cu
         parent_device = request.device_user_name.split("/deviceUsers/")[0]
         if parent_device.startswith("directory/"):
             raise HTTPException(status_code=403, detail="Access Denied: Company-owned trust anchors cannot be revoked.")
-        dev_req = cloud_identity_service.service.devices().get(name=parent_device, customer=cid)
-        dev_resp = dev_req.execute()
+        with cloud_identity_service._lock:
+            dev_req = cloud_identity_service.service.devices().get(name=parent_device, customer=cid)
+            dev_resp = dev_req.execute()
         if dev_resp.get("ownerType") == "COMPANY":
             raise HTTPException(status_code=403, detail="Access Denied: Company-owned trust anchors cannot be revoked.")
 
@@ -629,8 +702,9 @@ def revoke_device_bulk(request: BulkRevokeRequest, user_email: str = Depends(get
             parent_dev = du_name.split("/deviceUsers/")[0]
             if parent_dev.startswith("directory/"):
                 continue
-            dev_req = cloud_identity_service.service.devices().get(name=parent_dev, customer=cid)
-            dev_resp = dev_req.execute()
+            with cloud_identity_service._lock:
+                dev_req = cloud_identity_service.service.devices().get(name=parent_dev, customer=cid)
+                dev_resp = dev_req.execute()
             if dev_resp.get("ownerType") != "COMPANY":
                 bulk_targets.append(du_name)
 

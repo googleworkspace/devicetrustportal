@@ -14,6 +14,7 @@
 
 import os
 import datetime
+import threading
 from typing import List, Dict, Any, Optional
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
@@ -51,6 +52,7 @@ def normalize_customer_id(customer_id: Optional[str]) -> str:
 
 class CloudIdentityService:
     def __init__(self):
+        self._lock = threading.RLock()
         self.scopes = [
             "https://www.googleapis.com/auth/cloud-identity.devices"
         ]
@@ -94,8 +96,9 @@ class CloudIdentityService:
 
         cid = normalize_customer_id(customer_id)
         try:
-            request = self.service.devices().deviceUsers().get(name=device_user_name, customer=cid)
-            response = request.execute()
+            with self._lock:
+                request = self.service.devices().deviceUsers().get(name=device_user_name, customer=cid)
+                response = request.execute()
             return response
         except HttpError as e:
             print(f"Cloud Identity API error during get_device_user: {e}")
@@ -108,8 +111,9 @@ class CloudIdentityService:
         cid = normalize_customer_id(customer_id)
         try:
             body = {"customer": cid}
-            request = self.service.devices().deviceUsers().approve(name=device_user_name, body=body)
-            operation = request.execute()
+            with self._lock:
+                request = self.service.devices().deviceUsers().approve(name=device_user_name, body=body)
+                operation = request.execute()
             return operation
         except HttpError as e:
             raise Exception(f"Cloud Identity API error during approve: {e}")
@@ -124,15 +128,17 @@ class CloudIdentityService:
             if not query and raw_device_id.startswith("devices/"):
                 device_name = raw_device_id
             else:
-                request = self.service.devices().list(customer=cid, filter=query)
-                response = request.execute()
+                with self._lock:
+                    request = self.service.devices().list(customer=cid, filter=query)
+                    response = request.execute()
                 devices = response.get("devices", [])
                 if not devices:
                     return None
                 device_name = devices[0]["name"]
 
-            users_request = self.service.devices().deviceUsers().list(parent=device_name, customer=cid)
-            users_response = users_request.execute()
+            with self._lock:
+                users_request = self.service.devices().deviceUsers().list(parent=device_name, customer=cid)
+                users_response = users_request.execute()
             device_users = users_response.get("deviceUsers", [])
             
             for du in device_users:
@@ -161,14 +167,16 @@ class CloudIdentityService:
             cutoff_str = cutoff_date.strftime("%Y-%m-%dT%H:%M:%SZ")
             
             query = f"lastSyncTime < '{cutoff_str}'"
-            request = self.service.devices().list(customer=cid, filter=query)
-            response = request.execute()
+            with self._lock:
+                request = self.service.devices().list(customer=cid, filter=query)
+                response = request.execute()
             devices = response.get("devices", [])
             
             inactive_device_users = []
             for d in devices:
-                du_req = self.service.devices().deviceUsers().list(parent=d["name"], customer=cid)
-                du_resp = du_req.execute()
+                with self._lock:
+                    du_req = self.service.devices().deviceUsers().list(parent=d["name"], customer=cid)
+                    du_resp = du_req.execute()
                 for du in du_resp.get("deviceUsers", []):
                     state = (du.get("managementState") or du.get("approvalState") or "").upper()
                     if state == "APPROVED":
@@ -186,8 +194,9 @@ class CloudIdentityService:
         try:
             # Strictly enforce BLOCK method to ensure revoked devices remain explicitly BLOCKED
             body = {"customer": cid}
-            request = self.service.devices().deviceUsers().block(name=device_user_name, body=body)
-            response = request.execute()
+            with self._lock:
+                request = self.service.devices().deviceUsers().block(name=device_user_name, body=body)
+                response = request.execute()
             return response
         except HttpError as e:
             raise Exception(f"Cloud Identity API error during revocation: {e}")
@@ -198,19 +207,20 @@ class CloudIdentityService:
 
         cid = normalize_customer_id(customer_id)
         print(f"INFO [cloud_identity.py]: Executing BatchHttpRequest for {len(device_user_names)} device revocation(s) using BLOCK method...")
-        batch = self.service.new_batch_http_request()
-        
-        errors = []
-        def callback(request_id, response, exception):
-            if exception:
-                errors.append(exception)
+        with self._lock:
+            batch = self.service.new_batch_http_request()
+            
+            errors = []
+            def callback(request_id, response, exception):
+                if exception:
+                    errors.append(exception)
 
-        body = {"customer": cid}
-        for du_name in device_user_names:
-            req = self.service.devices().deviceUsers().block(name=du_name, body=body)
-            batch.add(req, callback=callback)
+            body = {"customer": cid}
+            for du_name in device_user_names:
+                req = self.service.devices().deviceUsers().block(name=du_name, body=body)
+                batch.add(req, callback=callback)
 
-        batch.execute()
+            batch.execute()
         if errors:
             raise Exception(f"Batch revocation encountered {len(errors)} error(s). First error: {errors[0]}")
             

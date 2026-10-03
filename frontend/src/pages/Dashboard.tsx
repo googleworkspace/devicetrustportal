@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   getMyDevices,
   approveDevice,
@@ -26,6 +26,7 @@ import {
   getSessionWatchMetrics,
   syncSessionWatchInventory,
   attestBrowserSession,
+  startOnboardingLease,
   runLiveLoginSweep,
   DeviceUserItem,
   SessionWatchMetricsResponse,
@@ -57,6 +58,8 @@ export const Dashboard: React.FC = () => {
   const [enforcementMode, setEnforcementMode] = useState<string>("SESSION_WATCH");
   const [sessionWatchData, setSessionWatchData] = useState<SessionWatchMetricsResponse | null>(null);
   const [sessionWatchLoading, setSessionWatchLoading] = useState(false);
+  const [showOnlyMyCompanyDevices, setShowOnlyMyCompanyDevices] = useState(false);
+  const autoAttestedForUserRef = useRef<string>("");
   const t = getTranslator(locale);
 
   const loadSessionWatchStatus = useCallback(() => {
@@ -117,6 +120,27 @@ export const Dashboard: React.FC = () => {
           const list = Array.isArray(data) ? data : [];
           setDevices(list);
           setLoadingDevices(false);
+
+          // Auto-attest current browser session if user has an approved or company device and no pending BYOD devices
+          const hasPending = list.some((d) => d.approval_state === "PENDING_APPROVAL");
+          const trustedCandidate =
+            list.find((d) => d.owner_type === "COMPANY" && d.serial_number && d.serial_number !== "N/A") ||
+            list.find((d) => d.approval_state === "APPROVED" && d.serial_number && d.serial_number !== "N/A");
+          if (
+            !hasPending &&
+            trustedCandidate &&
+            autoAttestedForUserRef.current !== userEmail &&
+            typeof attestBrowserSession === "function"
+          ) {
+            autoAttestedForUserRef.current = userEmail;
+            const pAttest = attestBrowserSession(userEmail, trustedCandidate.serial_number);
+            if (pAttest && typeof pAttest.then === "function") {
+              pAttest.then(() => loadSessionWatchStatus()).catch(() => {});
+            }
+          } else if (hasPending) {
+            loadSessionWatchStatus();
+          }
+
           if (typeof sendClientLog === "function") {
             if (list.length === 0) {
               sendClientLog(
@@ -157,7 +181,7 @@ export const Dashboard: React.FC = () => {
     } else {
       setDevices([]);
     }
-  }, [userEmail]);
+  }, [userEmail, loadSessionWatchStatus]);
 
   useEffect(() => {
     loadDevices();
@@ -182,10 +206,11 @@ export const Dashboard: React.FC = () => {
     });
     try {
       await approveDevice(name);
-      setMessage("Device approved successfully.");
+      setMessage("Device approved and promoted in Session Watch! Active sessions are now protected.");
       setDevices((prev) =>
         prev.map((d) => (d.device_user_name === name ? { ...d, approval_state: "APPROVED" } : d))
       );
+      loadSessionWatchStatus();
       sendClientLog("INFO", "APPROVE_DEVICE_SUCCESS", `Device approved successfully: ${name}`, {
         device_user_name: name,
       });
@@ -196,6 +221,21 @@ export const Dashboard: React.FC = () => {
         device_user_name: name,
         error: e?.message || String(e),
       });
+    }
+  };
+
+  const handleStartOnboardingLease = async () => {
+    if (!userEmail) return;
+    setSessionWatchLoading(true);
+    setMessage("");
+    try {
+      const res = await startOnboardingLease();
+      setMessage(res.message);
+      loadSessionWatchStatus();
+    } catch (e: any) {
+      setMessage(`Failed to start personal device onboarding pass: ${e.message}`);
+    } finally {
+      setSessionWatchLoading(false);
     }
   };
 
@@ -243,8 +283,20 @@ export const Dashboard: React.FC = () => {
 
   const personalDevices = devices.filter((d) => d.owner_type !== "COMPANY");
   const companyDevices = devices.filter((d) => d.owner_type === "COMPANY");
+  const myAssignedCompanyDevices = companyDevices.filter(
+    (d) =>
+      (d.annotated_user && d.annotated_user.toLowerCase() === userEmail.toLowerCase()) ||
+      d.device_user_name.toLowerCase().includes(`/deviceusers/${userEmail.toLowerCase()}`)
+  );
+  const displayedCompanyDevices =
+    showOnlyMyCompanyDevices && myAssignedCompanyDevices.length > 0
+      ? myAssignedCompanyDevices
+      : companyDevices;
   const approvedByodCount = personalDevices.filter((d) => d.approval_state === "APPROVED").length;
   const pendingByodCount = personalDevices.filter((d) => d.approval_state === "PENDING_APPROVAL").length;
+  const activeUserLease = sessionWatchData?.active_onboarding_leases?.find(
+    (l) => l.user_email.toLowerCase() === userEmail.toLowerCase()
+  );
 
   const handleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.checked) {
@@ -338,8 +390,9 @@ export const Dashboard: React.FC = () => {
     setMessage("");
     try {
       const res = await runLiveLoginSweep(15);
+      const modeTag = res.dry_run ? " [AUDIT / DRY-RUN]" : "";
       setMessage(
-        `Live Login Sweep Complete: Evaluated ${res.fetched_login_events} domain login event(s) from Reports API; executed ${res.revoked_count} users.signOut revocation(s).`
+        `Live Login Sweep Complete${modeTag}: Evaluated ${res.fetched_login_events} domain login event(s) from Reports API; executed ${res.revoked_count} users.signOut revocation(s).`
       );
       loadSessionWatchStatus();
     } catch (e: any) {
@@ -480,6 +533,15 @@ export const Dashboard: React.FC = () => {
                 <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
                   <button
                     type="button"
+                    onClick={handleStartOnboardingLease}
+                    disabled={sessionWatchLoading}
+                    className="dtg-btn dtg-btn-success"
+                    title="Pauses Session Watch sign-out for 15 minutes while you sign in on a new personal device and approve it"
+                  >
+                    + Add Personal Device (15m Grace Pass)
+                  </button>
+                  <button
+                    type="button"
                     onClick={handleSyncInventory}
                     disabled={sessionWatchLoading}
                     className="dtg-btn dtg-btn-outline"
@@ -508,50 +570,158 @@ export const Dashboard: React.FC = () => {
               )}
             </div>
 
-            {sessionWatchData && (
+            {activeUserLease && (
               <div
                 style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+                  marginTop: "12px",
+                  padding: "10px 14px",
+                  borderRadius: "8px",
+                  backgroundColor: "var(--dtg-success-bg)",
+                  border: "1px solid var(--dtg-success-border)",
+                  color: "var(--dtg-success)",
+                  fontSize: "13px",
+                  fontWeight: 600,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
                   gap: "10px",
-                  marginTop: "14px",
-                  paddingTop: "12px",
-                  borderTop: "1px solid var(--dtg-border-subtle)",
+                  flexWrap: "wrap",
                 }}
               >
-                <div>
-                  <div style={{ fontSize: "11px", color: "var(--dtg-text-secondary)", fontWeight: 600 }}>
-                    Cached Inventory Serials
-                  </div>
-                  <div style={{ fontSize: "18px", fontWeight: 700, color: "var(--dtg-text)" }}>
-                    {sessionWatchData.metrics.inventory_devices_cached}
-                  </div>
-                </div>
-                <div>
-                  <div style={{ fontSize: "11px", color: "var(--dtg-text-secondary)", fontWeight: 600 }}>
-                    Active Attestations
-                  </div>
-                  <div style={{ fontSize: "18px", fontWeight: 700, color: "var(--dtg-success)" }}>
-                    {sessionWatchData.active_attestations?.length || 0}
-                  </div>
-                </div>
-                <div>
-                  <div style={{ fontSize: "11px", color: "var(--dtg-text-secondary)", fontWeight: 600 }}>
-                    Logins Evaluated
-                  </div>
-                  <div style={{ fontSize: "18px", fontWeight: 700, color: "var(--dtg-text)" }}>
-                    {sessionWatchData.metrics.login_events_evaluated}
-                  </div>
-                </div>
-                <div>
-                  <div style={{ fontSize: "11px", color: "var(--dtg-text-secondary)", fontWeight: 600 }}>
-                    users.signOut Revocations
-                  </div>
-                  <div style={{ fontSize: "18px", fontWeight: 700, color: "var(--dtg-danger)" }}>
-                    {sessionWatchData.metrics.signouts_executed}
-                  </div>
-                </div>
+                <span>
+                  🛡️ Personal Device Onboarding Pass Active ({Math.max(1, Math.ceil(activeUserLease.remaining_seconds / 60))}m remaining) — Session Watch will NOT sign you out while you sign in on your new personal device and click Approve below.
+                </span>
+                <span style={{ fontSize: "11px", opacity: 0.9 }}>
+                  Reason: {activeUserLease.reason}
+                </span>
               </div>
+            )}
+
+            {sessionWatchData && (
+              <>
+                <div
+                  style={{
+                    display: "flex",
+                    gap: "8px",
+                    flexWrap: "wrap",
+                    marginTop: "12px",
+                  }}
+                >
+                  <span
+                    style={{
+                      fontSize: "11px",
+                      fontWeight: 600,
+                      padding: "3px 9px",
+                      borderRadius: "999px",
+                      backgroundColor: sessionWatchData.session_watch_dry_run ? "#fef7e0" : "#e8f0fe",
+                      color: sessionWatchData.session_watch_dry_run ? "#b06000" : "#1967d2",
+                      border: sessionWatchData.session_watch_dry_run ? "1px solid #fde293" : "1px solid #aecbfa",
+                    }}
+                  >
+                    Mode: {sessionWatchData.session_watch_dry_run ? "Audit-Only (Dry-Run)" : "Active Enforcement"}
+                  </span>
+                  <span
+                    style={{
+                      fontSize: "11px",
+                      fontWeight: 600,
+                      padding: "3px 9px",
+                      borderRadius: "999px",
+                      backgroundColor: "#f1f3f4",
+                      color: "#3c4043",
+                      border: "1px solid #dadce0",
+                    }}
+                  >
+                    Target OUs:{" "}
+                    {sessionWatchData.session_watch_target_ous && sessionWatchData.session_watch_target_ous.length > 0
+                      ? sessionWatchData.session_watch_target_ous.join(", ")
+                      : "All Domain OUs"}
+                  </span>
+                  <span
+                    style={{
+                      fontSize: "11px",
+                      fontWeight: 600,
+                      padding: "3px 9px",
+                      borderRadius: "999px",
+                      backgroundColor: "#f1f3f4",
+                      color: "#3c4043",
+                      border: "1px solid #dadce0",
+                    }}
+                  >
+                    Target Groups:{" "}
+                    {sessionWatchData.session_watch_target_groups && sessionWatchData.session_watch_target_groups.length > 0
+                      ? sessionWatchData.session_watch_target_groups.join(", ")
+                      : "All Users"}
+                  </span>
+                  <span
+                    style={{
+                      fontSize: "11px",
+                      fontWeight: 600,
+                      padding: "3px 9px",
+                      borderRadius: "999px",
+                      backgroundColor: sessionWatchData.session_watch_exempt_admins !== false ? "#e6f4ea" : "#fce8e6",
+                      color: sessionWatchData.session_watch_exempt_admins !== false ? "#137333" : "#d93025",
+                      border:
+                        sessionWatchData.session_watch_exempt_admins !== false
+                          ? "1px solid #ceead6"
+                          : "1px solid #fad2cf",
+                    }}
+                  >
+                    Admin Safe-Harbor: {sessionWatchData.session_watch_exempt_admins !== false ? "Exempt" : "Enforced"}
+                  </span>
+                </div>
+
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
+                    gap: "10px",
+                    marginTop: "12px",
+                    paddingTop: "12px",
+                    borderTop: "1px solid var(--dtg-border-subtle)",
+                  }}
+                >
+                  <div>
+                    <div style={{ fontSize: "11px", color: "var(--dtg-text-secondary)", fontWeight: 600 }}>
+                      Cached Inventory Serials
+                    </div>
+                    <div style={{ fontSize: "18px", fontWeight: 700, color: "var(--dtg-text)" }}>
+                      {sessionWatchData.metrics.inventory_devices_cached}
+                    </div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: "11px", color: "var(--dtg-text-secondary)", fontWeight: 600 }}>
+                      Active Attestations
+                    </div>
+                    <div style={{ fontSize: "18px", fontWeight: 700, color: "var(--dtg-success)" }}>
+                      {sessionWatchData.active_attestations?.length || 0}
+                    </div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: "11px", color: "var(--dtg-text-secondary)", fontWeight: 600 }}>
+                      Onboarding Passes
+                    </div>
+                    <div style={{ fontSize: "18px", fontWeight: 700, color: "#1967d2" }}>
+                      {sessionWatchData.active_onboarding_leases?.length || 0}
+                    </div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: "11px", color: "var(--dtg-text-secondary)", fontWeight: 600 }}>
+                      Logins Evaluated
+                    </div>
+                    <div style={{ fontSize: "18px", fontWeight: 700, color: "var(--dtg-text)" }}>
+                      {sessionWatchData.metrics.login_events_evaluated}
+                    </div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: "11px", color: "var(--dtg-text-secondary)", fontWeight: 600 }}>
+                      users.signOut Revocations
+                    </div>
+                    <div style={{ fontSize: "18px", fontWeight: 700, color: "var(--dtg-danger)" }}>
+                      {sessionWatchData.metrics.signouts_executed}
+                    </div>
+                  </div>
+                </div>
+              </>
             )}
           </div>
         )}
@@ -807,6 +977,17 @@ export const Dashboard: React.FC = () => {
                   <div className="dtg-section-subtitle">{t.personalDevicesSubtitle}</div>
                 </div>
                 <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
+                  {enforcementMode === "SESSION_WATCH" && (
+                    <button
+                      type="button"
+                      onClick={handleStartOnboardingLease}
+                      disabled={sessionWatchLoading}
+                      className="dtg-btn dtg-btn-success"
+                      title="Start a 15-minute grace window so you can sign in on a new personal device and approve it here without being signed out"
+                    >
+                      + Add Personal Device (15m Pass)
+                    </button>
+                  )}
                   <button
                     onClick={loadDevices}
                     disabled={loadingDevices}
@@ -976,10 +1157,23 @@ export const Dashboard: React.FC = () => {
                   <div>
                     <h2 className="dtg-section-title">
                       {t.companyDevicesTitle}
-                      <span className="dtg-section-count">{companyDevices.length}</span>
+                      <span className="dtg-section-count">{displayedCompanyDevices.length}</span>
                     </h2>
                     <div className="dtg-section-subtitle">{t.companyDevicesSubtitle}</div>
                   </div>
+                  {isAdmin && myAssignedCompanyDevices.length > 0 && myAssignedCompanyDevices.length < companyDevices.length && (
+                    <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                      <button
+                        type="button"
+                        onClick={() => setShowOnlyMyCompanyDevices((prev) => !prev)}
+                        className="dtg-btn dtg-btn-outline"
+                      >
+                        {showOnlyMyCompanyDevices
+                          ? `Show All Domain Chromebooks (${companyDevices.length})`
+                          : `Show Only My Assigned (${myAssignedCompanyDevices.length})`}
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 <div className="dtg-table-wrap">
@@ -994,7 +1188,7 @@ export const Dashboard: React.FC = () => {
                       </tr>
                     </thead>
                     <tbody>
-                      {companyDevices.map((d, i) => (
+                      {displayedCompanyDevices.map((d, i) => (
                         <tr key={i}>
                           <td className="dtg-cell-device" data-label={t.deviceHeader}>
                             <div className="dtg-device-cell">
@@ -1006,6 +1200,7 @@ export const Dashboard: React.FC = () => {
                                   style={{ color: "var(--dtg-primary)" }}
                                 >
                                   {t.companyOwnedLabel}
+                                  {d.annotated_user ? ` • ${d.annotated_user}` : ""}
                                 </div>
                               </div>
                             </div>

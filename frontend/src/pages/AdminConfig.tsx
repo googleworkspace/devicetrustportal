@@ -30,6 +30,11 @@ export const AdminConfig: React.FC = () => {
   const [googleClientId, setGoogleClientId] = useState("");
   const [defaultLocale, setDefaultLocale] = useState("en");
   const [enforcementMode, setEnforcementMode] = useState("SESSION_WATCH");
+  const [sessionWatchTargetOusInput, setSessionWatchTargetOusInput] = useState("");
+  const [sessionWatchTargetGroupsInput, setSessionWatchTargetGroupsInput] = useState("");
+  const [sessionWatchExemptAdmins, setSessionWatchExemptAdmins] = useState(true);
+  const [sessionWatchDryRun, setSessionWatchDryRun] = useState(false);
+  const [sessionWatchOnboardingGraceMinutes, setSessionWatchOnboardingGraceMinutes] = useState(15);
   const [newAdminEmail, setNewAdminEmail] = useState("");
   const [showAddAdminModal, setShowAddAdminModal] = useState(false);
 
@@ -53,6 +58,11 @@ export const AdminConfig: React.FC = () => {
         setGoogleClientId(data.google_client_id || "");
         setDefaultLocale(data.default_locale || "en");
         setEnforcementMode(data.enforcement_mode || "SESSION_WATCH");
+        setSessionWatchTargetOusInput((data.session_watch_target_ous || []).join(", "));
+        setSessionWatchTargetGroupsInput((data.session_watch_target_groups || []).join(", "));
+        setSessionWatchExemptAdmins(data.session_watch_exempt_admins !== false);
+        setSessionWatchDryRun(Boolean(data.session_watch_dry_run));
+        setSessionWatchOnboardingGraceMinutes(data.session_watch_onboarding_grace_minutes || 15);
         setLoading(false);
         sendClientLog("INFO", "ADMIN_CONFIG_LOADED", `Admin config loaded for ${userEmail}`);
       } catch (e: any) {
@@ -88,6 +98,15 @@ export const AdminConfig: React.FC = () => {
     setError("");
     setSaving(true);
 
+    const parsedTargetOus = sessionWatchTargetOusInput
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const parsedTargetGroups = sessionWatchTargetGroupsInput
+      .split(",")
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean);
+
     const updatedConfig: TenantConfig = {
       customer_id: config?.customer_id || "customers/my_customer",
       inactivity_threshold_days: Number(threshold),
@@ -99,6 +118,11 @@ export const AdminConfig: React.FC = () => {
       chaining_allowed_groups: config?.chaining_allowed_groups || [],
       chaining_allowed_ous: config?.chaining_allowed_ous || [],
       enforcement_mode: enforcementMode,
+      session_watch_target_ous: parsedTargetOus,
+      session_watch_target_groups: parsedTargetGroups,
+      session_watch_exempt_admins: sessionWatchExemptAdmins,
+      session_watch_dry_run: sessionWatchDryRun,
+      session_watch_onboarding_grace_minutes: Math.max(5, Math.min(120, Number(sessionWatchOnboardingGraceMinutes) || 15)),
     };
 
     try {
@@ -111,6 +135,10 @@ export const AdminConfig: React.FC = () => {
         portal_admins_count: updatedConfig.portal_admins.length,
         default_locale: updatedConfig.default_locale,
         enforcement_mode: updatedConfig.enforcement_mode,
+        session_watch_target_ous: updatedConfig.session_watch_target_ous,
+        session_watch_target_groups: updatedConfig.session_watch_target_groups,
+        session_watch_exempt_admins: updatedConfig.session_watch_exempt_admins,
+        session_watch_dry_run: updatedConfig.session_watch_dry_run,
       });
     } catch (err: any) {
       const errMsg = `Update failed: ${err.message}`;
@@ -280,6 +308,125 @@ export const AdminConfig: React.FC = () => {
                 </>
               )}
             </span>
+
+            {enforcementMode === "SESSION_WATCH" && (
+              <div
+                style={{
+                  marginTop: "16px",
+                  paddingTop: "16px",
+                  borderTop: "1px solid var(--dtg-border)",
+                  display: "grid",
+                  gap: "14px",
+                }}
+              >
+                <div style={{ fontWeight: 700, fontSize: "13px", color: "#1967d2", textTransform: "uppercase", letterSpacing: "0.03em" }}>
+                  Session Watch Rollout Scoping &amp; Onboarding Safeguards
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="session-watch-target-ous"
+                    style={{ display: "block", fontWeight: 600, marginBottom: "4px", fontSize: "13px", color: "var(--dtg-text)" }}
+                  >
+                    Target Organizational Units (OUs) for Session Watch Rollout:
+                  </label>
+                  <input
+                    id="session-watch-target-ous"
+                    type="text"
+                    placeholder="/Students, /Staff/Pilot (leave blank to enforce across all OUs)"
+                    value={sessionWatchTargetOusInput}
+                    onChange={(e) => setSessionWatchTargetOusInput(e.target.value)}
+                    className="dtg-input"
+                  />
+                  <span style={{ fontSize: "11.5px", color: "var(--dtg-text-secondary)", display: "block", marginTop: "4px" }}>
+                    Hierarchical prefix match (e.g. <code>/Students</code> includes <code>/Students/HighSchool</code>). Leave blank for all domain OUs.
+                  </span>
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="session-watch-target-groups"
+                    style={{ display: "block", fontWeight: 600, marginBottom: "4px", fontSize: "13px", color: "var(--dtg-text)" }}
+                  >
+                    Target Google Groups for Session Watch Rollout:
+                  </label>
+                  <input
+                    id="session-watch-target-groups"
+                    type="text"
+                    placeholder="session-watch-pilot@gwfe.org, byod-enforced@gwfe.org (leave blank for all)"
+                    value={sessionWatchTargetGroupsInput}
+                    onChange={(e) => setSessionWatchTargetGroupsInput(e.target.value)}
+                    className="dtg-input"
+                  />
+                  <span style={{ fontSize: "11.5px", color: "var(--dtg-text-secondary)", display: "block", marginTop: "4px" }}>
+                    Comma-separated Google Group emails. If both OUs and Groups are specified, users matching either are in scope.
+                  </span>
+                </div>
+
+                <div>
+                  <label
+                    htmlFor="session-watch-onboarding-grace"
+                    style={{ display: "block", fontWeight: 600, marginBottom: "4px", fontSize: "13px", color: "var(--dtg-text)" }}
+                  >
+                    Personal Device Onboarding Grace Pass Duration (Minutes):
+                  </label>
+                  <input
+                    id="session-watch-onboarding-grace"
+                    type="number"
+                    min={5}
+                    max={120}
+                    value={sessionWatchOnboardingGraceMinutes}
+                    onChange={(e) => setSessionWatchOnboardingGraceMinutes(Number(e.target.value))}
+                    className="dtg-input"
+                  />
+                  <span style={{ fontSize: "11.5px", color: "var(--dtg-text-secondary)", display: "block", marginTop: "4px" }}>
+                    Duration of the temporary grace pass when a user clicks <b>+ Add Personal Device</b>, generates a pairing code, or has a pending BYOD device awaiting approval.
+                  </span>
+                </div>
+
+                <label
+                  style={{
+                    display: "flex",
+                    alignItems: "flex-start",
+                    gap: "10px",
+                    fontSize: "13px",
+                    color: "var(--dtg-text)",
+                    cursor: "pointer",
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={sessionWatchExemptAdmins}
+                    onChange={(e) => setSessionWatchExemptAdmins(e.target.checked)}
+                    style={{ marginTop: "3px" }}
+                  />
+                  <span>
+                    <b>Admin Safe-Harbor Exemption (Recommended):</b> Exempt Workspace Super Admins and Portal Admins from automated <code>users.signOut</code> sweeps to prevent administrative lockout.
+                  </span>
+                </label>
+
+                <label
+                  style={{
+                    display: "flex",
+                    alignItems: "flex-start",
+                    gap: "10px",
+                    fontSize: "13px",
+                    color: "var(--dtg-text)",
+                    cursor: "pointer",
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={sessionWatchDryRun}
+                    onChange={(e) => setSessionWatchDryRun(e.target.checked)}
+                    style={{ marginTop: "3px" }}
+                  />
+                  <span>
+                    <b>Audit-Only (Dry-Run) Mode:</b> Evaluate all login events and record <code>AUDIT_WOULD_SIGN_OUT</code> in telemetry without calling <code>users.signOut</code>.
+                  </span>
+                </label>
+              </div>
+            )}
           </div>
 
           <div style={{ marginBottom: "22px" }}>

@@ -13,7 +13,9 @@
 # limitations under the License.
 
 import os
-from typing import List, Dict, Any, Optional
+import time
+import threading
+from typing import List, Dict, Any, Optional, Tuple
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
@@ -21,6 +23,8 @@ from backend.services.cloud_identity import resolve_dwd_key_path
 
 class DirectoryService:
     def __init__(self):
+        self._lock = threading.RLock()
+        self._scope_cache: Dict[str, Tuple[float, bool, str]] = {}
         self.scopes = [
             "https://www.googleapis.com/auth/admin.directory.user.readonly",
             "https://www.googleapis.com/auth/admin.directory.group.member.readonly",
@@ -77,8 +81,9 @@ class DirectoryService:
             return False
 
         try:
-            request = self.service.users().get(userKey=target_email, projection="full")
-            response = request.execute()
+            with self._lock:
+                request = self.service.users().get(userKey=target_email, projection="full")
+                response = request.execute()
             is_admin = response.get("isAdmin", False)
             if is_admin:
                 print(f"SUCCESS [directory_service.py]: User '{target_email}' verified as Workspace Super Administrator.")
@@ -100,8 +105,9 @@ class DirectoryService:
 
         try:
             # 1. Check Org Unit (OU)
-            request = self.service.users().get(userKey=target_email, projection="basic")
-            user_res = request.execute()
+            with self._lock:
+                request = self.service.users().get(userKey=target_email, projection="basic")
+                user_res = request.execute()
             user_ou = user_res.get("orgUnitPath", "")
             
             if user_ou and any(user_ou.lower().strip() == ou.lower().strip() for ou in allowed_ous):
@@ -111,10 +117,11 @@ class DirectoryService:
             # 2. Check Groups
             for group in allowed_groups:
                 try:
-                    member_check = self.service.members().hasMember(
-                        groupKey=group.strip(),
-                        memberKey=target_email
-                    ).execute()
+                    with self._lock:
+                        member_check = self.service.members().hasMember(
+                            groupKey=group.strip(),
+                            memberKey=target_email
+                        ).execute()
                     
                     if member_check.get("isMember", False):
                         print(f"SUCCESS [directory_service.py]: User '{target_email}' authorized via Group '{group}'.")
@@ -127,6 +134,98 @@ class DirectoryService:
         except HttpError as e:
             print(f"Directory API error checking chaining policy for {target_email}: {e}")
             return False
+
+    def is_user_in_session_watch_scope(
+        self,
+        user_email: str,
+        target_ous: List[str],
+        target_groups: List[str],
+        exempt_admins: bool = True,
+        portal_admins: Optional[List[str]] = None,
+    ) -> Tuple[bool, str]:
+        """Determines whether a user is in scope for Session Watch enforcement.
+
+        Returns (in_scope: bool, reason: str).
+        Uses a 5-minute TTL cache so repeated login events for the same user do not
+        consume extra Directory API quota.
+        """
+        target_email = user_email.lower().strip()
+        clean_ous = [o.strip() for o in (target_ous or []) if o and o.strip()]
+        clean_groups = [g.strip().lower() for g in (target_groups or []) if g and g.strip()]
+        clean_admins = [a.strip().lower() for a in (portal_admins or []) if a and a.strip()]
+        env_admin = os.getenv("WORKSPACE_ADMIN_EMAIL", "").lower().strip()
+        if env_admin and env_admin not in clean_admins:
+            clean_admins.append(env_admin)
+
+        if exempt_admins and target_email in clean_admins:
+            return False, f"Exempt administrator ({target_email})"
+
+        cache_key = f"{target_email}|ous={','.join(sorted(clean_ous))}|grps={','.join(sorted(clean_groups))}|ex={exempt_admins}"
+        now = time.time()
+        cached = self._scope_cache.get(cache_key)
+        if cached and (now - cached[0]) < 300.0:
+            return cached[1], cached[2]
+
+        if not self.service:
+            if not clean_ous and not clean_groups:
+                return True, "Domain-wide scope"
+            return False, "Directory service uninitialized; skipping scoped enforcement"
+
+        user_ou = "/"
+        is_super_admin = False
+        try:
+            with self._lock:
+                user_res = (
+                    self.service.users()
+                    .get(userKey=target_email, projection="basic")
+                    .execute()
+                    or {}
+                )
+            user_ou = user_res.get("orgUnitPath") or "/"
+            is_super_admin = bool(user_res.get("isAdmin", False))
+        except Exception as e:
+            print(f"WARNING [directory_service.py]: Could not lookup user '{target_email}' for Session Watch scope: {e}")
+
+        if exempt_admins and is_super_admin:
+            res = (False, f"Exempt Workspace Super Admin ({target_email})")
+            self._scope_cache[cache_key] = (now, res[0], res[1])
+            return res
+
+        # If no OUs and no Groups are configured, all non-exempt users are in scope
+        if not clean_ous and not clean_groups:
+            res = (True, f"Domain-wide scope (OU '{user_ou}')")
+            self._scope_cache[cache_key] = (now, res[0], res[1])
+            return res
+
+        # 1. Check OU match (exact match or sub-OU hierarchy match, e.g. '/Students' matches '/Students/Grade9')
+        norm_user_ou = user_ou.lower().strip().rstrip("/") or "/"
+        for ou in clean_ous:
+            norm_target_ou = ou.lower().strip().rstrip("/") or "/"
+            if norm_target_ou == "/" or norm_user_ou == norm_target_ou or norm_user_ou.startswith(norm_target_ou + "/"):
+                res = (True, f"Matched target OU '{ou}' (user OU '{user_ou}')")
+                self._scope_cache[cache_key] = (now, res[0], res[1])
+                return res
+
+        # 2. Check Group membership match
+        for group in clean_groups:
+            try:
+                with self._lock:
+                    member_check = (
+                        self.service.members()
+                        .hasMember(groupKey=group, memberKey=target_email)
+                        .execute()
+                        or {}
+                    )
+                if member_check.get("isMember", False):
+                    res = (True, f"Matched target Group '{group}'")
+                    self._scope_cache[cache_key] = (now, res[0], res[1])
+                    return res
+            except Exception as e:
+                print(f"WARNING [directory_service.py]: Group membership check failed for '{group}': {e}")
+
+        res = (False, f"Outside target OUs/Groups (user OU '{user_ou}')")
+        self._scope_cache[cache_key] = (now, res[0], res[1])
+        return res
 
     def get_user_chromeos_devices(self, user_email: str, customer_id: str = "my_customer", is_admin: bool = False) -> List[Dict[str, Any]]:
         """Queries Admin SDK Directory API for enterprise-enrolled ChromeOS devices associated with the user."""
@@ -147,13 +246,14 @@ class DirectoryService:
             page = 0
             while page < max_pages:
                 page += 1
-                request = self.service.chromeosdevices().list(
-                    customerId=cust_key,
-                    pageToken=page_token,
-                    maxResults=100,
-                    projection="FULL"
-                )
-                response = request.execute()
+                with self._lock:
+                    request = self.service.chromeosdevices().list(
+                        customerId=cust_key,
+                        pageToken=page_token,
+                        maxResults=100,
+                        projection="FULL"
+                    )
+                    response = request.execute()
                 devices = response.get("chromeosdevices", [])
                 if not devices:
                     break
@@ -212,13 +312,14 @@ class DirectoryService:
         page = 0
         while page < max_pages:
             page += 1
-            request = self.service.chromeosdevices().list(
-                customerId=cust_key,
-                pageToken=page_token,
-                maxResults=200,
-                projection="BASIC",
-            )
-            response = request.execute()
+            with self._lock:
+                request = self.service.chromeosdevices().list(
+                    customerId=cust_key,
+                    pageToken=page_token,
+                    maxResults=200,
+                    projection="BASIC",
+                )
+                response = request.execute()
             devices = response.get("chromeosdevices", [])
             if not devices:
                 break
@@ -256,27 +357,28 @@ class DirectoryService:
 
         import datetime
 
-        creds = service_account.Credentials.from_service_account_file(
-            self.key_path,
-            scopes=["https://www.googleapis.com/auth/admin.reports.audit.readonly"],
-            subject=self.admin_email,
-        )
-        reports_service = build("admin", "reports_v1", credentials=creds)
-        start_dt = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(
-            minutes=max(1, lookback_minutes)
-        )
-        start_time_iso = start_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
-
-        resp = (
-            reports_service.activities()
-            .list(
-                userKey="all",
-                applicationName="login",
-                startTime=start_time_iso,
-                maxResults=min(1000, max(1, max_results)),
+        with self._lock:
+            creds = service_account.Credentials.from_service_account_file(
+                self.key_path,
+                scopes=["https://www.googleapis.com/auth/admin.reports.audit.readonly"],
+                subject=self.admin_email,
             )
-            .execute()
-        )
+            reports_service = build("admin", "reports_v1", credentials=creds)
+            start_dt = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(
+                minutes=max(1, lookback_minutes)
+            )
+            start_time_iso = start_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+            resp = (
+                reports_service.activities()
+                .list(
+                    userKey="all",
+                    applicationName="login",
+                    startTime=start_time_iso,
+                    maxResults=min(1000, max(1, max_results)),
+                )
+                .execute()
+            )
         items = resp.get("items", [])
         events: List[Dict[str, Any]] = []
         for item in items:
@@ -334,13 +436,14 @@ class DirectoryService:
                 self.init_error or "DWD service account key or WORKSPACE_ADMIN_EMAIL is not configured."
             )
 
-        creds = service_account.Credentials.from_service_account_file(
-            self.key_path,
-            scopes=["https://www.googleapis.com/auth/admin.directory.user.security"],
-            subject=self.admin_email,
-        )
-        security_dir_service = build("admin", "directory_v1", credentials=creds)
-        security_dir_service.users().signOut(userKey=target_email).execute()
+        with self._lock:
+            creds = service_account.Credentials.from_service_account_file(
+                self.key_path,
+                scopes=["https://www.googleapis.com/auth/admin.directory.user.security"],
+                subject=self.admin_email,
+            )
+            security_dir_service = build("admin", "directory_v1", credentials=creds)
+            security_dir_service.users().signOut(userKey=target_email).execute()
         print(
             f"WARNING [directory_service.py]: Executed users.signOut circuit breaker for '{target_email}'."
         )

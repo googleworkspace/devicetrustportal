@@ -35,6 +35,26 @@ class TenantConfig(BaseModel):
         default="SESSION_WATCH",
         description="Enforcement architecture mode: 'SESSION_WATCH' (CAA-Free Education Fundamentals) or 'CAA' (Context-Aware Access)",
     )
+    session_watch_target_ous: List[str] = Field(
+        default=[],
+        description="Organizational Units scoped for CAA-Free Session Watch enforcement (e.g. ['/Students']). If empty and target_groups is empty, all non-exempt users are evaluated.",
+    )
+    session_watch_target_groups: List[str] = Field(
+        default=[],
+        description="Google Groups scoped for CAA-Free Session Watch enforcement (e.g. ['session-watch-pilot@gwfe.org'])",
+    )
+    session_watch_exempt_admins: bool = Field(
+        default=True,
+        description="Automatically exempt Workspace Super Admins and Portal Admins from users.signOut circuit breaker",
+    )
+    session_watch_dry_run: bool = Field(
+        default=False,
+        description="Audit-Only (Dry Run) mode: records AUDIT_WOULD_SIGN_OUT without executing users.signOut",
+    )
+    session_watch_onboarding_grace_minutes: int = Field(
+        default=15,
+        description="Minutes of onboarding grace lease granted when a user opens the portal to enroll or approve a personal device",
+    )
 
 class ConfigService:
     def __init__(self):
@@ -80,6 +100,8 @@ class ConfigService:
             local_admins.append(env_admin)
 
         default_mode = env_mode if env_mode in ("CAA", "SESSION_WATCH") else "SESSION_WATCH"
+        exempt_admins_env = os.getenv("TENANT_SESSION_WATCH_EXEMPT_ADMINS", "true").lower() != "false"
+        dry_run_env = os.getenv("TENANT_SESSION_WATCH_DRY_RUN", "false").lower() == "true"
 
         return TenantConfig(
             customer_id=os.getenv("TENANT_CUSTOMER_ID", "customers/my_customer"),
@@ -92,6 +114,11 @@ class ConfigService:
             chaining_allowed_groups=json.loads(os.getenv("TENANT_CHAINING_GROUPS", '[]')),
             chaining_allowed_ous=json.loads(os.getenv("TENANT_CHAINING_OUS", '[]')),
             enforcement_mode=default_mode,
+            session_watch_target_ous=json.loads(os.getenv("TENANT_SESSION_WATCH_TARGET_OUS", '[]')),
+            session_watch_target_groups=json.loads(os.getenv("TENANT_SESSION_WATCH_TARGET_GROUPS", '[]')),
+            session_watch_exempt_admins=exempt_admins_env,
+            session_watch_dry_run=dry_run_env,
+            session_watch_onboarding_grace_minutes=int(os.getenv("TENANT_SESSION_WATCH_GRACE_MINUTES", 15)),
         )
 
     def update_tenant_config(self, config: TenantConfig) -> bool:
@@ -123,6 +150,11 @@ class ConfigService:
         set_key(dotenv_path, "TENANT_CHAINING_GROUPS", json.dumps(config.chaining_allowed_groups))
         set_key(dotenv_path, "TENANT_CHAINING_OUS", json.dumps(config.chaining_allowed_ous))
         set_key(dotenv_path, "TENANT_ENFORCEMENT_MODE", config.enforcement_mode)
+        set_key(dotenv_path, "TENANT_SESSION_WATCH_TARGET_OUS", json.dumps(config.session_watch_target_ous))
+        set_key(dotenv_path, "TENANT_SESSION_WATCH_TARGET_GROUPS", json.dumps(config.session_watch_target_groups))
+        set_key(dotenv_path, "TENANT_SESSION_WATCH_EXEMPT_ADMINS", "true" if config.session_watch_exempt_admins else "false")
+        set_key(dotenv_path, "TENANT_SESSION_WATCH_DRY_RUN", "true" if config.session_watch_dry_run else "false")
+        set_key(dotenv_path, "TENANT_SESSION_WATCH_GRACE_MINUTES", str(config.session_watch_onboarding_grace_minutes))
         
         load_dotenv(dotenv_path, override=True)
         return True

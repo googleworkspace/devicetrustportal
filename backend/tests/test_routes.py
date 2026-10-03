@@ -73,7 +73,9 @@ def mock_services():
 def test_health_check():
     response = client.get("/health")
     assert response.status_code == 200
-    assert response.json() == {"status": "OK"}
+    data = response.json()
+    assert data["status"] == "OK"
+    assert data["branch_variation"] == "poc/fundamentals-session-watch"
 
 def test_admin_config_access_denied():
     app.dependency_overrides[get_current_user_email] = lambda: "student@example.com"

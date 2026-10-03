@@ -31,6 +31,7 @@ import dataclasses
 import datetime
 import json
 import sqlite3
+import threading
 import time
 from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
 
@@ -114,10 +115,14 @@ class SessionGuardService:
         self.campus_egress_ips: Set[str] = campus_egress_ips or set()
         self.signout_callback = signout_callback
 
+        self._lock = threading.RLock()
         # O(1) RAM cache for 40,000+ devices (~4 MB memory footprint)
         self._approved_serials: Dict[str, DeviceRecord] = {}
         # Active attested sessions indexed by lowercase user_email
         self._active_attestations: Dict[str, List[SessionAttestation]] = {}
+        # Temporary personal-device onboarding grace leases (email -> expires_at_epoch)
+        self._onboarding_leases: Dict[str, float] = {}
+        self._onboarding_lease_reasons: Dict[str, str] = {}
         # Recent signOut timestamps indexed by user_email to avoid API storms
         self._recent_signouts: Dict[str, float] = {}
 
@@ -125,9 +130,13 @@ class SessionGuardService:
         self.metrics: Dict[str, int] = {
             "inventory_devices_cached": 0,
             "attestations_received": 0,
+            "onboarding_leases_granted": 0,
             "login_events_evaluated": 0,
             "allowed_attested": 0,
+            "allowed_onboarding_grace": 0,
+            "skipped_out_of_scope": 0,
             "deferred_grace_window": 0,
+            "audit_would_signout": 0,
             "signouts_executed": 0,
             "reports_api_calls": 0,
             "directory_api_calls": 0,
@@ -164,13 +173,121 @@ class SessionGuardService:
     def load_device_inventory(self, devices: Iterable[DeviceRecord]) -> int:
         """Populates the O(1) in-memory inventory map from ChromeOS + Cloud Identity sync."""
         count = 0
-        for dev in devices:
-            serial_key = dev.serial_number.strip().upper()
-            if serial_key and dev.status.upper() in ("ACTIVE", "APPROVED", "PROVISIONED"):
-                self._approved_serials[serial_key] = dev
-                count += 1
-        self.metrics["inventory_devices_cached"] = len(self._approved_serials)
+        with self._lock:
+            for dev in devices:
+                serial_key = dev.serial_number.strip().upper()
+                if serial_key and dev.status.upper() in ("ACTIVE", "APPROVED", "PROVISIONED"):
+                    self._approved_serials[serial_key] = dev
+                    count += 1
+            self.metrics["inventory_devices_cached"] = len(self._approved_serials)
         return count
+
+    def promote_approved_device(
+        self,
+        device_id: str = "",
+        serial_number: str = "",
+        user_email: str = "",
+        ip_address: Optional[str] = None,
+        now_epoch: Optional[float] = None,
+    ) -> str:
+        """Immediately promotes a newly approved personal or corporate device into the O(1) cache
+        and optionally attests the user's current browser session IP so they are never signed out.
+        """
+        now = now_epoch if now_epoch is not None else time.time()
+        email_key = user_email.strip().lower()
+        clean_serial = (serial_number or "").strip().upper()
+        if not clean_serial or clean_serial in ("N/A", "NONE", "UNKNOWN"):
+            clean_serial = (device_id or "").strip().upper()
+        if not clean_serial:
+            return ""
+
+        rec = DeviceRecord(
+            device_id=device_id or clean_serial,
+            serial_number=clean_serial,
+            device_type="CLOUD_IDENTITY_APPROVED",
+            status="APPROVED",
+            assigned_user=email_key,
+        )
+        with self._lock:
+            self._approved_serials[clean_serial] = rec
+            self.metrics["inventory_devices_cached"] = len(self._approved_serials)
+            self._onboarding_leases.pop(email_key, None)
+            self._onboarding_lease_reasons.pop(email_key, None)
+
+        if ip_address and ip_address.strip():
+            self.record_extension_attestation(
+                user_email=email_key,
+                serial_number=clean_serial,
+                ip_address=ip_address.strip(),
+                now_epoch=now,
+                session_id="portal-instant-approval",
+            )
+        return clean_serial
+
+    def grant_onboarding_lease(
+        self,
+        user_email: str,
+        duration_sec: int = 900,
+        now_epoch: Optional[float] = None,
+        minutes: Optional[int] = None,
+        reason: str = "PORTAL_ONBOARDING_PASS",
+    ) -> float:
+        """Grants a temporary onboarding grace lease (e.g., 15 minutes) so a user adding or
+        approving a personal BYOD device is not signed out by the background sweep mid-flow.
+        """
+        now = now_epoch if now_epoch is not None else time.time()
+        email_key = user_email.strip().lower()
+        effective_sec = int(minutes) * 60 if minutes is not None and minutes > 0 else duration_sec
+        expires_at = now + max(60, effective_sec)
+        with self._lock:
+            self._onboarding_leases[email_key] = expires_at
+            self._onboarding_lease_reasons[email_key] = reason
+            self.metrics["onboarding_leases_granted"] += 1
+        return expires_at
+
+    def has_active_onboarding_lease(
+        self, user_email: str, now_epoch: Optional[float] = None
+    ) -> Tuple[bool, float]:
+        """Checks if the user has an active personal-device onboarding grace lease."""
+        now = now_epoch if now_epoch is not None else time.time()
+        email_key = user_email.strip().lower()
+        with self._lock:
+            expires_at = self._onboarding_leases.get(email_key, 0.0)
+            if expires_at > now:
+                return True, expires_at - now
+            if email_key in self._onboarding_leases:
+                del self._onboarding_leases[email_key]
+                self._onboarding_lease_reasons.pop(email_key, None)
+        return False, 0.0
+
+    def get_active_onboarding_leases(
+        self, now_epoch: Optional[float] = None
+    ) -> List[Dict[str, Any]]:
+        """Returns all active non-expired personal-device onboarding grace leases."""
+        now = now_epoch if now_epoch is not None else time.time()
+        active: List[Dict[str, Any]] = []
+        expired_keys: List[str] = []
+        with self._lock:
+            for email_key, exp in self._onboarding_leases.items():
+                if exp > now:
+                    active.append(
+                        {
+                            "user_email": email_key,
+                            "expires_at_iso": datetime.datetime.fromtimestamp(
+                                exp, tz=datetime.timezone.utc
+                            ).isoformat(),
+                            "remaining_seconds": int(round(exp - now)),
+                            "reason": self._onboarding_lease_reasons.get(
+                                email_key, "PORTAL_ONBOARDING_PASS"
+                            ),
+                        }
+                    )
+                else:
+                    expired_keys.append(email_key)
+            for k in expired_keys:
+                self._onboarding_leases.pop(k, None)
+                self._onboarding_lease_reasons.pop(k, None)
+        return active
 
     def record_extension_attestation(
         self,
@@ -242,12 +359,14 @@ class SessionGuardService:
         events: List[LoginAuditEvent],
         now_epoch: Optional[float] = None,
         persist_all_allowed: bool = False,
+        scope_checker: Optional[Callable[[str], Tuple[bool, str]]] = None,
+        dry_run: bool = False,
     ) -> List[EnforcementAction]:
         """Evaluates a window of Admin SDK Reports `login` events and executes batched signOuts.
 
-        Uses O(1) hash lookups for inventory/attestation matching and batches
-        `users.signOut` calls (`BatchHttpRequest` up to 50 calls/request) to stay
-        well within the 2,400 QPM Directory API quota.
+        Uses O(1) hash lookups for inventory/attestation matching, respects personal-device
+        onboarding grace leases and OU/Group rollout scopes, and batches `users.signOut` calls
+        (`BatchHttpRequest` up to 50 calls/request) to stay well within the 2,400 QPM Directory API quota.
         """
         now = now_epoch if now_epoch is not None else time.time()
         now_iso = datetime.datetime.fromtimestamp(now, tz=datetime.timezone.utc).isoformat()
@@ -286,17 +405,76 @@ class SessionGuardService:
                     )
                 continue
 
-            # 2. If event just occurred (< grace_window_sec), defer so extension heartbeat can arrive
+            # 2. Check for active personal-device onboarding grace lease
+            has_lease, rem_sec = self.has_active_onboarding_lease(email_key, now_epoch=now)
+            if has_lease:
+                self.metrics["allowed_onboarding_grace"] += 1
+                if persist_all_allowed:
+                    actions.append(
+                        EnforcementAction(
+                            event_id=ev.event_id,
+                            user_email=email_key,
+                            ip_address=ev.ip_address,
+                            decision="ALLOW_ONBOARDING_GRACE",
+                            reason=f"Active personal device onboarding grace lease ({int(rem_sec)}s remaining)",
+                            matched_serial=None,
+                            detection_latency_sec=age_sec,
+                            timestamp_iso=now_iso,
+                        )
+                    )
+                continue
+
+            # 3. Check OU / Group rollout scope and Admin Safe-Harbor exemption
+            if scope_checker is not None:
+                in_scope, scope_reason = scope_checker(email_key)
+                if not in_scope:
+                    self.metrics["skipped_out_of_scope"] += 1
+                    if persist_all_allowed:
+                        actions.append(
+                            EnforcementAction(
+                                event_id=ev.event_id,
+                                user_email=email_key,
+                                ip_address=ev.ip_address,
+                                decision="SKIP_OUT_OF_SCOPE",
+                                reason=scope_reason,
+                                matched_serial=None,
+                                detection_latency_sec=age_sec,
+                                timestamp_iso=now_iso,
+                            )
+                        )
+                    continue
+
+            # 4. If event just occurred (< grace_window_sec), defer so extension heartbeat can arrive
             if age_sec < self.grace_window_sec and not ev.is_suspicious:
                 self.metrics["deferred_grace_window"] += 1
                 continue
 
-            # 3. Check signOut cooldown so we don't repeatedly call signOut for the same event
+            # 5. Check signOut cooldown so we don't repeatedly call signOut for the same event
             last_signout = self._recent_signouts.get(email_key, 0.0)
             if (now - last_signout) < self.signout_cooldown_sec:
                 continue
 
-            # 4. Unattested / unapproved device session detected -> Queue `users.signOut`
+            # 6. Audit Dry-Run Mode vs. Active Circuit-Breaker Enforcement
+            if dry_run:
+                self.metrics["audit_would_signout"] += 1
+                actions.append(
+                    EnforcementAction(
+                        event_id=ev.event_id,
+                        user_email=email_key,
+                        ip_address=ev.ip_address,
+                        decision="AUDIT_WOULD_SIGN_OUT",
+                        reason=(
+                            "[Audit Dry-Run] Unattested login session detected "
+                            f"(IP {ev.ip_address}, login_type={ev.login_type}); signOut skipped in dry-run mode."
+                        ),
+                        matched_serial=None,
+                        detection_latency_sec=age_sec,
+                        timestamp_iso=now_iso,
+                    )
+                )
+                continue
+
+            # 7. Unattested / unapproved device session detected -> Queue `users.signOut`
             self._recent_signouts[email_key] = now
             action = EnforcementAction(
                 event_id=ev.event_id,
@@ -364,7 +542,7 @@ class SessionGuardService:
     def format_cloud_logging_entry(self, action: EnforcementAction) -> str:
         """Formats an enforcement decision as a single-line Cloud Logging JSON payload."""
         payload = {
-            "severity": "WARNING" if action.decision == "REVOKE_SIGN_OUT" else "INFO",
+            "severity": "WARNING" if action.decision in ("REVOKE_SIGN_OUT", "AUDIT_WOULD_SIGN_OUT") else "INFO",
             "component": "devicetrustportal.session_guard",
             "event_id": action.event_id,
             "user_email": action.user_email,

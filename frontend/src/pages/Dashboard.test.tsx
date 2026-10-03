@@ -19,7 +19,7 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom";
 import { vi, describe, test, expect, beforeEach } from "vitest";
 import { Dashboard } from "./Dashboard";
-import { getMyDevices, checkIsAdmin, getPublicConfig } from "../services/api";
+import { getMyDevices, checkIsAdmin, getPublicConfig, startOnboardingLease } from "../services/api";
 
 // Mock the API service
 vi.mock("../services/api", () => ({
@@ -33,6 +33,7 @@ vi.mock("../services/api", () => ({
   getSessionWatchMetrics: vi.fn(),
   syncSessionWatchInventory: vi.fn(),
   attestBrowserSession: vi.fn(),
+  startOnboardingLease: vi.fn(),
   runLiveLoginSweep: vi.fn(),
 }));
 
@@ -224,6 +225,48 @@ describe("Dashboard Page", () => {
 
     await waitFor(() => {
       expect(mockGetMyDevices).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  test("clicking Add Personal Device (15m Grace Pass) starts onboarding lease", async () => {
+    localStorage.setItem("userEmail", "user@example.com");
+    localStorage.setItem("googleIdToken", "mock-token");
+
+    mockCheckIsAdmin.mockResolvedValue(false);
+    mockGetMyDevices.mockResolvedValue([
+      {
+        device_user_name: "devices/2/deviceUsers/2",
+        device_type: "CHROME_OS",
+        model: "Lenovo 300e Chromebook",
+        os_version: "ChromeOS 120",
+        serial_number: "LR00ABCD",
+        approval_state: "APPROVED",
+        owner_type: "COMPANY",
+        last_sync_time: "2026-06-16T08:30:00Z",
+      },
+    ]);
+    const mockStartOnboardingLease = startOnboardingLease as ReturnType<typeof vi.fn>;
+    mockStartOnboardingLease.mockResolvedValue({
+      status: "ONBOARDING_GRACE_ACTIVE",
+      user_email: "user@example.com",
+      expires_at_iso: "2026-06-16T08:45:00Z",
+      minutes: 15,
+      message: "15-minute personal device onboarding pass activated for user@example.com.",
+    });
+
+    render(<Dashboard />);
+
+    await waitFor(() => {
+      expect(screen.getByText("+ Add Personal Device (15m Grace Pass)")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByText("+ Add Personal Device (15m Grace Pass)"));
+
+    await waitFor(() => {
+      expect(mockStartOnboardingLease).toHaveBeenCalledTimes(1);
+      expect(
+        screen.getByText("15-minute personal device onboarding pass activated for user@example.com.")
+      ).toBeInTheDocument();
     });
   });
 });

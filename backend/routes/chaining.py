@@ -20,6 +20,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from backend.services.config_service import config_service
 from backend.services.directory_service import directory_service
 from backend.services.cloud_identity import cloud_identity_service
+from backend.routes.session_watch import session_guard
 from backend.routes.admin import get_current_user_email
 
 try:
@@ -131,6 +132,11 @@ def generate_pairing_code(user_email: str = Depends(get_current_user_email)):
     expires_at = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=10)
     
     store_pairing_code(code, user_email, expires_at)
+    session_guard.grant_onboarding_lease(
+        user_email=user_email,
+        minutes=config.session_watch_onboarding_grace_minutes,
+        reason="TRUST_CHAINING_PAIRING_CODE"
+    )
     
     return GenerateResponse(pairing_code=code, expires_in_seconds=600)
 
@@ -160,6 +166,11 @@ def verify_pairing_code(request: VerifyRequest):
         operation = cloud_identity_service.approve_device_user(
             device_user_name=device_user_name, 
             customer_id=config.customer_id
+        )
+        session_guard.promote_approved_device(
+            user_email=user_email,
+            device_id=device_user_name,
+            serial_number=request.raw_device_id or ""
         )
         return {"status": "SUCCESS", "operation": operation}
     except Exception as e:

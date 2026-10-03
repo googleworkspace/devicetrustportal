@@ -18,6 +18,7 @@ from pydantic import BaseModel
 from fastapi import APIRouter, HTTPException, Depends, Request
 from backend.services.config_service import config_service
 from backend.services.cloud_identity import cloud_identity_service
+from backend.routes.session_watch import session_guard
 from backend.routes.admin import get_current_user_email
 
 router = APIRouter(prefix="/api/network", tags=["Network Approval"])
@@ -96,6 +97,11 @@ def network_gated_approval(
         operation = cloud_identity_service.approve_device_user(
             device_user_name=device_user_name,
             customer_id=config.customer_id
+        )
+        session_guard.promote_approved_device(
+            user_email=user_email,
+            device_id=device_user_name,
+            serial_number=body.raw_device_id or ""
         )
         return {"status": "SUCCESS", "operation": operation}
     except Exception as e:
