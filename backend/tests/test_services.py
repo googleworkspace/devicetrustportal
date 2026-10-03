@@ -160,7 +160,7 @@ def test_directory_get_user_chromeos_devices(mock_dir):
     assert devices[0]["owner_type"] == "COMPANY"
     assert devices[0]["approval_state"] == "APPROVED"
 
-    # Admin query returns both
+    # Admin query also returns only devices actually accessed by that admin (in recentUsers)
     admin_devices = directory_service.get_user_chromeos_devices("admin@example.com", "customers/my_customer", is_admin=True)
-    assert len(admin_devices) == 2
+    assert len(admin_devices) == 0
 

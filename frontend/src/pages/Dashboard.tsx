@@ -58,7 +58,6 @@ export const Dashboard: React.FC = () => {
   const [enforcementMode, setEnforcementMode] = useState<string>("SESSION_WATCH");
   const [sessionWatchData, setSessionWatchData] = useState<SessionWatchMetricsResponse | null>(null);
   const [sessionWatchLoading, setSessionWatchLoading] = useState(false);
-  const [showOnlyMyCompanyDevices, setShowOnlyMyCompanyDevices] = useState(false);
   const autoAttestedForUserRef = useRef<string>("");
   const t = getTranslator(locale);
 
@@ -283,15 +282,6 @@ export const Dashboard: React.FC = () => {
 
   const personalDevices = devices.filter((d) => d.owner_type !== "COMPANY");
   const companyDevices = devices.filter((d) => d.owner_type === "COMPANY");
-  const myAssignedCompanyDevices = companyDevices.filter(
-    (d) =>
-      (d.annotated_user && d.annotated_user.toLowerCase() === userEmail.toLowerCase()) ||
-      d.device_user_name.toLowerCase().includes(`/deviceusers/${userEmail.toLowerCase()}`)
-  );
-  const displayedCompanyDevices =
-    showOnlyMyCompanyDevices && myAssignedCompanyDevices.length > 0
-      ? myAssignedCompanyDevices
-      : companyDevices;
   const approvedByodCount = personalDevices.filter((d) => d.approval_state === "APPROVED").length;
   const pendingByodCount = personalDevices.filter((d) => d.approval_state === "PENDING_APPROVAL").length;
   const activeUserLease = sessionWatchData?.active_onboarding_leases?.find(
@@ -1157,23 +1147,10 @@ export const Dashboard: React.FC = () => {
                   <div>
                     <h2 className="dtg-section-title">
                       {t.companyDevicesTitle}
-                      <span className="dtg-section-count">{displayedCompanyDevices.length}</span>
+                      <span className="dtg-section-count">{companyDevices.length}</span>
                     </h2>
                     <div className="dtg-section-subtitle">{t.companyDevicesSubtitle}</div>
                   </div>
-                  {isAdmin && myAssignedCompanyDevices.length > 0 && myAssignedCompanyDevices.length < companyDevices.length && (
-                    <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-                      <button
-                        type="button"
-                        onClick={() => setShowOnlyMyCompanyDevices((prev) => !prev)}
-                        className="dtg-btn dtg-btn-outline"
-                      >
-                        {showOnlyMyCompanyDevices
-                          ? `Show All Domain Chromebooks (${companyDevices.length})`
-                          : `Show Only My Assigned (${myAssignedCompanyDevices.length})`}
-                      </button>
-                    </div>
-                  )}
                 </div>
 
                 <div className="dtg-table-wrap">
@@ -1188,7 +1165,7 @@ export const Dashboard: React.FC = () => {
                       </tr>
                     </thead>
                     <tbody>
-                      {displayedCompanyDevices.map((d, i) => (
+                      {companyDevices.map((d, i) => (
                         <tr key={i}>
                           <td className="dtg-cell-device" data-label={t.deviceHeader}>
                             <div className="dtg-device-cell">

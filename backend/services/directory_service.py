@@ -228,7 +228,7 @@ class DirectoryService:
         return res
 
     def get_user_chromeos_devices(self, user_email: str, customer_id: str = "my_customer", is_admin: bool = False) -> List[Dict[str, Any]]:
-        """Queries Admin SDK Directory API for enterprise-enrolled ChromeOS devices associated with the user."""
+        """Queries Admin SDK Directory API for enterprise-enrolled ChromeOS devices actually accessed by the user."""
         target_email = user_email.lower().strip()
         
         if not self.service:
@@ -262,7 +262,8 @@ class DirectoryService:
                     annotated_user = dev.get("annotatedUser", "").lower().strip()
                     recent_users = [u.get("email", "").lower().strip() for u in dev.get("recentUsers", []) if isinstance(u, dict)]
                     
-                    is_match = is_admin or (annotated_user == target_email) or (target_email in recent_users)
+                    # Only include company-owned ChromeOS devices that this user has actually accessed/signed into
+                    is_match = target_email in recent_users
                     if is_match:
                         serial = dev.get("serialNumber") or dev.get("deviceId") or "N/A"
                         model = dev.get("model") or "Google Chromebook"
@@ -286,7 +287,7 @@ class DirectoryService:
                 if not page_token:
                     break
 
-            print(f"INFO [directory_service.py]: Found {len(matched_devices)} company-owned ChromeOS device(s) matching '{target_email}' (is_admin={is_admin}).")
+            print(f"INFO [directory_service.py]: Found {len(matched_devices)} accessed company-owned ChromeOS device(s) for '{target_email}'.")
             return matched_devices
         except HttpError as e:
             print(f"Directory API error fetching ChromeOS devices for {target_email}: {e}")
