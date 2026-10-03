@@ -14,13 +14,14 @@
  * limitations under the License.
  */
 
+import { vi, describe, test, expect, beforeEach, afterEach } from "vitest";
 import { getAdminConfig, generatePairingCode, verifyPairingCode } from "./api";
 
 // Mock global fetch
 const unmockedFetch = global.fetch;
 
 beforeEach(() => {
-  global.fetch = jest.fn();
+  global.fetch = vi.fn() as any;
 });
 
 afterEach(() => {
@@ -37,7 +38,7 @@ describe("Frontend API Service", () => {
       chaining_allowed_ous: ["/Staff"],
     };
 
-    (global.fetch as jest.Mock).mockResolvedValueOnce({
+    (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       ok: true,
       json: async () => mockConfig,
     });
@@ -50,7 +51,7 @@ describe("Frontend API Service", () => {
   test("generatePairingCode successfully returns a pairing code", async () => {
     const mockRes = { pairing_code: "123456", expires_in_seconds: 600 };
 
-    (global.fetch as jest.Mock).mockResolvedValueOnce({
+    (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       ok: true,
       json: async () => mockRes,
     });
@@ -62,7 +63,7 @@ describe("Frontend API Service", () => {
   test("verifyPairingCode successfully verifies and approves device", async () => {
     const mockRes = { status: "SUCCESS", operation: { name: "operations/op-1" } };
 
-    (global.fetch as jest.Mock).mockResolvedValueOnce({
+    (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       ok: true,
       json: async () => mockRes,
     });

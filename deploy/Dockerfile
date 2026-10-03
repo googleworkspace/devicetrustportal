@@ -21,7 +21,7 @@ ARG REACT_APP_GOOGLE_CLIENT_ID
 ENV REACT_APP_GOOGLE_CLIENT_ID=$REACT_APP_GOOGLE_CLIENT_ID
 
 COPY frontend/package*.json ./
-RUN npm install --legacy-peer-deps
+RUN npm install --no-audit --no-fund
 COPY frontend/ ./
 RUN npm run build
 

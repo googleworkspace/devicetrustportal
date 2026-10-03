@@ -17,21 +17,27 @@
 import React from "react";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom";
+import { vi, describe, test, expect, beforeEach } from "vitest";
 import { Dashboard } from "./Dashboard";
 import { getMyDevices, checkIsAdmin, getPublicConfig } from "../services/api";
 
 // Mock the API service
-jest.mock("../services/api", () => ({
-  getMyDevices: jest.fn(),
-  checkIsAdmin: jest.fn(),
-  approveDevice: jest.fn(),
-  revokeDevice: jest.fn(),
-  revokeDeviceBulk: jest.fn(),
-  getPublicConfig: jest.fn(),
+vi.mock("../services/api", () => ({
+  getMyDevices: vi.fn(),
+  checkIsAdmin: vi.fn(),
+  approveDevice: vi.fn(),
+  revokeDevice: vi.fn(),
+  revokeDeviceBulk: vi.fn(),
+  getPublicConfig: vi.fn(),
+  sendClientLog: vi.fn(),
+  getSessionWatchMetrics: vi.fn(),
+  syncSessionWatchInventory: vi.fn(),
+  attestBrowserSession: vi.fn(),
+  runLiveLoginSweep: vi.fn(),
 }));
 
 // Mock GoogleLoginButton to simplify authentication testing
-jest.mock("../components/GoogleLoginButton", () => ({
+vi.mock("../components/GoogleLoginButton", () => ({
   GoogleLoginButton: ({ onLoginSuccess }: { onLoginSuccess: (email: string, token: string) => void }) => (
     <button
       onClick={() => {
@@ -45,14 +51,14 @@ jest.mock("../components/GoogleLoginButton", () => ({
   ),
 }));
 
-const mockGetMyDevices = getMyDevices as jest.Mock;
-const mockCheckIsAdmin = checkIsAdmin as jest.Mock;
-const mockGetPublicConfig = getPublicConfig as jest.Mock;
+const mockGetMyDevices = getMyDevices as ReturnType<typeof vi.fn>;
+const mockCheckIsAdmin = checkIsAdmin as ReturnType<typeof vi.fn>;
+const mockGetPublicConfig = getPublicConfig as ReturnType<typeof vi.fn>;
 
 describe("Dashboard Page", () => {
   beforeEach(() => {
     localStorage.clear();
-    jest.clearAllMocks();
+    vi.clearAllMocks();
     mockGetPublicConfig.mockResolvedValue({ default_locale: "en" });
   });
 
