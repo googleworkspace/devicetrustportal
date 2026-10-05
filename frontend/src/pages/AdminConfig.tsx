@@ -182,6 +182,7 @@ export const AdminConfig: React.FC = () => {
   const [portalAdmins, setPortalAdmins] = useState<string[]>([]);
   const [googleClientId, setGoogleClientId] = useState("");
   const [defaultLocale, setDefaultLocale] = useState("en");
+  const [uiLocale, setUiLocale] = useState(() => localStorage.getItem("userLocale") || "en");
   const [sessionWatchEnabled, setSessionWatchEnabled] = useState(false);
   const [caaEnforcementEnabled, setCaaEnforcementEnabled] = useState(false);
   const [sessionWatchTargetOusInput, setSessionWatchTargetOusInput] = useState("");
@@ -202,8 +203,7 @@ export const AdminConfig: React.FC = () => {
   const [runningLiveSweep, setRunningLiveSweep] = useState<boolean>(false);
 
   const userEmail = localStorage.getItem("userEmail") || "";
-  const userLocale = localStorage.getItem("userLocale") || defaultLocale || "en";
-  const t = getTranslator(userLocale);
+  const t = getTranslator(uiLocale || defaultLocale || "en");
   const enforcementMode = deriveEnforcementMode(sessionWatchEnabled, caaEnforcementEnabled);
 
   const loadMetrics = useCallback(async () => {
@@ -229,7 +229,12 @@ export const AdminConfig: React.FC = () => {
         setThreshold(data.inactivity_threshold_days);
         setPortalAdmins(data.portal_admins || []);
         setGoogleClientId(data.google_client_id || "");
-        setDefaultLocale(data.default_locale || "en");
+        const resolvedDefaultLocale = data.default_locale || "en";
+        setDefaultLocale(resolvedDefaultLocale);
+        if (sessionStorage.getItem("userLocaleOverride") !== "true") {
+          setUiLocale(resolvedDefaultLocale);
+          localStorage.setItem("userLocale", resolvedDefaultLocale);
+        }
         setSessionWatchEnabled(Boolean(data.session_watch_enabled));
         setCaaEnforcementEnabled(Boolean(data.caa_enforcement_enabled));
         setSessionWatchTargetOusInput((data.session_watch_target_ous || []).join(", "));
@@ -325,9 +330,10 @@ export const AdminConfig: React.FC = () => {
 
       const timeStr = new Date().toLocaleTimeString();
       setLastSavedAt(timeStr);
-      const confirmText = `✅ Auto-Saved (${timeStr}): ${changeSummary} — Effective Mode: ${nextMode}${nextDryRun ? " [AUDIT-ONLY DRY RUN]" : ""}`;
+      const tNext = getTranslator(nextLocale);
+      const confirmText = `✅ ${tNext.autoSavedHeaderBadge} (${timeStr}): ${changeSummary} — ${tNext.effectiveModeLabel} ${nextMode}${nextDryRun ? ` [${tNext.auditOnlyBadge}]` : ""}`;
       setAutoSaveBanner(confirmText);
-      setMessage(t.configSaveSuccess);
+      setMessage(tNext.configSaveSuccess);
       setSaving(false);
       await loadMetrics();
       sendClientLog("INFO", "ADMIN_CONFIG_SAVED", `Admin config auto-saved by ${userEmail}: ${changeSummary}`, {
@@ -508,8 +514,10 @@ export const AdminConfig: React.FC = () => {
     return true;
   });
 
+  const activeLang = uiLocale || defaultLocale || "en";
+
   return (
-    <div className="dtg-shell">
+    <div className="dtg-shell" lang={activeLang} dir={activeLang === "ar" ? "rtl" : "ltr"}>
       {/* Google Workspace Top App Bar */}
       <header className="dtg-header">
         <div className="dtg-header-inner">
@@ -530,7 +538,7 @@ export const AdminConfig: React.FC = () => {
             </div>
           </div>
 
-          <div className="dtg-header-actions" style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+          <div className="dtg-header-actions" style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
             {lastSavedAt && (
               <span
                 data-testid="header-autosave-indicator"
@@ -544,9 +552,36 @@ export const AdminConfig: React.FC = () => {
                   border: "1px solid #ceead6",
                 }}
               >
-                ✓ Auto-saved at {lastSavedAt}
+                {t.autoSavedHeaderBadge} {lastSavedAt}
               </span>
             )}
+            <select
+              aria-label="Language Selector"
+              value={activeLang}
+              onChange={(e) => {
+                const nextLoc = e.target.value;
+                setUiLocale(nextLoc);
+                localStorage.setItem("userLocale", nextLoc);
+                sessionStorage.setItem("userLocaleOverride", "true");
+              }}
+              className="dtg-select"
+            >
+              <option value="en">English (en)</option>
+              <option value="es">Español (es)</option>
+              <option value="fr">Français (fr)</option>
+              <option value="ja">日本語 (ja)</option>
+              <option value="de">Deutsch (de)</option>
+              <option value="pt">Português (Brasil) (pt-BR)</option>
+              <option value="zh">简体中文 (zh)</option>
+              <option value="it">Italiano (it)</option>
+              <option value="ko">한국어 (ko)</option>
+              <option value="ar">العربية (ar)</option>
+              <option value="hi">हिन्दी (hi)</option>
+              <option value="nl">Nederlands (nl)</option>
+              <option value="pl">Polski (pl)</option>
+              <option value="sv">Svenska (sv)</option>
+              <option value="tr">Türkçe (tr)</option>
+            </select>
             <a href="#/" className="dtg-btn dtg-btn-outline">
               {t.backToPortal}
             </a>
@@ -577,7 +612,7 @@ export const AdminConfig: React.FC = () => {
               className="dtg-btn dtg-btn-neutral"
               style={{ padding: "3px 8px", fontSize: "11px" }}
             >
-              Dismiss
+              {t.dismissButton}
             </button>
           </div>
         )}
@@ -615,7 +650,7 @@ export const AdminConfig: React.FC = () => {
                     color: "#fff",
                   }}
                 >
-                  {sessionWatchEnabled ? "SESSION WATCH ACTIVE" : "SESSION WATCH DISABLED"}
+                  {sessionWatchEnabled ? t.sessionWatchActiveBadge : t.sessionWatchDisabledBadge}
                 </span>
                 <span
                   style={{
@@ -627,7 +662,7 @@ export const AdminConfig: React.FC = () => {
                     color: "#fff",
                   }}
                 >
-                  {caaEnforcementEnabled ? "CAA ENFORCEMENT ACTIVE" : "CAA ENFORCEMENT DISABLED"}
+                  {caaEnforcementEnabled ? t.caaActiveBadge : t.caaDisabledBadge}
                 </span>
                 {sessionWatchDryRun && (
                   <span
@@ -640,15 +675,15 @@ export const AdminConfig: React.FC = () => {
                       color: "#fff",
                     }}
                   >
-                    ⚠️ AUDIT-ONLY (DRY-RUN) MODE
+                    {t.auditOnlyBadge}
                   </span>
                 )}
               </div>
               <h2 style={{ margin: "0 0 4px 0", fontSize: "16px", fontWeight: 700, color: "var(--dtg-text)" }}>
-                Session Watch Admin Controls &amp; Live Telemetry
+                {t.adminControlsTitle}
               </h2>
               <p style={{ margin: 0, fontSize: "12.5px", color: "var(--dtg-text-secondary)", lineHeight: 1.5 }}>
-                Admin-only diagnostic actions and real-time enforcement metrics. Standard users and admins alike see the unified device approval experience on the main portal view.
+                {t.adminControlsSubtitle}
               </p>
             </div>
 
@@ -659,9 +694,9 @@ export const AdminConfig: React.FC = () => {
                 disabled={syncingInventory}
                 className="dtg-btn dtg-btn-outline"
                 style={{ fontSize: "12px", padding: "6px 12px" }}
-                title="Loads all company Chromebooks (Directory API) and APPROVED BYOD serials (Cloud Identity) into the backend SQLite/RAM cache"
+                title={t.btn1ExplainDesc}
               >
-                {syncingInventory ? "Syncing Cache..." : "🔄 Sync Inventory Cache"}
+                {syncingInventory ? t.syncingInventoryBtn : t.syncInventoryBtn}
               </button>
               <button
                 type="button"
@@ -669,9 +704,9 @@ export const AdminConfig: React.FC = () => {
                 disabled={attestingSession}
                 className="dtg-btn dtg-btn-outline"
                 style={{ fontSize: "12px", padding: "6px 12px" }}
-                title="Verifies your current browser OS against your APPROVED devices and registers an attested session heartbeat"
+                title={t.btn2ExplainDesc}
               >
-                {attestingSession ? "Attesting..." : "🛡️ Attest Current Session"}
+                {attestingSession ? t.attestingSessionBtn : t.attestSessionBtn}
               </button>
               <button
                 type="button"
@@ -679,9 +714,9 @@ export const AdminConfig: React.FC = () => {
                 disabled={runningLiveSweep}
                 className="dtg-btn dtg-btn-primary"
                 style={{ fontSize: "12px", padding: "6px 12px" }}
-                title="Immediately sweeps Cloud Identity deviceUsers and Admin SDK login logs to enforce or audit unapproved sessions"
+                title={t.btn3ExplainDesc}
               >
-                {runningLiveSweep ? "Sweeping..." : "⚡ Run Live Login Sweep"}
+                {runningLiveSweep ? t.runningLiveSweepBtn : t.runLiveSweepBtn}
               </button>
             </div>
           </div>
@@ -703,45 +738,39 @@ export const AdminConfig: React.FC = () => {
             }}
           >
             <div>
-              <b style={{ color: "var(--dtg-text)" }}>🔄 Sync Inventory Cache:</b>{" "}
-              <span style={{ color: "var(--dtg-text-secondary)" }}>
-                Pulls all active company Chromebooks (Directory API) and <code>APPROVED</code> personal BYOD serials (Cloud Identity API) into the backend&apos;s &lt;1ms SQLite/RAM cache (<i>Cached Approved Serials</i>).
-              </span>
+              <b style={{ color: "var(--dtg-text)" }}>{t.btn1ExplainTitle}</b>{" "}
+              <span style={{ color: "var(--dtg-text-secondary)" }}>{t.btn1ExplainDesc}</span>
             </div>
             <div>
-              <b style={{ color: "var(--dtg-text)" }}>🛡️ Attest Current Session:</b>{" "}
-              <span style={{ color: "var(--dtg-text-secondary)" }}>
-                Checks that this browser&apos;s OS matches an <code>APPROVED</code> device in your inventory and registers a verified session heartbeat (<i>Active Attested Sessions</i>) binding your email, serial, and IP.
-              </span>
+              <b style={{ color: "var(--dtg-text)" }}>{t.btn2ExplainTitle}</b>{" "}
+              <span style={{ color: "var(--dtg-text-secondary)" }}>{t.btn2ExplainDesc}</span>
             </div>
             <div>
-              <b style={{ color: "var(--dtg-text)" }}>⚡ Run Live Login Sweep:</b>{" "}
-              <span style={{ color: "var(--dtg-text-secondary)" }}>
-                Immediately executes an on-demand sweep across Cloud Identity <code>PENDING_APPROVAL</code> / <code>BLOCKED</code> syncs and Admin SDK <code>login</code> events—either terminating unapproved sessions or logging <code>AUDIT_WOULD_SIGN_OUT</code> in Audit-Only mode.
-              </span>
+              <b style={{ color: "var(--dtg-text)" }}>{t.btn3ExplainTitle}</b>{" "}
+              <span style={{ color: "var(--dtg-text-secondary)" }}>{t.btn3ExplainDesc}</span>
             </div>
           </div>
 
           {sessionWatchMetrics && (
             <div style={{ display: "flex", gap: "18px", flexWrap: "wrap", marginTop: "14px", paddingTop: "12px", borderTop: "1px solid rgba(26, 115, 232, 0.2)", fontSize: "12px" }}>
               <div>
-                <span style={{ color: "var(--dtg-text-secondary)" }}>Cached Approved Serials: </span>
+                <span style={{ color: "var(--dtg-text-secondary)" }}>{t.metricCachedSerials} </span>
                 <b>{sessionWatchMetrics.metrics?.inventory_devices_cached ?? 0}</b>
               </div>
               <div>
-                <span style={{ color: "var(--dtg-text-secondary)" }}>Active Attested Sessions: </span>
+                <span style={{ color: "var(--dtg-text-secondary)" }}>{t.metricAttestedSessions} </span>
                 <b>{sessionWatchMetrics.active_attestations?.length ?? 0}</b>
               </div>
               <div>
-                <span style={{ color: "var(--dtg-text-secondary)" }}>Active Onboarding Passes: </span>
+                <span style={{ color: "var(--dtg-text-secondary)" }}>{t.metricOnboardingPasses} </span>
                 <b>{sessionWatchMetrics.active_onboarding_leases?.length ?? 0}</b>
               </div>
               <div>
-                <span style={{ color: "var(--dtg-text-secondary)" }}>Evaluated Logins: </span>
+                <span style={{ color: "var(--dtg-text-secondary)" }}>{t.metricEvaluatedLogins} </span>
                 <b>{sessionWatchMetrics.metrics?.login_events_evaluated ?? 0}</b>
               </div>
               <div>
-                <span style={{ color: "var(--dtg-text-secondary)" }}>Audit-Only Detections (Would Sign Out): </span>
+                <span style={{ color: "var(--dtg-text-secondary)" }}>{t.metricAuditDetections} </span>
                 <b
                   data-testid="metric-audit-would-signout"
                   style={{
@@ -755,7 +784,7 @@ export const AdminConfig: React.FC = () => {
                 </b>
               </div>
               <div>
-                <span style={{ color: "var(--dtg-text-secondary)" }}>Sign-Outs Triggered: </span>
+                <span style={{ color: "var(--dtg-text-secondary)" }}>{t.metricSignOutsTriggered} </span>
                 <b style={{ color: (sessionWatchMetrics.metrics?.signouts_executed ?? 0) > 0 ? "var(--dtg-danger)" : "inherit" }}>
                   {sessionWatchMetrics.metrics?.signouts_executed ?? 0}
                 </b>
@@ -793,28 +822,28 @@ export const AdminConfig: React.FC = () => {
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px", marginBottom: "8px" }}>
               <div>
                 <div style={{ fontWeight: 700, color: "var(--dtg-text)", fontSize: "12.5px" }}>
-                  📋 Live Session Enforcement &amp; Audit-Only Log ({filteredActions.length} shown)
+                  {t.auditLogTitle} ({filteredActions.length} {t.auditLogShownSuffix})
                 </div>
                 <div style={{ color: "var(--dtg-text-secondary)", fontSize: "11px" }}>
-                  When <b>Audit-Only (Dry-Run) Mode</b> is ON, unapproved device logins appear right here as <code>AUDIT_WOULD_SIGN_OUT</code> and in Google Cloud Logging (Logs Explorer).
+                  {t.auditLogSubtitle}
                 </div>
               </div>
 
               <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
                 {(
                   [
-                    { key: "ALL", label: `All (${allRecentActions.length})` },
+                    { key: "ALL", label: `${t.filterAll} (${allRecentActions.length})` },
                     {
                       key: "AUDIT_ONLY",
-                      label: `⚠️ Audit-Only (${allRecentActions.filter((a) => a.decision === "AUDIT_WOULD_SIGN_OUT").length})`,
+                      label: `${t.filterAuditOnly} (${allRecentActions.filter((a) => a.decision === "AUDIT_WOULD_SIGN_OUT").length})`,
                     },
                     {
                       key: "REVOKED",
-                      label: `🚫 Signed Out (${allRecentActions.filter((a) => a.decision === "REVOKE_SIGN_OUT").length})`,
+                      label: `${t.filterSignedOut} (${allRecentActions.filter((a) => a.decision === "REVOKE_SIGN_OUT").length})`,
                     },
                     {
                       key: "ALLOWED",
-                      label: `✅ Allowed (${allRecentActions.filter((a) => a.decision.startsWith("ALLOW") || a.decision.startsWith("SKIP")).length})`,
+                      label: `${t.filterAllowed} (${allRecentActions.filter((a) => a.decision.startsWith("ALLOW") || a.decision.startsWith("SKIP")).length})`,
                     },
                   ] as const
                 ).map((tab) => (
@@ -849,7 +878,7 @@ export const AdminConfig: React.FC = () => {
                   color: "var(--dtg-text-secondary)",
                 }}
               >
-                No session enforcement or audit events matching filter <b>{logFilter}</b> yet. Click <b>⚡ Run Live Login Sweep</b> above to evaluate current domain sessions.
+                {t.auditLogEmpty}
               </div>
             ) : (
               <div style={{ display: "grid", gap: "6px", maxHeight: "260px", overflowY: "auto" }}>
@@ -899,7 +928,13 @@ export const AdminConfig: React.FC = () => {
                         <span style={{ color: "var(--dtg-text-secondary)" }}>{act.reason}</span>
                       </div>
                       <span style={{ color: "var(--dtg-text-secondary)", fontFamily: "monospace", fontSize: "11px" }}>
-                        {act.timestamp_iso ? new Date(act.timestamp_iso).toLocaleTimeString() : ""}
+                        {act.timestamp_iso
+                          ? new Intl.DateTimeFormat(activeLang, {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                              second: "2-digit",
+                            }).format(new Date(act.timestamp_iso))
+                          : ""}
                       </span>
                     </div>
                   );
@@ -919,7 +954,7 @@ export const AdminConfig: React.FC = () => {
                 color: "var(--dtg-text-secondary)",
               }}
             >
-              <b>☁️ Google Cloud Logging (30-Day Retention):</b> Every <code>AUDIT_WOULD_SIGN_OUT</code> and <code>REVOKE_SIGN_OUT</code> event is also streamed as structured JSON to Cloud Run <code>stdout</code>. Query in <b>GCP Console &gt; Logs Explorer</b> with:{" "}
+              <b>{t.cloudLoggingHelperTitle}</b> {t.cloudLoggingHelperDesc}{" "}
               <code style={{ userSelect: "all", color: "var(--dtg-text)" }}>
                 resource.type=&quot;cloud_run_revision&quot; jsonPayload.component=&quot;devicetrustportal.session_guard&quot; jsonPayload.decision=&quot;AUDIT_WOULD_SIGN_OUT&quot;
               </code>
@@ -933,7 +968,7 @@ export const AdminConfig: React.FC = () => {
               {t.generalSecurityPolicies}
             </h2>
             <span style={{ fontSize: "11.5px", color: "#137333", fontWeight: 600 }}>
-              ⚡ Toggle switches confirm &amp; auto-save immediately
+              {t.toggleAutoSaveHint}
             </span>
           </div>
           <p style={{ fontSize: "13px", color: "var(--dtg-text-secondary)", margin: "0 0 24px 0" }}>
@@ -958,7 +993,7 @@ export const AdminConfig: React.FC = () => {
           >
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px", marginBottom: "12px" }}>
               <div style={{ fontWeight: 700, fontSize: "15px", color: "var(--dtg-text)" }}>
-                Domain Enforcement Controls (Disabled by Default on New Installs)
+                {t.domainEnforcementTitle}
               </div>
               <span
                 data-testid="active-enforcement-mode-pill"
@@ -976,7 +1011,7 @@ export const AdminConfig: React.FC = () => {
                   color: "#fff",
                 }}
               >
-                Effective Mode: {enforcementMode}
+                {t.effectiveModeLabel} {enforcementMode}
               </span>
             </div>
 
@@ -992,7 +1027,7 @@ export const AdminConfig: React.FC = () => {
                   color: "var(--dtg-text)",
                 }}
               >
-                <b>New Installation Standby:</b> Both Session Management and Context-Aware Access monitoring are disabled by default so you can verify your device inventory first. Flip either toggle switch below to confirm and auto-save enforcement.
+                {t.newInstallStandbyBanner}
               </div>
             )}
 
@@ -1010,16 +1045,8 @@ export const AdminConfig: React.FC = () => {
                     overrides: { sessionWatchEnabled: nextVal },
                   })
                 }
-                label={
-                  <>
-                    ⚡ Enable Session Management &amp; <code>users.signOut</code> Circuit Breaker (Education Fundamentals)
-                  </>
-                }
-                description={
-                  <>
-                    <b>Disabled by default on new installs.</b> When toggled ON, enforces device trust without requiring Context-Aware Access licenses—or supplements CAA by terminating Google account sessions (<code>admin.directory.users.signOut</code> + OAuth token grant revocation) and auto-blocking unapproved personal devices (e.g. unapproved Mac/Windows laptops in <code>PENDING_APPROVAL</code> or re-authenticating <code>BLOCKED</code> devices) within seconds.
-                  </>
-                }
+                label={t.toggleSessionWatchLabel}
+                description={t.toggleSessionWatchDesc}
               />
 
               {/* Toggle 2: CAA Access for Education Standard & Plus */}
@@ -1035,16 +1062,8 @@ export const AdminConfig: React.FC = () => {
                     overrides: { caaEnforcementEnabled: nextVal },
                   })
                 }
-                label={
-                  <>
-                    🛡️ Enable Context-Aware Access (CAA) Integration (Education Standard &amp; Plus)
-                  </>
-                }
-                description={
-                  <>
-                    <b>Disabled by default on new installs.</b> Designed for Google Workspace for Education Standard, Education Plus, and Enterprise tiers. Pairs self-service Cloud Identity device approval with Google Admin Console Context-Aware Access CEL rules (<code>device.is_corp_owned_device == true || device.is_admin_approved_device == true</code>) to block Gmail, Drive, Docs, and Classroom on unapproved devices at the application edge.
-                  </>
-                }
+                label={t.toggleCaaLabel}
+                description={t.toggleCaaDesc}
               />
             </div>
 
@@ -1062,21 +1081,13 @@ export const AdminConfig: React.FC = () => {
               }}
             >
               <div style={{ fontWeight: 700, color: "var(--dtg-text)", marginBottom: "4px" }}>
-                ℹ️ How the 3-Layer Enforcement Pipeline &amp; CAA Work Together
+                {t.pipelineBoxTitle}
               </div>
               <ul style={{ margin: 0, paddingLeft: "18px" }}>
-                <li>
-                  <b>Why CAA blocks apps while <code>accounts.google.com</code> stays signed in:</b> Context-Aware Access blocks Workspace apps (Gmail, Drive, Docs) at the application edge, but Google allows initial <code>accounts.google.com</code> login so Chrome Profile Reporting / Endpoint Verification can register the device in Cloud Identity.
-                </li>
-                <li>
-                  <b>Layer 1 — Inline Portal Check (&lt; 0.5s) &amp; 8s Heartbeat:</b> Opening the portal on an unapproved device without an active 15-minute Onboarding Grace Pass immediately triggers <code>GET /api/session-watch/session-status</code>, executing <code>users.signOut</code>, revoking the portal OAuth grant, and returning <code>HTTP 401</code> to clear the browser session.
-                </li>
-                <li>
-                  <b>Layer 2 — Sub-10s Cloud Identity <code>lastSyncTime</code> Polling (~2–10s):</b> Because Chrome Profile Reporting updates <code>DeviceUser.lastSyncTime</code> in ~1.7s on sign-in, the 1-minute Cloud Scheduler job runs 5 rapid 10-second sub-polls across both <code>PENDING_APPROVAL</code> and re-logged-in <code>BLOCKED</code> BYOD devices (plus Admin SDK login events) to boot unapproved sessions even if the user never opens the portal.
-                </li>
-                <li>
-                  <b>Enable Either or Both:</b> On new installs, both toggles start OFF. Toggle ON <b>Session Management</b> for Fundamentals, <b>CAA Integration</b> for Standard/Plus edge blocking, or <b>Both</b> for edge app blocking + immediate Google session termination.
-                </li>
+                <li>{t.pipelineBullet1}</li>
+                <li>{t.pipelineBullet2}</li>
+                <li>{t.pipelineBullet3}</li>
+                <li>{t.pipelineBullet4}</li>
               </ul>
             </div>
 
@@ -1090,7 +1101,7 @@ export const AdminConfig: React.FC = () => {
               }}
             >
               <div style={{ fontWeight: 700, fontSize: "13px", color: "#1967d2", textTransform: "uppercase", letterSpacing: "0.03em" }}>
-                Session Watch Rollout Scoping &amp; Onboarding Safeguards
+                {t.rolloutScopingTitle}
               </div>
 
               {/* Toggle 3: Audit-Only (Dry-Run) Mode */}
@@ -1106,16 +1117,8 @@ export const AdminConfig: React.FC = () => {
                     overrides: { sessionWatchDryRun: nextVal },
                   })
                 }
-                label={
-                  <>
-                    ⚠️ Audit-Only (Dry-Run) Mode (<code>AUDIT_WOULD_SIGN_OUT</code>)
-                  </>
-                }
-                description={
-                  <>
-                    Evaluate all login events and Cloud Identity device syncs, recording <code>AUDIT_WOULD_SIGN_OUT</code> in the <b>Live Session Enforcement &amp; Audit-Only Log</b> above and in <b>Google Cloud Logging</b> without calling <code>users.signOut</code> or blocking devices.
-                  </>
-                }
+                label={t.toggleDryRunLabel}
+                description={t.toggleDryRunDesc}
               />
 
               {/* Toggle 4: Admin Safe-Harbor Exemption */}
@@ -1131,12 +1134,8 @@ export const AdminConfig: React.FC = () => {
                     overrides: { sessionWatchExemptAdmins: nextVal },
                   })
                 }
-                label={<>🛡️ Admin Safe-Harbor Exemption</>}
-                description={
-                  <>
-                    Exempt Workspace Super Admins and Portal Admins from automated <code>users.signOut</code> sweeps to prevent administrative lockout. (Leave <b>OFF</b> when testing unapproved-device sign-out with your own admin account).
-                  </>
-                }
+                label={t.toggleExemptAdminsLabel}
+                description={t.toggleExemptAdminsDesc}
               />
 
               <div>
@@ -1144,12 +1143,12 @@ export const AdminConfig: React.FC = () => {
                   htmlFor="session-watch-target-ous"
                   style={{ display: "block", fontWeight: 600, marginBottom: "4px", fontSize: "13px", color: "var(--dtg-text)" }}
                 >
-                  Target Organizational Units (OUs) for Session Watch Rollout:
+                  {t.targetOusLabel}
                 </label>
                 <input
                   id="session-watch-target-ous"
                   type="text"
-                  placeholder="/Students, /Staff/Pilot (leave blank to enforce across all OUs)"
+                  placeholder={t.targetOusPlaceholder}
                   value={sessionWatchTargetOusInput}
                   onChange={(e) => setSessionWatchTargetOusInput(e.target.value)}
                   onBlur={() =>
@@ -1161,7 +1160,7 @@ export const AdminConfig: React.FC = () => {
                   className="dtg-input"
                 />
                 <span style={{ fontSize: "11.5px", color: "var(--dtg-text-secondary)", display: "block", marginTop: "4px" }}>
-                  Hierarchical prefix match (e.g. <code>/Students</code> includes <code>/Students/HighSchool</code>). Auto-saves when you leave the field.
+                  {t.targetOusHint}
                 </span>
               </div>
 
@@ -1170,12 +1169,12 @@ export const AdminConfig: React.FC = () => {
                   htmlFor="session-watch-target-groups"
                   style={{ display: "block", fontWeight: 600, marginBottom: "4px", fontSize: "13px", color: "var(--dtg-text)" }}
                 >
-                  Target Google Groups for Session Watch Rollout:
+                  {t.targetGroupsLabel}
                 </label>
                 <input
                   id="session-watch-target-groups"
                   type="text"
-                  placeholder="session-watch-pilot@gwfe.org, byod-enforced@gwfe.org (leave blank for all)"
+                  placeholder={t.targetGroupsPlaceholder}
                   value={sessionWatchTargetGroupsInput}
                   onChange={(e) => setSessionWatchTargetGroupsInput(e.target.value)}
                   onBlur={() =>
@@ -1187,7 +1186,7 @@ export const AdminConfig: React.FC = () => {
                   className="dtg-input"
                 />
                 <span style={{ fontSize: "11.5px", color: "var(--dtg-text-secondary)", display: "block", marginTop: "4px" }}>
-                  Comma-separated Google Group emails. Auto-saves when you leave the field.
+                  {t.targetGroupsHint}
                 </span>
               </div>
 
@@ -1196,7 +1195,7 @@ export const AdminConfig: React.FC = () => {
                   htmlFor="session-watch-onboarding-grace"
                   style={{ display: "block", fontWeight: 600, marginBottom: "4px", fontSize: "13px", color: "var(--dtg-text)" }}
                 >
-                  Personal Device Onboarding Grace Pass Duration (Minutes):
+                  {t.onboardingGraceLabel}
                 </label>
                 <input
                   id="session-watch-onboarding-grace"
@@ -1214,7 +1213,7 @@ export const AdminConfig: React.FC = () => {
                   className="dtg-input"
                 />
                 <span style={{ fontSize: "11.5px", color: "var(--dtg-text-secondary)", display: "block", marginTop: "4px" }}>
-                  Duration of the temporary grace pass when a user clicks <b>+ Add Personal Device</b> or generates a Trust Chaining pairing code.
+                  {t.onboardingGraceHint}
                 </span>
               </div>
             </div>
@@ -1248,7 +1247,7 @@ export const AdminConfig: React.FC = () => {
               htmlFor="google-client-id-input"
               style={{ display: "block", fontWeight: 600, marginBottom: "6px", color: "var(--dtg-text)", fontSize: "14px" }}
             >
-              Google OAuth 2.0 Web Client ID:
+              {t.googleClientIdLabel}
             </label>
             <input
               id="google-client-id-input"
@@ -1262,7 +1261,7 @@ export const AdminConfig: React.FC = () => {
               className="dtg-input"
             />
             <span style={{ fontSize: "12px", color: "var(--dtg-text-secondary)", display: "block", marginTop: "5px" }}>
-              OAuth 2.0 Web Application Client ID used for Google Sign-In on the portal.
+              {t.googleClientIdHint}
             </span>
           </div>
 
@@ -1275,10 +1274,14 @@ export const AdminConfig: React.FC = () => {
             </label>
             <select
               id="default-locale-select"
+              data-testid="default-locale-select"
               value={defaultLocale}
               onChange={(e) => {
                 const nextLoc = e.target.value;
                 setDefaultLocale(nextLoc);
+                setUiLocale(nextLoc);
+                localStorage.setItem("userLocale", nextLoc);
+                sessionStorage.removeItem("userLocaleOverride");
                 persistConfiguration({ defaultLocale: nextLoc }, `Updated Default Portal Language to ${nextLoc}`);
               }}
               className="dtg-select"
@@ -1417,8 +1420,8 @@ export const AdminConfig: React.FC = () => {
               {pendingConfirm.title}
             </h3>
             <p style={{ fontSize: "13px", color: "var(--dtg-text-secondary)", margin: "0 0 18px 0", lineHeight: 1.55 }}>
-              <b>Change Summary:</b> {pendingConfirm.summary}.<br />
-              Clicking <b>Confirm &amp; Auto-Save</b> will immediately persist this configuration to Secret Manager and apply it across your domain.
+              <b>{t.confirmChangeSummaryLabel}</b> {pendingConfirm.summary}.<br />
+              {t.confirmModalBody}
             </p>
             <div className="dtg-modal-actions">
               <button
@@ -1434,7 +1437,7 @@ export const AdminConfig: React.FC = () => {
                 onClick={handleConfirmPendingToggle}
                 className="dtg-btn dtg-btn-primary"
               >
-                ✓ Confirm &amp; Auto-Save
+                {t.confirmAutoSaveBtn}
               </button>
             </div>
           </div>

@@ -147,12 +147,18 @@ export const Dashboard: React.FC = () => {
           } else if (data?.enforcement_mode) {
             setCaaEnforcementEnabled(data.enforcement_mode === "CAA" || data.enforcement_mode === "BOTH");
           }
-          if (data?.default_locale && !localStorage.getItem("userLocale")) {
+          if (data?.default_locale) {
+            const hasManualOverride = sessionStorage.getItem("userLocaleOverride") === "true";
+            if (!hasManualOverride) {
+              setLocale(data.default_locale);
+              localStorage.setItem("userLocale", data.default_locale);
+            }
+          } else if (!localStorage.getItem("userLocale")) {
             const browserLang = navigator.language?.slice(0, 2);
             setLocale(
               ["en", "es", "fr", "ja", "de", "pt", "zh", "it", "ko", "ar", "hi", "nl", "pl", "sv", "tr"].includes(browserLang)
                 ? browserLang
-                : data.default_locale
+                : "en"
             );
           }
         }).catch(() => {});
@@ -311,7 +317,7 @@ export const Dashboard: React.FC = () => {
     });
     try {
       await approveDevice(name);
-      setMessage("Device approved! Active sessions are now authorized.");
+      setMessage(t.deviceApprovedSuccess);
       setDevices((prev) =>
         prev.map((d) => (d.device_user_name === name ? { ...d, approval_state: "APPROVED" } : d))
       );
@@ -418,20 +424,20 @@ export const Dashboard: React.FC = () => {
     try {
       const d = new Date(isoStr);
       if (isNaN(d.getTime())) return isoStr;
-      return d.toLocaleDateString(undefined, {
+      return new Intl.DateTimeFormat(locale || "en", {
         year: "numeric",
         month: "short",
         day: "numeric",
         hour: "2-digit",
         minute: "2-digit",
-      });
+      }).format(d);
     } catch (e) {
       return isoStr;
     }
   };
 
   return (
-    <div className="dtg-shell">
+    <div className="dtg-shell" lang={locale} dir={locale === "ar" ? "rtl" : "ltr"}>
       {/* Google Workspace Top Navigation App Bar */}
       <header className="dtg-header">
         <div className="dtg-header-inner">
@@ -468,10 +474,10 @@ export const Dashboard: React.FC = () => {
                     }}
                   >
                     {sessionWatchEnabled && caaEnforcementEnabled
-                      ? "🛡️ CAA + SESSION MANAGEMENT ACTIVE"
+                      ? t.enforcementBadgeBoth
                       : sessionWatchEnabled
-                      ? "⚡ SESSION MANAGEMENT ACTIVE (FUNDAMENTALS)"
-                      : "🛡️ CONTEXT-AWARE ACCESS (STANDARD & PLUS)"}
+                      ? t.enforcementBadgeSessionWatch
+                      : t.enforcementBadgeCaa}
                   </span>
                 ) : isAdmin ? (
                   <a
@@ -493,7 +499,7 @@ export const Dashboard: React.FC = () => {
                     }}
                     title="New install default: Both Session Management and CAA are disabled until configured in Admin Configurations"
                   >
-                    ⚙️ ENFORCEMENT STANDBY — CONFIGURE IN ADMIN
+                    {t.enforcementStandbyBadge}
                   </a>
                 ) : null}
               </div>
@@ -508,6 +514,7 @@ export const Dashboard: React.FC = () => {
               onChange={(e) => {
                 setLocale(e.target.value);
                 localStorage.setItem("userLocale", e.target.value);
+                sessionStorage.setItem("userLocaleOverride", "true");
               }}
               className="dtg-select"
             >
@@ -557,28 +564,22 @@ export const Dashboard: React.FC = () => {
                 <div className="dtg-step-item">
                   <div className="dtg-step-num">1</div>
                   <div>
-                    <div className="dtg-step-title">Sign In with Workspace</div>
-                    <div className="dtg-step-text">
-                      Authenticate with your corporate or school Google Workspace account.
-                    </div>
+                    <div className="dtg-step-title">{t.step1Title}</div>
+                    <div className="dtg-step-text">{t.step1Desc}</div>
                   </div>
                 </div>
                 <div className="dtg-step-item">
                   <div className="dtg-step-num">2</div>
                   <div>
-                    <div className="dtg-step-title">Sync Device Signals</div>
-                    <div className="dtg-step-text">
-                      Ensure Chrome Profile Reporting or Endpoint Verification is active on your device.
-                    </div>
+                    <div className="dtg-step-title">{t.step2Title}</div>
+                    <div className="dtg-step-text">{t.step2Desc}</div>
                   </div>
                 </div>
                 <div className="dtg-step-item">
                   <div className="dtg-step-num">3</div>
                   <div>
-                    <div className="dtg-step-title">Approve or Revoke Access</div>
-                    <div className="dtg-step-text">
-                      Approve pending personal devices or revoke lost/retired hardware in one click.
-                    </div>
+                    <div className="dtg-step-title">{t.step3Title}</div>
+                    <div className="dtg-step-text">{t.step3Desc}</div>
                   </div>
                 </div>
               </div>
@@ -622,7 +623,7 @@ export const Dashboard: React.FC = () => {
                     setAuthToken("");
                     setDevices([]);
                     setIsAdmin(false);
-                    setMessage("Signed out successfully.");
+                    setMessage(t.signedOutSuccess);
                   }}
                   className="dtg-btn dtg-btn-neutral"
                 >
@@ -638,7 +639,7 @@ export const Dashboard: React.FC = () => {
           <div className="dtg-stats-grid" aria-label="Device Inventory Summary">
             <div className="dtg-stat-card">
               <div>
-                <div className="dtg-stat-label">Total Registered</div>
+                <div className="dtg-stat-label">{t.totalRegisteredLabel}</div>
                 <div className="dtg-stat-value">{devices.length}</div>
               </div>
               <div
@@ -744,7 +745,10 @@ export const Dashboard: React.FC = () => {
             }}
           >
             <span>
-              🛡️ Personal Device Onboarding Pass Active ({Math.max(1, Math.ceil(activeUserLease.remaining_seconds / 60))}m remaining) — Session Management will NOT sign you out while you sign in on your new personal device and click Approve below.
+              {t.onboardingPassActiveBanner.replace(
+                "{minutes}",
+                String(Math.max(1, Math.ceil(activeUserLease.remaining_seconds / 60)))
+              )}
             </span>
           </div>
         )}
@@ -760,7 +764,7 @@ export const Dashboard: React.FC = () => {
               {t.loadingDevices}
             </div>
             <div style={{ color: "var(--dtg-text-secondary)", fontSize: "13px" }}>
-              Securely verifying your hardware inventory for <b>{userEmail}</b>.
+              {t.verifyingInventoryFor} <b>{userEmail}</b>.
             </div>
           </div>
         ) : deviceError ? (
@@ -783,7 +787,7 @@ export const Dashboard: React.FC = () => {
               {t.noApprovedDevices}
             </div>
             <div style={{ fontSize: "14px", marginBottom: "18px", color: "var(--dtg-text-secondary)" }}>
-              We checked your inventory but found no registered devices matching <b>{userEmail}</b>.
+              {t.noDevicesFoundFor} <b>{userEmail}</b>.
             </div>
             <button
               onClick={loadDevices}
@@ -822,9 +826,9 @@ export const Dashboard: React.FC = () => {
                       onClick={handleStartOnboardingLease}
                       disabled={sessionWatchLoading}
                       className="dtg-btn dtg-btn-success"
-                      title="Start a 15-minute grace window so you can sign in on a new personal device and approve it here without being signed out"
+                      title={t.addPersonalDeviceTooltip}
                     >
-                      + Add Personal Device (15m Grace Pass)
+                      {t.addPersonalDeviceBtn}
                     </button>
                   )}
                   <button

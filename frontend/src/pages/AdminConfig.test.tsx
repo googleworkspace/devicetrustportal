@@ -173,4 +173,44 @@ describe("AdminConfig Page", () => {
     expect(screen.getByText("student@example.com")).toBeInTheDocument();
     expect(screen.getAllByText(/AUDIT_WOULD_SIGN_OUT/i).length).toBeGreaterThan(0);
   });
+
+  test("changing Default Tenant UI Language (Localization Fallback) immediately localizes Admin UI and auto-saves", async () => {
+    render(<AdminConfig />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("default-locale-select")).toBeInTheDocument();
+    });
+
+    const localeSelect = screen.getByTestId("default-locale-select");
+    expect(localeSelect).toHaveValue("en");
+
+    // Change Default Tenant UI Language to Spanish ('es')
+    fireEvent.change(localeSelect, { target: { value: "es" } });
+
+    await waitFor(() => {
+      expect(mockUpdateAdminConfig).toHaveBeenCalledWith(
+        expect.objectContaining({
+          default_locale: "es",
+        })
+      );
+    });
+
+    // Verify Admin UI strings localized to Spanish
+    expect(
+      screen.getByText("Configuración de Google Workspace")
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Administración del Portal de Confianza")
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Controles de Administración de Sesiones y Telemetría en Vivo")
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("1. 🔄 Sincronizar Caché de Inventario:")
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("auto-save-confirmation")).toHaveTextContent(
+      /Guardado automático/i
+    );
+    expect(localStorage.getItem("userLocale")).toBe("es");
+  });
 });
