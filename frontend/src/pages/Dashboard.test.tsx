@@ -161,10 +161,11 @@ describe("Dashboard Page", () => {
     await waitFor(() => {
       expect(screen.getByText("Personal BYOD Devices")).toBeInTheDocument();
       expect(screen.getAllByText("Company-Owned Devices").length).toBeGreaterThan(0);
-      expect(screen.getByTestId("enforcement-mode-badge")).toHaveTextContent(
-        "CAA-FREE SESSION WATCH (FUNDAMENTALS)"
-      );
     });
+
+    // Ensure admin-only Session Watch operation buttons are NOT on the Dashboard
+    expect(screen.queryByText(/Sync Inventory Cache/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Run Live Login Sweep/i)).not.toBeInTheDocument();
 
     // Check personal BYOD device has checkbox & revoke button
     expect(screen.getByText("MacBook Pro BYOD")).toBeInTheDocument();
@@ -178,7 +179,7 @@ describe("Dashboard Page", () => {
     expect(screen.queryByText("Immutable Anchor")).not.toBeInTheDocument();
   });
 
-  test("renders admin configurations link for admin user", async () => {
+  test("renders admin configurations link for admin user while keeping identical device approval view", async () => {
     localStorage.setItem("userEmail", "admin@example.com");
     localStorage.setItem("googleIdToken", "mock-token");
     
@@ -190,6 +191,9 @@ describe("Dashboard Page", () => {
     await waitFor(() => {
       expect(screen.getByText("Admin Configurations")).toBeInTheDocument();
     });
+    // Admin sees the same device approval view without admin-only telemetry buttons on Dashboard
+    expect(screen.queryByText(/Sync Inventory Cache/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Run Live Login Sweep/i)).not.toBeInTheDocument();
   });
 
   test("clicking refresh devices button triggers getMyDevices", async () => {
@@ -228,10 +232,16 @@ describe("Dashboard Page", () => {
     });
   });
 
-  test("clicking Add Personal Device (15m Grace Pass) starts onboarding lease", async () => {
+  test("clicking Add Personal Device (15m Grace Pass) starts onboarding lease when session_watch_enabled is true", async () => {
     localStorage.setItem("userEmail", "user@example.com");
     localStorage.setItem("googleIdToken", "mock-token");
 
+    mockGetPublicConfig.mockResolvedValue({
+      default_locale: "en",
+      enforcement_mode: "SESSION_WATCH",
+      session_watch_enabled: true,
+      caa_enforcement_enabled: false,
+    });
     mockCheckIsAdmin.mockResolvedValue(false);
     mockGetMyDevices.mockResolvedValue([
       {

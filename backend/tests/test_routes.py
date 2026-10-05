@@ -1896,3 +1896,119 @@ def test_cron_endpoints_uninitialized_service_raises_500():
         assert resp_sync.status_code == 500
 
 
+def test_session_watch_and_caa_disabled_by_default_and_cloud_identity_pending_byod_sweep():
+    from backend.routes.session_watch import session_guard
+
+    # 1. Verify default public config has both toggles disabled by default
+    pub_resp = client.get("/api/config/public")
+    assert pub_resp.status_code == 200
+    pub_data = pub_resp.json()
+    assert pub_data["session_watch_enabled"] is False
+    assert pub_data["caa_enforcement_enabled"] is False
+    assert pub_data["enforcement_mode"] == "DISABLED"
+
+    # 2. Automatic scheduled sweep skips when session_watch_enabled is False
+    skipped_resp = client.post("/api/session-watch/live-sweep", json={"lookback_minutes": 60, "force": False})
+    assert skipped_resp.status_code == 200
+    skipped = skipped_resp.json()
+    assert skipped["status"] == "SKIPPED_DISABLED"
+    assert skipped["session_watch_enabled"] is False
+
+    # 3. Forced sweep (or when session_watch_enabled=True) catches Cloud Identity PENDING_APPROVAL Mac
+    #    even when Admin SDK login audit logs return 0 events, signs out the user, and blocks both
+    #    the PENDING_APPROVAL Mac and any stale serial-less APPROVED duplicate MAC_OS records.
+    session_guard._recent_signouts.clear()
+    session_guard._unapproved_devices.clear()
+    mock_ci = MagicMock()
+    mock_devices_res = MagicMock()
+    mock_du_res = MagicMock()
+    mock_ci.devices.return_value = mock_devices_res
+    mock_devices_res.deviceUsers.return_value = mock_du_res
+
+    mock_devices_res.list.return_value.execute.return_value = {
+        "devices": [
+            {
+                "name": "devices/mac-pending",
+                "deviceType": "MAC_OS",
+                "model": "MacBookPro17,1",
+                "serialNumber": "C02F30BV0KPF",
+                "ownerType": "BYOD",
+                "lastSyncTime": "2026-10-05T11:28:39.135Z",
+            },
+            {
+                "name": "devices/mac-stale-virtual",
+                "deviceType": "MAC_OS",
+                "model": "MacOS",
+                "serialNumber": "",
+                "ownerType": "BYOD",
+                "lastSyncTime": "2026-10-02T22:55:27Z",
+            },
+        ]
+    }
+
+    def du_list_side_effect(parent, customer, pageToken=None, **kwargs):
+        mock_req = MagicMock()
+        if parent == "devices/-":
+            mock_req.execute.return_value = {
+                "deviceUsers": [
+                    {
+                        "name": "devices/mac-pending/deviceUsers/du-pending",
+                        "userEmail": "claycodes@gwfe.org",
+                        "managementState": "PENDING_APPROVAL",
+                        "lastSyncTime": "2026-10-05T11:28:39.135Z",
+                    },
+                    {
+                        "name": "devices/mac-stale-virtual/deviceUsers/du-stale",
+                        "userEmail": "claycodes@gwfe.org",
+                        "managementState": "APPROVED",
+                        "lastSyncTime": "2026-10-02T22:55:27Z",
+                    },
+                ]
+            }
+        elif parent == "devices/mac-pending":
+            mock_req.execute.return_value = {
+                "deviceUsers": [
+                    {
+                        "name": "devices/mac-pending/deviceUsers/du-pending",
+                        "userEmail": "claycodes@gwfe.org",
+                        "managementState": "PENDING_APPROVAL",
+                        "lastSyncTime": "2026-10-05T11:28:39.135Z",
+                    }
+                ]
+            }
+        else:
+            mock_req.execute.return_value = {
+                "deviceUsers": [
+                    {
+                        "name": "devices/mac-stale-virtual/deviceUsers/du-stale",
+                        "userEmail": "claycodes@gwfe.org",
+                        "managementState": "APPROVED",
+                        "lastSyncTime": "2026-10-02T22:55:27Z",
+                    }
+                ]
+            }
+        return mock_req
+
+    mock_du_res.list.side_effect = du_list_side_effect
+
+    with patch("backend.routes.session_watch.cloud_identity_service.service", mock_ci), \
+         patch("backend.routes.devices.cloud_identity_service.service", mock_ci), \
+         patch("backend.routes.session_watch.cloud_identity_service.revoke_device_user", return_value=True) as mock_revoke_du, \
+         patch("backend.routes.session_watch.directory_service.get_user_chromeos_devices", return_value=[]), \
+         patch("backend.routes.session_watch.directory_service.list_recent_login_events", return_value=[]), \
+         patch("backend.routes.session_watch.directory_service.is_user_in_session_watch_scope", return_value=(True, "IN_SCOPE")), \
+         patch("backend.routes.session_watch.directory_service.sign_out_user", return_value=True) as mock_sign_out:
+        sweep_resp = client.post("/api/session-watch/live-sweep", json={"lookback_minutes": 60, "force": True})
+        assert sweep_resp.status_code == 200
+        res = sweep_resp.json()
+        assert res["status"] == "LIVE_SWEEP_COMPLETE"
+        assert res["fetched_login_events"] == 0
+        assert res["unapproved_cloud_identity_byod_events"] == 1
+        assert res["revoked_count"] == 1
+        assert res["auto_blocked_byod_devices"] == 2
+        mock_sign_out.assert_called_once_with("claycodes@gwfe.org")
+        blocked_names = [c.kwargs.get("device_user_name") or c.args[0] for c in mock_revoke_du.call_args_list]
+        assert "devices/mac-pending/deviceUsers/du-pending" in blocked_names
+        assert "devices/mac-stale-virtual/deviceUsers/du-stale" in blocked_names
+
+

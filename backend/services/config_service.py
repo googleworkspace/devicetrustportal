@@ -32,8 +32,16 @@ class TenantConfig(BaseModel):
     chaining_allowed_groups: List[str] = Field(default=[], description="Google Groups authorized to perform trust chaining")
     chaining_allowed_ous: List[str] = Field(default=[], description="Organizational Units authorized to perform trust chaining")
     enforcement_mode: str = Field(
-        default="SESSION_WATCH",
-        description="Enforcement architecture mode: 'SESSION_WATCH' (CAA-Free Education Fundamentals) or 'CAA' (Context-Aware Access)",
+        default="DISABLED",
+        description="Enforcement architecture mode: 'DISABLED' (default), 'SESSION_WATCH' (Education Fundamentals), 'CAA' (Education Standard/Plus), or 'BOTH'",
+    )
+    session_watch_enabled: bool = Field(
+        default=False,
+        description="Enable CAA-Free Session Management & users.signOut circuit breaker for Education Fundamentals domains (Disabled by default)",
+    )
+    caa_enforcement_enabled: bool = Field(
+        default=False,
+        description="Enable Context-Aware Access (CAA) device approval integration for Education Standard & Plus domains (Disabled by default)",
     )
     session_watch_target_ous: List[str] = Field(
         default=[],
@@ -56,6 +64,17 @@ class TenantConfig(BaseModel):
         description="Minutes of onboarding grace lease granted when a user opens the portal to enroll or approve a personal device",
     )
 
+
+def _derive_enforcement_mode(session_watch_enabled: bool, caa_enforcement_enabled: bool) -> str:
+    if session_watch_enabled and caa_enforcement_enabled:
+        return "BOTH"
+    if session_watch_enabled:
+        return "SESSION_WATCH"
+    if caa_enforcement_enabled:
+        return "CAA"
+    return "DISABLED"
+
+
 class ConfigService:
     def __init__(self):
         self.project_id = os.getenv("GOOGLE_CLOUD_PROJECT")
@@ -76,7 +95,6 @@ class ConfigService:
     def get_tenant_config(self) -> TenantConfig:
         env_admin = os.getenv("WORKSPACE_ADMIN_EMAIL", "").lower().strip()
         env_client_id = os.getenv("GOOGLE_CLIENT_ID", "") or os.getenv("REACT_APP_GOOGLE_CLIENT_ID", "")
-        env_mode = (os.getenv("ENFORCEMENT_MODE") or os.getenv("TENANT_ENFORCEMENT_MODE") or "").strip().upper()
         
         if self.use_secret_manager and self.project_id:
             try:
@@ -84,8 +102,11 @@ class ConfigService:
                 response = self.sm_client.access_secret_version(request={"name": name})
                 payload = response.payload.data.decode("UTF-8")
                 data = json.loads(payload)
-                if "enforcement_mode" not in data and env_mode in ("CAA", "SESSION_WATCH"):
-                    data["enforcement_mode"] = env_mode
+                sw_enabled = bool(data.get("session_watch_enabled", False))
+                caa_enabled = bool(data.get("caa_enforcement_enabled", False))
+                data["session_watch_enabled"] = sw_enabled
+                data["caa_enforcement_enabled"] = caa_enabled
+                data["enforcement_mode"] = _derive_enforcement_mode(sw_enabled, caa_enabled)
                 config = TenantConfig(**data)
                 if env_admin and env_admin not in [a.lower().strip() for a in config.portal_admins]:
                     config.portal_admins.append(env_admin)
@@ -99,7 +120,9 @@ class ConfigService:
         if env_admin and env_admin not in [a.lower().strip() for a in local_admins]:
             local_admins.append(env_admin)
 
-        default_mode = env_mode if env_mode in ("CAA", "SESSION_WATCH") else "SESSION_WATCH"
+        sw_enabled_env = os.getenv("TENANT_SESSION_WATCH_ENABLED", "false").lower() == "true"
+        caa_enabled_env = os.getenv("TENANT_CAA_ENFORCEMENT_ENABLED", "false").lower() == "true"
+        derived_mode = _derive_enforcement_mode(sw_enabled_env, caa_enabled_env)
         exempt_admins_env = os.getenv("TENANT_SESSION_WATCH_EXEMPT_ADMINS", "false").lower() == "true"
         dry_run_env = os.getenv("TENANT_SESSION_WATCH_DRY_RUN", "false").lower() == "true"
 
@@ -113,7 +136,9 @@ class ConfigService:
             trusted_ip_ranges=json.loads(os.getenv("TENANT_TRUSTED_IPS", '[]')),
             chaining_allowed_groups=json.loads(os.getenv("TENANT_CHAINING_GROUPS", '[]')),
             chaining_allowed_ous=json.loads(os.getenv("TENANT_CHAINING_OUS", '[]')),
-            enforcement_mode=default_mode,
+            enforcement_mode=derived_mode,
+            session_watch_enabled=sw_enabled_env,
+            caa_enforcement_enabled=caa_enabled_env,
             session_watch_target_ous=json.loads(os.getenv("TENANT_SESSION_WATCH_TARGET_OUS", '[]')),
             session_watch_target_groups=json.loads(os.getenv("TENANT_SESSION_WATCH_TARGET_GROUPS", '[]')),
             session_watch_exempt_admins=exempt_admins_env,
@@ -122,6 +147,9 @@ class ConfigService:
         )
 
     def update_tenant_config(self, config: TenantConfig) -> bool:
+        config.enforcement_mode = _derive_enforcement_mode(
+            bool(config.session_watch_enabled), bool(config.caa_enforcement_enabled)
+        )
         config_dict = config.model_dump()
         config_json = json.dumps(config_dict)
 
@@ -150,6 +178,8 @@ class ConfigService:
         set_key(dotenv_path, "TENANT_CHAINING_GROUPS", json.dumps(config.chaining_allowed_groups))
         set_key(dotenv_path, "TENANT_CHAINING_OUS", json.dumps(config.chaining_allowed_ous))
         set_key(dotenv_path, "TENANT_ENFORCEMENT_MODE", config.enforcement_mode)
+        set_key(dotenv_path, "TENANT_SESSION_WATCH_ENABLED", "true" if config.session_watch_enabled else "false")
+        set_key(dotenv_path, "TENANT_CAA_ENFORCEMENT_ENABLED", "true" if config.caa_enforcement_enabled else "false")
         set_key(dotenv_path, "TENANT_SESSION_WATCH_TARGET_OUS", json.dumps(config.session_watch_target_ous))
         set_key(dotenv_path, "TENANT_SESSION_WATCH_TARGET_GROUPS", json.dumps(config.session_watch_target_groups))
         set_key(dotenv_path, "TENANT_SESSION_WATCH_EXEMPT_ADMINS", "true" if config.session_watch_exempt_admins else "false")
@@ -160,3 +190,4 @@ class ConfigService:
         return True
 
 config_service = ConfigService()
+

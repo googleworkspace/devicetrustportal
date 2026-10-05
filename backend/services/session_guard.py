@@ -509,8 +509,10 @@ class SessionGuardService:
             tracked_unapproved = self.get_unapproved_devices(email_key)
             if tracked_unapproved:
                 unapproved_dev = tracked_unapproved[0]
-            elif unapproved_device_checker is not None:
-                unapproved_dev = unapproved_device_checker(email_key, ev.timestamp_epoch)
+            if unapproved_device_checker is not None:
+                checked_dev = unapproved_device_checker(email_key, ev.timestamp_epoch)
+                if checked_dev is not None:
+                    unapproved_dev = checked_dev
 
             if unapproved_dev is None:
                 # 4. Check for matching verified device attestation in RAM

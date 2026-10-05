@@ -97,7 +97,9 @@ export const Dashboard: React.FC = () => {
   const [message, setMessage] = useState("");
   const [authToken, setAuthToken] = useState(() => localStorage.getItem("googleIdToken") || "");
   const [locale, setLocale] = useState(() => localStorage.getItem("userLocale") || "en");
-  const [enforcementMode, setEnforcementMode] = useState<string>("SESSION_WATCH");
+  const [enforcementMode, setEnforcementMode] = useState<string>("DISABLED");
+  const [sessionWatchEnabled, setSessionWatchEnabled] = useState<boolean>(false);
+  const [caaEnforcementEnabled, setCaaEnforcementEnabled] = useState<boolean>(false);
   const [sessionWatchData, setSessionWatchData] = useState<SessionWatchMetricsResponse | null>(null);
   const [sessionWatchLoading, setSessionWatchLoading] = useState(false);
   const autoAttestedForUserRef = useRef<string>("");
@@ -112,6 +114,16 @@ export const Dashboard: React.FC = () => {
         if (res?.enforcement_mode) {
           setEnforcementMode(res.enforcement_mode);
         }
+        if (typeof res?.session_watch_enabled === "boolean") {
+          setSessionWatchEnabled(res.session_watch_enabled);
+        } else if (res?.enforcement_mode) {
+          setSessionWatchEnabled(res.enforcement_mode === "SESSION_WATCH" || res.enforcement_mode === "BOTH");
+        }
+        if (typeof res?.caa_enforcement_enabled === "boolean") {
+          setCaaEnforcementEnabled(res.caa_enforcement_enabled);
+        } else if (res?.enforcement_mode) {
+          setCaaEnforcementEnabled(res.enforcement_mode === "CAA" || res.enforcement_mode === "BOTH");
+        }
       }).catch(() => {});
     }
   }, []);
@@ -123,6 +135,16 @@ export const Dashboard: React.FC = () => {
         p.then((data) => {
           if (data?.enforcement_mode) {
             setEnforcementMode(data.enforcement_mode);
+          }
+          if (typeof data?.session_watch_enabled === "boolean") {
+            setSessionWatchEnabled(data.session_watch_enabled);
+          } else if (data?.enforcement_mode) {
+            setSessionWatchEnabled(data.enforcement_mode === "SESSION_WATCH" || data.enforcement_mode === "BOTH");
+          }
+          if (typeof data?.caa_enforcement_enabled === "boolean") {
+            setCaaEnforcementEnabled(data.caa_enforcement_enabled);
+          } else if (data?.enforcement_mode) {
+            setCaaEnforcementEnabled(data.enforcement_mode === "CAA" || data.enforcement_mode === "BOTH");
           }
           if (data?.default_locale && !localStorage.getItem("userLocale")) {
             const browserLang = navigator.language?.slice(0, 2);
@@ -226,7 +248,7 @@ export const Dashboard: React.FC = () => {
                   devices: list.map((d) => ({
                     device_user_name: d.device_user_name,
                     device_type: d.device_type,
-                    model: d.model,
+                    model: d.device_type ? `${d.model} (${d.device_type})` : d.model,
                     approval_state: d.approval_state,
                     owner_type: d.owner_type,
                   })),
@@ -273,7 +295,7 @@ export const Dashboard: React.FC = () => {
     });
     try {
       await approveDevice(name);
-      setMessage("Device approved and promoted in Session Watch! Active sessions are now protected.");
+      setMessage("Device approved! Active sessions are now authorized.");
       setDevices((prev) =>
         prev.map((d) => (d.device_user_name === name ? { ...d, approval_state: "APPROVED" } : d))
       );
@@ -392,72 +414,6 @@ export const Dashboard: React.FC = () => {
     }
   };
 
-  const handleSyncInventory = async () => {
-    setSessionWatchLoading(true);
-    setMessage("");
-    try {
-      const res = await syncSessionWatchInventory();
-      setMessage(
-        `Session Watch inventory synced: ${res.inventory_devices_cached} approved device serial(s) cached in memory.`
-      );
-      loadSessionWatchStatus();
-    } catch (e: any) {
-      setMessage(`Failed to sync Session Watch inventory: ${e.message}`);
-    } finally {
-      setSessionWatchLoading(false);
-    }
-  };
-
-  const handleAttestCurrentSession = async () => {
-    if (!userEmail) return;
-    setSessionWatchLoading(true);
-    setMessage("");
-    const platform = detectBrowserPlatform();
-    const candidateDevice = selectPlatformMatchedDevice(devices);
-
-    const serialToAttest =
-      candidateDevice?.serial_number && candidateDevice.serial_number !== "N/A"
-        ? candidateDevice.serial_number
-        : candidateDevice?.device_user_name.split("/")[1] || "";
-
-    if (!serialToAttest) {
-      setMessage(
-        `Failed to attest session: No approved ${platform !== "UNKNOWN" ? platform + " " : ""}device found on your account for this browser.`
-      );
-      setSessionWatchLoading(false);
-      return;
-    }
-
-    try {
-      const res = await attestBrowserSession(userEmail, serialToAttest);
-      setMessage(
-        `Session Attested: ${res.message} (IP: ${res.client_ip})`
-      );
-      loadSessionWatchStatus();
-    } catch (e: any) {
-      setMessage(`Failed to attest browser session: ${e.message}`);
-    } finally {
-      setSessionWatchLoading(false);
-    }
-  };
-
-  const handleRunLiveSweep = async () => {
-    setSessionWatchLoading(true);
-    setMessage("");
-    try {
-      const res = await runLiveLoginSweep(15);
-      const modeTag = res.dry_run ? " [AUDIT / DRY-RUN]" : "";
-      setMessage(
-        `Live Login Sweep Complete${modeTag}: Evaluated ${res.fetched_login_events} domain login event(s) from Reports API; executed ${res.revoked_count} users.signOut revocation(s).`
-      );
-      loadSessionWatchStatus();
-    } catch (e: any) {
-      setMessage(`Failed to execute live login sweep: ${e.message}`);
-    } finally {
-      setSessionWatchLoading(false);
-    }
-  };
-
   return (
     <div className="dtg-shell">
       {/* Google Workspace Top Navigation App Bar */}
@@ -478,30 +434,30 @@ export const Dashboard: React.FC = () => {
             <div>
               <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
                 <h1 className="dtg-brand-title">{t.portalTitle}</h1>
-                <span
-                  data-testid="enforcement-mode-badge"
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: "5px",
-                    padding: "3px 10px",
-                    borderRadius: "999px",
-                    fontSize: "11px",
-                    fontWeight: 700,
-                    letterSpacing: "0.02em",
-                    backgroundColor:
-                      enforcementMode === "SESSION_WATCH" ? "#e8f0fe" : "#e6f4ea",
-                    color: enforcementMode === "SESSION_WATCH" ? "#1967d2" : "#137333",
-                    border:
-                      enforcementMode === "SESSION_WATCH"
-                        ? "1px solid #aecbfa"
-                        : "1px solid #ceead6",
-                  }}
-                >
-                  {enforcementMode === "SESSION_WATCH"
-                    ? "⚡ CAA-FREE SESSION WATCH (FUNDAMENTALS)"
-                    : "🛡️ CONTEXT-AWARE ACCESS (ENTERPRISE)"}
-                </span>
+                {(sessionWatchEnabled || caaEnforcementEnabled) && (
+                  <span
+                    data-testid="enforcement-mode-badge"
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "5px",
+                      padding: "3px 10px",
+                      borderRadius: "999px",
+                      fontSize: "11px",
+                      fontWeight: 700,
+                      letterSpacing: "0.02em",
+                      backgroundColor: sessionWatchEnabled ? "#e8f0fe" : "#e6f4ea",
+                      color: sessionWatchEnabled ? "#1967d2" : "#137333",
+                      border: sessionWatchEnabled ? "1px solid #aecbfa" : "1px solid #ceead6",
+                    }}
+                  >
+                    {sessionWatchEnabled && caaEnforcementEnabled
+                      ? "🛡️ CAA + SESSION MANAGEMENT ACTIVE"
+                      : sessionWatchEnabled
+                      ? "⚡ SESSION MANAGEMENT ACTIVE (FUNDAMENTALS)"
+                      : "🛡️ CONTEXT-AWARE ACCESS (STANDARD & PLUS)"}
+                  </span>
+                )}
               </div>
               <div className="dtg-brand-subtitle">{t.subtitle}</div>
             </div>
@@ -547,241 +503,6 @@ export const Dashboard: React.FC = () => {
       </header>
 
       <main className="dtg-main">
-        {enforcementMode === "SESSION_WATCH" && (
-          <div
-            className="dtg-card"
-            style={{
-              borderLeft: "4px solid #1a73e8",
-              background: "linear-gradient(180deg, rgba(232,240,254,0.45) 0%, #ffffff 100%)",
-              marginBottom: "18px",
-            }}
-          >
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "flex-start",
-                gap: "12px",
-                flexWrap: "wrap",
-              }}
-            >
-              <div>
-                <div
-                  style={{
-                    fontSize: "12px",
-                    fontWeight: 700,
-                    color: "#1967d2",
-                    textTransform: "uppercase",
-                    letterSpacing: "0.04em",
-                    marginBottom: "4px",
-                  }}
-                >
-                  Active Variation: poc/fundamentals-session-watch (No Context-Aware Access Required)
-                </div>
-                <h3 className="dtg-card-title" style={{ marginBottom: "4px" }}>
-                  CAA-Free Session Watch &amp; <code>users.signOut</code> Circuit Breaker
-                </h3>
-                <p className="dtg-card-desc" style={{ margin: 0 }}>
-                  Enforces district hardware inventory on Google Workspace for Education Fundamentals by correlating Chrome extension heartbeats (<code>/api/session-watch/attest</code>) against Admin SDK Reports <code>login</code> audit sweeps and revoking unattested sessions via <code>admin.directory_v1.users.signOut</code>.
-                </p>
-              </div>
-              {userEmail && (
-                <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-                  <button
-                    type="button"
-                    onClick={handleStartOnboardingLease}
-                    disabled={sessionWatchLoading}
-                    className="dtg-btn dtg-btn-success"
-                    title="Pauses Session Watch sign-out for 15 minutes while you sign in on a new personal device and approve it"
-                  >
-                    + Add Personal Device (15m Grace Pass)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleSyncInventory}
-                    disabled={sessionWatchLoading}
-                    className="dtg-btn dtg-btn-outline"
-                  >
-                    Sync Inventory Cache
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleAttestCurrentSession}
-                    disabled={sessionWatchLoading || devices.length === 0}
-                    className="dtg-btn dtg-btn-outline"
-                  >
-                    Attest This Session
-                  </button>
-                  {isAdmin && (
-                    <button
-                      type="button"
-                      onClick={handleRunLiveSweep}
-                      disabled={sessionWatchLoading}
-                      className="dtg-btn dtg-btn-primary"
-                    >
-                      Run Live Login Sweep
-                    </button>
-                  )}
-                </div>
-              )}
-            </div>
-
-            {activeUserLease && (
-              <div
-                style={{
-                  marginTop: "12px",
-                  padding: "10px 14px",
-                  borderRadius: "8px",
-                  backgroundColor: "var(--dtg-success-bg)",
-                  border: "1px solid var(--dtg-success-border)",
-                  color: "var(--dtg-success)",
-                  fontSize: "13px",
-                  fontWeight: 600,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  gap: "10px",
-                  flexWrap: "wrap",
-                }}
-              >
-                <span>
-                  🛡️ Personal Device Onboarding Pass Active ({Math.max(1, Math.ceil(activeUserLease.remaining_seconds / 60))}m remaining) — Session Watch will NOT sign you out while you sign in on your new personal device and click Approve below.
-                </span>
-                <span style={{ fontSize: "11px", opacity: 0.9 }}>
-                  Reason: {activeUserLease.reason}
-                </span>
-              </div>
-            )}
-
-            {sessionWatchData && (
-              <>
-                <div
-                  style={{
-                    display: "flex",
-                    gap: "8px",
-                    flexWrap: "wrap",
-                    marginTop: "12px",
-                  }}
-                >
-                  <span
-                    style={{
-                      fontSize: "11px",
-                      fontWeight: 600,
-                      padding: "3px 9px",
-                      borderRadius: "999px",
-                      backgroundColor: sessionWatchData.session_watch_dry_run ? "#fef7e0" : "#e8f0fe",
-                      color: sessionWatchData.session_watch_dry_run ? "#b06000" : "#1967d2",
-                      border: sessionWatchData.session_watch_dry_run ? "1px solid #fde293" : "1px solid #aecbfa",
-                    }}
-                  >
-                    Mode: {sessionWatchData.session_watch_dry_run ? "Audit-Only (Dry-Run)" : "Active Enforcement"}
-                  </span>
-                  <span
-                    style={{
-                      fontSize: "11px",
-                      fontWeight: 600,
-                      padding: "3px 9px",
-                      borderRadius: "999px",
-                      backgroundColor: "#f1f3f4",
-                      color: "#3c4043",
-                      border: "1px solid #dadce0",
-                    }}
-                  >
-                    Target OUs:{" "}
-                    {sessionWatchData.session_watch_target_ous && sessionWatchData.session_watch_target_ous.length > 0
-                      ? sessionWatchData.session_watch_target_ous.join(", ")
-                      : "All Domain OUs"}
-                  </span>
-                  <span
-                    style={{
-                      fontSize: "11px",
-                      fontWeight: 600,
-                      padding: "3px 9px",
-                      borderRadius: "999px",
-                      backgroundColor: "#f1f3f4",
-                      color: "#3c4043",
-                      border: "1px solid #dadce0",
-                    }}
-                  >
-                    Target Groups:{" "}
-                    {sessionWatchData.session_watch_target_groups && sessionWatchData.session_watch_target_groups.length > 0
-                      ? sessionWatchData.session_watch_target_groups.join(", ")
-                      : "All Users"}
-                  </span>
-                  <span
-                    style={{
-                      fontSize: "11px",
-                      fontWeight: 600,
-                      padding: "3px 9px",
-                      borderRadius: "999px",
-                      backgroundColor: sessionWatchData.session_watch_exempt_admins === true ? "#e6f4ea" : "#fce8e6",
-                      color: sessionWatchData.session_watch_exempt_admins === true ? "#137333" : "#d93025",
-                      border:
-                        sessionWatchData.session_watch_exempt_admins === true
-                          ? "1px solid #ceead6"
-                          : "1px solid #fad2cf",
-                    }}
-                  >
-                    Admin Safe-Harbor: {sessionWatchData.session_watch_exempt_admins === true ? "Exempt" : "Enforced"}
-                  </span>
-                </div>
-
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
-                    gap: "10px",
-                    marginTop: "12px",
-                    paddingTop: "12px",
-                    borderTop: "1px solid var(--dtg-border-subtle)",
-                  }}
-                >
-                  <div>
-                    <div style={{ fontSize: "11px", color: "var(--dtg-text-secondary)", fontWeight: 600 }}>
-                      Cached Inventory Serials
-                    </div>
-                    <div style={{ fontSize: "18px", fontWeight: 700, color: "var(--dtg-text)" }}>
-                      {sessionWatchData.metrics.inventory_devices_cached}
-                    </div>
-                  </div>
-                  <div>
-                    <div style={{ fontSize: "11px", color: "var(--dtg-text-secondary)", fontWeight: 600 }}>
-                      Active Attestations
-                    </div>
-                    <div style={{ fontSize: "18px", fontWeight: 700, color: "var(--dtg-success)" }}>
-                      {sessionWatchData.active_attestations?.length || 0}
-                    </div>
-                  </div>
-                  <div>
-                    <div style={{ fontSize: "11px", color: "var(--dtg-text-secondary)", fontWeight: 600 }}>
-                      Onboarding Passes
-                    </div>
-                    <div style={{ fontSize: "18px", fontWeight: 700, color: "#1967d2" }}>
-                      {sessionWatchData.active_onboarding_leases?.length || 0}
-                    </div>
-                  </div>
-                  <div>
-                    <div style={{ fontSize: "11px", color: "var(--dtg-text-secondary)", fontWeight: 600 }}>
-                      Logins Evaluated
-                    </div>
-                    <div style={{ fontSize: "18px", fontWeight: 700, color: "var(--dtg-text)" }}>
-                      {sessionWatchData.metrics.login_events_evaluated}
-                    </div>
-                  </div>
-                  <div>
-                    <div style={{ fontSize: "11px", color: "var(--dtg-text-secondary)", fontWeight: 600 }}>
-                      users.signOut Revocations
-                    </div>
-                    <div style={{ fontSize: "18px", fontWeight: 700, color: "var(--dtg-danger)" }}>
-                      {sessionWatchData.metrics.signouts_executed}
-                    </div>
-                  </div>
-                </div>
-              </>
-            )}
-          </div>
-        )}
-
         {/* Google Workspace Authentication Surface Card */}
         <div className="dtg-card">
           <div className="dtg-card-header" style={{ marginBottom: userEmail ? "14px" : "10px" }}>
@@ -966,6 +687,30 @@ export const Dashboard: React.FC = () => {
           </div>
         )}
 
+        {activeUserLease && (
+          <div
+            style={{
+              marginBottom: "16px",
+              padding: "10px 14px",
+              borderRadius: "8px",
+              backgroundColor: "var(--dtg-success-bg)",
+              border: "1px solid var(--dtg-success-border)",
+              color: "var(--dtg-success)",
+              fontSize: "13px",
+              fontWeight: 600,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: "10px",
+              flexWrap: "wrap",
+            }}
+          >
+            <span>
+              🛡️ Personal Device Onboarding Pass Active ({Math.max(1, Math.ceil(activeUserLease.remaining_seconds / 60))}m remaining) — Session Management will NOT sign you out while you sign in on your new personal device and click Approve below.
+            </span>
+          </div>
+        )}
+
         {!userEmail ? (
           <div role="status" className="dtg-alert dtg-alert-warning">
             <span>{t.signInPrompt}</span>
@@ -1033,7 +778,7 @@ export const Dashboard: React.FC = () => {
                   <div className="dtg-section-subtitle">{t.personalDevicesSubtitle}</div>
                 </div>
                 <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
-                  {enforcementMode === "SESSION_WATCH" && (
+                  {sessionWatchEnabled && (
                     <button
                       type="button"
                       onClick={handleStartOnboardingLease}
@@ -1041,7 +786,7 @@ export const Dashboard: React.FC = () => {
                       className="dtg-btn dtg-btn-success"
                       title="Start a 15-minute grace window so you can sign in on a new personal device and approve it here without being signed out"
                     >
-                      + Add Personal Device (15m Pass)
+                      + Add Personal Device (15m Grace Pass)
                     </button>
                   )}
                   <button

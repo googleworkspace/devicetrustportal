@@ -82,12 +82,16 @@ class SweepRequest(BaseModel):
 
 class LiveSweepRequest(BaseModel):
     lookback_minutes: int = Field(
-        default=15,
+        default=60,
         description="Lookback window in minutes for Admin SDK Reports API activities.list(applicationName='login')",
     )
     persist_all_allowed: bool = Field(
         default=True,
         description="Whether to record ALLOW_ATTESTED decisions in the enforcement log table",
+    )
+    force: bool = Field(
+        default=False,
+        description="Allow manual admin execution from Admin Configurations even when background scheduler is disabled",
     )
 
 
@@ -305,16 +309,24 @@ async def execute_live_reports_sweep(
     body: Optional[LiveSweepRequest] = None,
     x_cloudscheduler: Optional[str] = Header(None),
 ) -> Dict[str, Any]:
-    """Pulls live login events from Admin SDK Reports API (`activities.list`) and executes `users.signOut` on unattested sessions."""
+    """Pulls live login events from Admin SDK Reports API (`activities.list`) AND real-time Cloud Identity
+    `PENDING_APPROVAL` device syncs, executing `users.signOut` on unapproved sessions.
+    """
+    import datetime
+
     req_body = body or LiveSweepRequest()
     config = config_service.get_tenant_config()
+    sw_enabled = bool(getattr(config, "session_watch_enabled", False)) or getattr(
+        config, "enforcement_mode", "DISABLED"
+    ) in ("SESSION_WATCH", "BOTH")
 
-    # If tenant is currently in CAA mode and triggered by scheduler, skip Session Watch sweep
-    if x_cloudscheduler and getattr(config, "enforcement_mode", "SESSION_WATCH") == "CAA":
+    # If Session Management is disabled and force is not set, skip automatic sweep
+    if not sw_enabled and not req_body.force:
         return {
-            "status": "SKIPPED_CAA_MODE",
-            "triggered_by": "cloud_scheduler",
-            "message": "Tenant is configured for Context-Aware Access (CAA) mode; skipping Session Watch sweep.",
+            "status": "SKIPPED_DISABLED",
+            "session_watch_enabled": False,
+            "triggered_by": "cloud_scheduler" if x_cloudscheduler else "portal_api",
+            "message": "Session Management (Education Fundamentals) is disabled in Admin Configurations; skipping automatic sweep.",
         }
 
     if session_guard.metrics["inventory_devices_cached"] == 0:
@@ -345,6 +357,102 @@ async def execute_live_reports_sweep(
         )
 
     now = time.time()
+    cid = normalize_customer_id(config.customer_id or "customers/my_customer")
+    audit_log_events_count = len(raw_events)
+    unapproved_ci_byod_events_count = 0
+    auto_blocked_byod_count = 0
+
+    # Also scan Cloud Identity Devices API for real-time PENDING_APPROVAL BYOD syncs!
+    # This catches unapproved devices (e.g., an unapproved Mac with an existing Chrome session)
+    # even when Admin SDK Reports API `login` logs have 0 new login events or are delayed by 15-60m.
+    users_with_events = {ev["user_email"].strip().lower() for ev in raw_events if ev.get("user_email")}
+    raw_ci_byod_records_by_user: Dict[str, List[Dict[str, str]]] = {}
+    if cloud_identity_service.service:
+        try:
+            with cloud_identity_service._lock:
+                devs_resp = (
+                    cloud_identity_service.service.devices()
+                    .list(customer=cid, pageSize=100)
+                    .execute()
+                )
+                dus_resp = (
+                    cloud_identity_service.service.devices()
+                    .deviceUsers()
+                    .list(parent="devices/-", customer=cid, pageSize=100)
+                    .execute()
+                )
+            devs_by_name = {
+                d.get("name", ""): d for d in (devs_resp.get("devices", []) or []) if d.get("name")
+            }
+            for du in dus_resp.get("deviceUsers", []) or []:
+                du_name = du.get("name", "")
+                du_email = (du.get("userEmail") or "").strip().lower()
+                if not du_name or not du_email:
+                    continue
+                parent_name = "/".join(du_name.split("/")[:2])
+                parent_dev = devs_by_name.get(parent_name, {})
+                owner_type = (parent_dev.get("ownerType") or "BYOD").upper()
+                if owner_type in ("COMPANY", "CUSTOMER"):
+                    continue
+                raw_state = (
+                    du.get("managementState")
+                    or du.get("approvalState")
+                    or parent_dev.get("managementState")
+                    or ""
+                ).upper()
+                model = parent_dev.get("model") or "Personal BYOD Device"
+                dtype = (parent_dev.get("deviceType") or "BYOD").upper()
+                serial = (parent_dev.get("serialNumber") or "N/A").strip() or "N/A"
+                raw_ci_byod_records_by_user.setdefault(du_email, []).append(
+                    {
+                        "device_user_name": du_name,
+                        "model": model,
+                        "device_type": dtype,
+                        "serial_number": serial,
+                        "approval_state": "PENDING_APPROVAL" if raw_state in ("PENDING", "PENDING_APPROVAL") else raw_state,
+                    }
+                )
+                if raw_state in ("PENDING", "PENDING_APPROVAL"):
+                    last_sync_str = (
+                        du.get("lastSyncTime")
+                        or parent_dev.get("lastSyncTime")
+                        or du.get("createTime")
+                        or ""
+                    )
+                    try:
+                        sync_epoch = datetime.datetime.fromisoformat(
+                            last_sync_str.replace("Z", "+00:00")
+                        ).timestamp()
+                    except Exception:
+                        sync_epoch = now - 30.0
+                    # Clamp synthetic event timestamp so it is immediately evaluated (not deferred by grace window)
+                    effective_epoch = min(sync_epoch, now - 60.0)
+                    session_guard.record_unapproved_device(
+                        user_email=du_email,
+                        device_user_name=du_name,
+                        model=model,
+                        device_type=dtype,
+                        serial_number=serial,
+                        approval_state="PENDING_APPROVAL",
+                        last_sync_epoch=sync_epoch,
+                    )
+                    if du_email not in users_with_events:
+                        users_with_events.add(du_email)
+                        unapproved_ci_byod_events_count += 1
+                        raw_events.append(
+                            {
+                                "event_id": f"ci-pending:{du_name}:{last_sync_str or int(now)}",
+                                "user_email": du_email,
+                                "ip_address": "cloud-identity-sync",
+                                "timestamp_epoch": effective_epoch,
+                                "timestamp_iso": last_sync_str,
+                                "login_type": "cloud_identity_device_sync",
+                                "is_suspicious": False,
+                            }
+                        )
+        except Exception as ci_scan_err:
+            print(f"WARNING [session_watch.py]: Cloud Identity pending sync scan notice: {ci_scan_err}")
+
     audit_events = [
         LoginAuditEvent(
             event_id=ev["event_id"],
@@ -367,10 +475,10 @@ async def execute_live_reports_sweep(
         )
 
     is_dry_run = getattr(config, "session_watch_dry_run", False)
-    cid = normalize_customer_id(config.customer_id or "customers/my_customer")
     checked_unapproved_by_user: Dict[str, Optional[Dict[str, Any]]] = {}
 
     def _unapproved_device_checker(email: str, _login_epoch: float) -> Optional[Dict[str, Any]]:
+        nonlocal auto_blocked_byod_count
         norm_user = email.strip().lower()
         if norm_user in checked_unapproved_by_user:
             return checked_unapproved_by_user[norm_user]
@@ -378,35 +486,61 @@ async def execute_live_reports_sweep(
         found_dev: Optional[Dict[str, Any]] = None
         if cloud_identity_service.service:
             try:
-                from backend.routes.devices import crawl_devices_for_user
+                raw_records = raw_ci_byod_records_by_user.get(norm_user)
+                if raw_records is None:
+                    from backend.routes.devices import crawl_devices_for_user
 
-                user_items, _ = crawl_devices_for_user(
-                    customer_id=cid,
-                    target_email=norm_user,
-                    query_filter=f"email:{norm_user}",
-                )
-                for item in user_items:
-                    if item.owner_type != "COMPANY" and item.approval_state == "PENDING_APPROVAL":
-                        found_dev = {
-                            "device_user_name": item.device_user_name,
-                            "model": item.model,
-                            "device_type": item.device_type,
-                            "serial_number": item.serial_number,
-                            "approval_state": item.approval_state,
+                    user_items, _ = crawl_devices_for_user(
+                        customer_id=cid,
+                        target_email=norm_user,
+                        query_filter=f"email:{norm_user}",
+                    )
+                    raw_records = [
+                        {
+                            "device_user_name": it.device_user_name,
+                            "model": it.model,
+                            "device_type": it.device_type,
+                            "serial_number": it.serial_number,
+                            "approval_state": it.approval_state,
                         }
+                        for it in user_items
+                        if it.owner_type != "COMPANY"
+                    ]
+
+                for rec in raw_records:
+                    if rec["approval_state"] == "PENDING_APPROVAL":
+                        found_dev = rec
                         if not is_dry_run:
                             try:
                                 cloud_identity_service.revoke_device_user(
-                                    device_user_name=item.device_user_name,
+                                    device_user_name=rec["device_user_name"],
                                     customer_id=cid,
                                     action="BLOCK",
                                 )
+                                auto_blocked_byod_count += 1
+                                # Also block any stale serial-less APPROVED duplicate records of the same OS type for this user
+                                for dup in raw_records:
+                                    if (
+                                        dup["device_user_name"] != rec["device_user_name"]
+                                        and dup["device_type"] == rec["device_type"]
+                                        and dup["approval_state"] == "APPROVED"
+                                        and (not dup["serial_number"] or dup["serial_number"] == "N/A")
+                                    ):
+                                        try:
+                                            cloud_identity_service.revoke_device_user(
+                                                device_user_name=dup["device_user_name"],
+                                                customer_id=cid,
+                                                action="BLOCK",
+                                            )
+                                            auto_blocked_byod_count += 1
+                                        except Exception:
+                                            pass
                                 session_guard.clear_unapproved_devices_for_user(
-                                    norm_user, device_user_name=item.device_user_name
+                                    norm_user, device_user_name=rec["device_user_name"]
                                 )
                             except Exception as blk_err:
                                 print(
-                                    f"WARNING [session_watch.py]: Could not auto-block pending device '{item.device_user_name}': {blk_err}"
+                                    f"WARNING [session_watch.py]: Could not auto-block pending device '{rec['device_user_name']}': {blk_err}"
                                 )
                         break
             except Exception as ci_err:
@@ -442,8 +576,11 @@ async def execute_live_reports_sweep(
         "triggered_by": "cloud_scheduler" if x_cloudscheduler else "portal_api",
         "dry_run": is_dry_run,
         "lookback_minutes": req_body.lookback_minutes,
-        "fetched_login_events": len(audit_events),
+        "fetched_login_events": audit_log_events_count,
+        "unapproved_cloud_identity_byod_events": unapproved_ci_byod_events_count,
+        "evaluated_count": len(audit_events),
         "revoked_count": len(revoked),
+        "auto_blocked_byod_devices": auto_blocked_byod_count,
         "audit_would_signout_count": len(audit_only),
         "revoked_users": [a.user_email for a in revoked],
         "actions": [
@@ -468,7 +605,9 @@ async def get_session_watch_metrics() -> Dict[str, object]:
     """Returns live quota utilization, rollout scope, onboarding leases, and enforcement metrics."""
     config = config_service.get_tenant_config()
     return {
-        "enforcement_mode": getattr(config, "enforcement_mode", "SESSION_WATCH"),
+        "enforcement_mode": getattr(config, "enforcement_mode", "DISABLED"),
+        "session_watch_enabled": bool(getattr(config, "session_watch_enabled", False)),
+        "caa_enforcement_enabled": bool(getattr(config, "caa_enforcement_enabled", False)),
         "branch_variation": "poc/fundamentals-session-watch",
         "dry_run": getattr(config, "session_watch_dry_run", False),
         "session_watch_dry_run": getattr(config, "session_watch_dry_run", False),
@@ -489,4 +628,5 @@ async def get_session_watch_metrics() -> Dict[str, object]:
         "active_onboarding_leases": session_guard.get_active_onboarding_leases(),
         "recent_actions": session_guard.get_recent_actions(limit=20),
     }
+
 

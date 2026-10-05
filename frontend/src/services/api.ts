@@ -29,6 +29,8 @@ export interface TenantConfig {
   chaining_allowed_groups?: string[];
   chaining_allowed_ous?: string[];
   enforcement_mode?: string;
+  session_watch_enabled?: boolean;
+  caa_enforcement_enabled?: boolean;
   session_watch_target_ous?: string[];
   session_watch_target_groups?: string[];
   session_watch_exempt_admins?: boolean;
@@ -38,6 +40,8 @@ export interface TenantConfig {
 
 export interface SessionWatchMetricsResponse {
   enforcement_mode: string;
+  session_watch_enabled?: boolean;
+  caa_enforcement_enabled?: boolean;
   branch_variation: string;
   session_watch_target_ous?: string[];
   session_watch_target_groups?: string[];
@@ -202,6 +206,8 @@ export const getPublicConfig = async (): Promise<{
   google_client_id: string;
   default_locale?: string;
   enforcement_mode?: string;
+  session_watch_enabled?: boolean;
+  caa_enforcement_enabled?: boolean;
   branch_variation?: string;
 }> => {
   const response = await fetch(`${API_BASE_URL}/api/config/public`);
@@ -358,12 +364,16 @@ export const startOnboardingLease = async (
 };
 
 export const runLiveLoginSweep = async (
-  lookbackMinutes: number = 15
+  lookbackMinutes: number = 60,
+  force: boolean = true
 ): Promise<{
   status: string;
   dry_run?: boolean;
   fetched_login_events: number;
+  unapproved_cloud_identity_byod_events?: number;
+  evaluated_count?: number;
   revoked_count: number;
+  auto_blocked_byod_devices?: number;
   revoked_users: string[];
   actions: Array<any>;
   metrics: Record<string, number>;
@@ -374,6 +384,7 @@ export const runLiveLoginSweep = async (
     body: JSON.stringify({
       lookback_minutes: lookbackMinutes,
       persist_all_allowed: true,
+      force,
     }),
   });
   return response.json();
