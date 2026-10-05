@@ -97,7 +97,7 @@ describe("AdminConfig Page", () => {
     mockUpdateAdminConfig.mockImplementation(async (newCfg) => ({ ...newCfg }));
   });
 
-  test("renders toggle switches (role='switch') instead of checkboxes and displays button explanations", async () => {
+  test("renders toggle switches (role='switch') with green ON color (#137333) and no manual diagnostic buttons", async () => {
     render(<AdminConfig />);
 
     await waitFor(() => {
@@ -115,18 +115,18 @@ describe("AdminConfig Page", () => {
     expect(caaToggle).toHaveAttribute("aria-checked", "false");
     expect(dryRunToggle).toHaveAttribute("role", "switch");
     expect(dryRunToggle).toHaveAttribute("aria-checked", "true");
+    // Verify ON toggle is green (#137333)
+    expect(dryRunToggle).toHaveStyle({ backgroundColor: "#137333" });
     expect(exemptAdminsToggle).toHaveAttribute("role", "switch");
     expect(exemptAdminsToggle).toHaveAttribute("aria-checked", "false");
 
-    // Verify 3-button explanation card is rendered
-    const explanationBox = screen.getByTestId("admin-buttons-explanation");
-    expect(explanationBox).toBeInTheDocument();
-    expect(explanationBox).toHaveTextContent("Sync Inventory Cache");
-    expect(explanationBox).toHaveTextContent("Attest Current Session");
-    expect(explanationBox).toHaveTextContent("Run Live Login Sweep");
+    // Verify manual diagnostic buttons and in-page log table are removed
+    expect(screen.queryByTestId("admin-session-watch-operations")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("admin-buttons-explanation")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("admin-audit-log-table")).not.toBeInTheDocument();
   });
 
-  test("clicking a toggle opens confirmation dialog and confirming auto-saves with confirmation banner", async () => {
+  test("clicking a toggle opens confirmation dialog and confirming auto-saves and turns toggle green", async () => {
     render(<AdminConfig />);
 
     await waitFor(() => {
@@ -158,20 +158,21 @@ describe("AdminConfig Page", () => {
     await waitFor(() => {
       expect(screen.getByTestId("auto-save-confirmation")).toBeInTheDocument();
     });
-    expect(screen.getByTestId("auto-save-confirmation")).toHaveTextContent(/Auto-Saved/i);
+    expect(screen.getByTestId("auto-save-confirmation")).toHaveTextContent(/Auto-saved/i);
+    expect(screen.getByTestId("toggle-session-watch")).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByTestId("toggle-session-watch")).toHaveStyle({ backgroundColor: "#137333" });
   });
 
-  test("renders Audit-Only counter and Live Session Enforcement & Audit-Only Log viewer", async () => {
+  test("renders Cloud Logging helper box pointing to Google Cloud Logging (Logs Explorer)", async () => {
     render(<AdminConfig />);
 
     await waitFor(() => {
-      expect(screen.getByTestId("metric-audit-would-signout")).toBeInTheDocument();
+      expect(screen.getByTestId("cloud-logging-helper")).toBeInTheDocument();
     });
 
-    expect(screen.getByTestId("metric-audit-would-signout")).toHaveTextContent("1");
-    expect(screen.getByTestId("admin-audit-log-table")).toBeInTheDocument();
-    expect(screen.getByText("student@example.com")).toBeInTheDocument();
-    expect(screen.getAllByText(/AUDIT_WOULD_SIGN_OUT/i).length).toBeGreaterThan(0);
+    const cloudHelper = screen.getByTestId("cloud-logging-helper");
+    expect(cloudHelper).toHaveTextContent(/Google Cloud Logging/i);
+    expect(cloudHelper).toHaveTextContent(/AUDIT_WOULD_SIGN_OUT/i);
   });
 
   test("changing Default Tenant UI Language (Localization Fallback) immediately localizes Admin UI and auto-saves", async () => {
@@ -203,11 +204,11 @@ describe("AdminConfig Page", () => {
       screen.getByText("Administración del Portal de Confianza")
     ).toBeInTheDocument();
     expect(
-      screen.getByText("Controles de Administración de Sesiones y Telemetría en Vivo")
+      screen.getByText("Políticas Generales de Seguridad")
     ).toBeInTheDocument();
-    expect(
-      screen.getByText("1. 🔄 Sincronizar Caché de Inventario:")
-    ).toBeInTheDocument();
+    expect(screen.getByTestId("cloud-logging-helper")).toHaveTextContent(
+      /Google Cloud Logging/i
+    );
     expect(screen.getByTestId("auto-save-confirmation")).toHaveTextContent(
       /Guardado automático/i
     );

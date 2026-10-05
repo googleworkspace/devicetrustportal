@@ -14,19 +14,12 @@
  * limitations under the License.
  */
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect } from "react";
 import {
   getAdminConfig,
   updateAdminConfig,
   sendClientLog,
   TenantConfig,
-  SessionWatchMetricsResponse,
-  getSessionWatchMetrics,
-  syncSessionWatchInventory,
-  attestBrowserSession,
-  runLiveLoginSweep,
-  getMyDevices,
-  DeviceInfo,
 } from "../services/api";
 import { getTranslator } from "../i18n/translations";
 
@@ -35,29 +28,6 @@ function deriveEnforcementMode(sessionWatch: boolean, caa: boolean): string {
   if (sessionWatch) return "SESSION_WATCH";
   if (caa) return "CAA";
   return "DISABLED";
-}
-
-function selectPlatformMatchedDevice(devices: DeviceInfo[], userAgent: string): DeviceInfo | undefined {
-  const ua = (userAgent || "").toLowerCase();
-  const isCrOS = ua.includes("cros");
-  const isMac = ua.includes("macintosh") || ua.includes("mac os x");
-  const isWin = ua.includes("windows");
-
-  return devices.find((d) => {
-    if (d.approval_state !== "APPROVED" || !d.serial_number || d.serial_number === "N/A") {
-      return false;
-    }
-    const dtype = (d.device_type || "").toUpperCase();
-    const osVer = (d.os_version || "").toUpperCase();
-    const isDeviceChromeOS = dtype.includes("CHROME") || osVer.includes("CHROME");
-    const isDeviceMac = dtype.includes("MAC") || osVer.includes("MAC");
-    const isDeviceWin = dtype.includes("WINDOWS") || osVer.includes("WINDOWS");
-
-    if (isCrOS) return isDeviceChromeOS;
-    if (isMac) return isDeviceMac;
-    if (isWin) return isDeviceWin;
-    return !isDeviceChromeOS;
-  });
 }
 
 interface ToggleSwitchProps {
@@ -76,7 +46,7 @@ const ToggleSwitch: React.FC<ToggleSwitchProps> = ({
   testId,
   checked,
   disabled = false,
-  activeColor = "#1a73e8",
+  activeColor = "#137333",
   onToggle,
   label,
   description,
@@ -91,8 +61,8 @@ const ToggleSwitch: React.FC<ToggleSwitchProps> = ({
         padding: "14px 16px",
         borderRadius: "8px",
         border: checked ? `1.5px solid ${activeColor}` : "1px solid var(--dtg-border)",
-        backgroundColor: "var(--dtg-surface)",
-        transition: "border-color 0.2s ease, box-shadow 0.2s ease",
+        backgroundColor: checked ? "rgba(19, 115, 51, 0.04)" : "var(--dtg-surface)",
+        transition: "border-color 0.2s ease, background-color 0.2s ease, box-shadow 0.2s ease",
       }}
     >
       <div style={{ flex: 1, fontSize: "13px", lineHeight: 1.5 }}>
@@ -193,27 +163,10 @@ export const AdminConfig: React.FC = () => {
   const [newAdminEmail, setNewAdminEmail] = useState("");
   const [showAddAdminModal, setShowAddAdminModal] = useState(false);
   const [pendingConfirm, setPendingConfirm] = useState<PendingConfirmChange | null>(null);
-  const [logFilter, setLogFilter] = useState<"ALL" | "AUDIT_ONLY" | "REVOKED" | "ALLOWED">("ALL");
-
-  // Admin-only Session Watch Operations & Telemetry state
-  const [sessionWatchMetrics, setSessionWatchMetrics] = useState<SessionWatchMetricsResponse | null>(null);
-  const [opsStatusMessage, setOpsStatusMessage] = useState<string>("");
-  const [syncingInventory, setSyncingInventory] = useState<boolean>(false);
-  const [attestingSession, setAttestingSession] = useState<boolean>(false);
-  const [runningLiveSweep, setRunningLiveSweep] = useState<boolean>(false);
 
   const userEmail = localStorage.getItem("userEmail") || "";
   const t = getTranslator(uiLocale || defaultLocale || "en");
   const enforcementMode = deriveEnforcementMode(sessionWatchEnabled, caaEnforcementEnabled);
-
-  const loadMetrics = useCallback(async () => {
-    try {
-      const m = await getSessionWatchMetrics();
-      setSessionWatchMetrics(m);
-    } catch {
-      // Non-blocking
-    }
-  }, []);
 
   useEffect(() => {
     if (!userEmail) {
@@ -243,7 +196,6 @@ export const AdminConfig: React.FC = () => {
         setSessionWatchDryRun(Boolean(data.session_watch_dry_run));
         setSessionWatchOnboardingGraceMinutes(data.session_watch_onboarding_grace_minutes || 15);
         setLoading(false);
-        loadMetrics();
         sendClientLog("INFO", "ADMIN_CONFIG_LOADED", `Admin config loaded for ${userEmail}`);
       } catch (e: any) {
         const errMsg = `Access Denied: ${e.message || "Workspace Administrator privileges required."}`;
@@ -255,7 +207,7 @@ export const AdminConfig: React.FC = () => {
       }
     };
     load();
-  }, [userEmail, loadMetrics]);
+  }, [userEmail]);
 
   const persistConfiguration = async (
     overrides: Partial<{
@@ -335,7 +287,6 @@ export const AdminConfig: React.FC = () => {
       setAutoSaveBanner(confirmText);
       setMessage(tNext.configSaveSuccess);
       setSaving(false);
-      await loadMetrics();
       sendClientLog("INFO", "ADMIN_CONFIG_SAVED", `Admin config auto-saved by ${userEmail}: ${changeSummary}`, {
         inactivity_threshold_days: updatedConfig.inactivity_threshold_days,
         portal_admins_count: updatedConfig.portal_admins.length,
@@ -367,67 +318,6 @@ export const AdminConfig: React.FC = () => {
     const toApply = pendingConfirm;
     setPendingConfirm(null);
     await persistConfiguration(toApply.overrides, toApply.summary);
-  };
-
-  const handleSyncInventoryCache = async () => {
-    setSyncingInventory(true);
-    setOpsStatusMessage("");
-    try {
-      const res = await syncSessionWatchInventory();
-      setOpsStatusMessage(
-        `Inventory Cache Synced: ${res.inventory_devices_cached} approved serials cached (${res.loaded_count} records processed).`
-      );
-      await loadMetrics();
-    } catch (e: any) {
-      setOpsStatusMessage(`Inventory sync failed: ${e.message}`);
-    } finally {
-      setSyncingInventory(false);
-    }
-  };
-
-  const handleAttestThisBrowser = async () => {
-    if (!userEmail) return;
-    setAttestingSession(true);
-    setOpsStatusMessage("");
-    try {
-      const myDevices = await getMyDevices(userEmail);
-      const matchedApproved = selectPlatformMatchedDevice(myDevices, navigator.userAgent);
-      if (!matchedApproved) {
-        setOpsStatusMessage(
-          `Attestation Rejected: No APPROVED device in your inventory matches this browser's OS (${navigator.platform || "current platform"}). Approve this device first.`
-        );
-        return;
-      }
-      const serialToUse = matchedApproved.serial_number;
-      const res = await attestBrowserSession(userEmail, serialToUse);
-      setOpsStatusMessage(
-        res.status === "ATTESTED"
-          ? `Session Attested: ${userEmail} bound to verified serial ${serialToUse} (${res.client_ip}).`
-          : `Attestation Rejected: ${res.message || "Serial not in approved inventory."}`
-      );
-      await loadMetrics();
-    } catch (e: any) {
-      setOpsStatusMessage(`Attestation failed: ${e.message}`);
-    } finally {
-      setAttestingSession(false);
-    }
-  };
-
-  const handleRunLiveLoginSweep = async () => {
-    setRunningLiveSweep(true);
-    setOpsStatusMessage("");
-    try {
-      const res = await runLiveLoginSweep(60, true);
-      const auditCount = (res as any).audit_would_signout_count || 0;
-      setOpsStatusMessage(
-        `Live Login & Cloud Identity Sweep Complete: ${res.fetched_login_events} audit event(s), ${res.unapproved_cloud_identity_byod_events || 0} unapproved Cloud Identity BYOD sync(s) (${res.evaluated_count || 0} evaluated, ${res.revoked_count} signed out, ${auditCount} audit-only would-sign-out, ${res.auto_blocked_byod_devices || 0} unapproved BYOD device(s) blocked).`
-      );
-      await loadMetrics();
-    } catch (e: any) {
-      setOpsStatusMessage(`Live login sweep failed: ${e.message}`);
-    } finally {
-      setRunningLiveSweep(false);
-    }
   };
 
   const handleAddAdmin = async (e?: React.FormEvent) => {
@@ -505,14 +395,6 @@ export const AdminConfig: React.FC = () => {
       </div>
     );
   }
-
-  const allRecentActions = sessionWatchMetrics?.recent_actions || [];
-  const filteredActions = allRecentActions.filter((act) => {
-    if (logFilter === "AUDIT_ONLY") return act.decision === "AUDIT_WOULD_SIGN_OUT";
-    if (logFilter === "REVOKED") return act.decision === "REVOKE_SIGN_OUT";
-    if (logFilter === "ALLOWED") return act.decision.startsWith("ALLOW") || act.decision.startsWith("SKIP");
-    return true;
-  });
 
   const activeLang = uiLocale || defaultLocale || "en";
 
@@ -627,341 +509,6 @@ export const AdminConfig: React.FC = () => {
           </div>
         )}
 
-        {/* Admin-Only Session Watch Operations & Telemetry Card */}
-        <section
-          className="dtg-card"
-          data-testid="admin-session-watch-operations"
-          style={{
-            marginBottom: "24px",
-            border: "1px solid rgba(26, 115, 232, 0.35)",
-            background: "linear-gradient(135deg, rgba(26, 115, 232, 0.05), rgba(19, 115, 51, 0.04))",
-          }}
-        >
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "12px" }}>
-            <div style={{ flex: "1 1 360px" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "6px", flexWrap: "wrap" }}>
-                <span
-                  style={{
-                    fontSize: "11px",
-                    fontWeight: 700,
-                    padding: "2px 8px",
-                    borderRadius: "999px",
-                    backgroundColor: sessionWatchEnabled ? "#1a73e8" : "#5f6368",
-                    color: "#fff",
-                  }}
-                >
-                  {sessionWatchEnabled ? t.sessionWatchActiveBadge : t.sessionWatchDisabledBadge}
-                </span>
-                <span
-                  style={{
-                    fontSize: "11px",
-                    fontWeight: 700,
-                    padding: "2px 8px",
-                    borderRadius: "999px",
-                    backgroundColor: caaEnforcementEnabled ? "#137333" : "#5f6368",
-                    color: "#fff",
-                  }}
-                >
-                  {caaEnforcementEnabled ? t.caaActiveBadge : t.caaDisabledBadge}
-                </span>
-                {sessionWatchDryRun && (
-                  <span
-                    style={{
-                      fontSize: "11px",
-                      fontWeight: 700,
-                      padding: "2px 8px",
-                      borderRadius: "999px",
-                      backgroundColor: "#e37400",
-                      color: "#fff",
-                    }}
-                  >
-                    {t.auditOnlyBadge}
-                  </span>
-                )}
-              </div>
-              <h2 style={{ margin: "0 0 4px 0", fontSize: "16px", fontWeight: 700, color: "var(--dtg-text)" }}>
-                {t.adminControlsTitle}
-              </h2>
-              <p style={{ margin: 0, fontSize: "12.5px", color: "var(--dtg-text-secondary)", lineHeight: 1.5 }}>
-                {t.adminControlsSubtitle}
-              </p>
-            </div>
-
-            <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", alignItems: "center" }}>
-              <button
-                type="button"
-                onClick={handleSyncInventoryCache}
-                disabled={syncingInventory}
-                className="dtg-btn dtg-btn-outline"
-                style={{ fontSize: "12px", padding: "6px 12px" }}
-                title={t.btn1ExplainDesc}
-              >
-                {syncingInventory ? t.syncingInventoryBtn : t.syncInventoryBtn}
-              </button>
-              <button
-                type="button"
-                onClick={handleAttestThisBrowser}
-                disabled={attestingSession}
-                className="dtg-btn dtg-btn-outline"
-                style={{ fontSize: "12px", padding: "6px 12px" }}
-                title={t.btn2ExplainDesc}
-              >
-                {attestingSession ? t.attestingSessionBtn : t.attestSessionBtn}
-              </button>
-              <button
-                type="button"
-                onClick={handleRunLiveLoginSweep}
-                disabled={runningLiveSweep}
-                className="dtg-btn dtg-btn-primary"
-                style={{ fontSize: "12px", padding: "6px 12px" }}
-                title={t.btn3ExplainDesc}
-              >
-                {runningLiveSweep ? t.runningLiveSweepBtn : t.runLiveSweepBtn}
-              </button>
-            </div>
-          </div>
-
-          {/* Clear 3-Button Explanation Grid */}
-          <div
-            data-testid="admin-buttons-explanation"
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))",
-              gap: "10px",
-              marginTop: "14px",
-              padding: "10px 12px",
-              borderRadius: "8px",
-              backgroundColor: "rgba(255, 255, 255, 0.75)",
-              border: "1px solid rgba(26, 115, 232, 0.18)",
-              fontSize: "11.5px",
-              lineHeight: 1.45,
-            }}
-          >
-            <div>
-              <b style={{ color: "var(--dtg-text)" }}>{t.btn1ExplainTitle}</b>{" "}
-              <span style={{ color: "var(--dtg-text-secondary)" }}>{t.btn1ExplainDesc}</span>
-            </div>
-            <div>
-              <b style={{ color: "var(--dtg-text)" }}>{t.btn2ExplainTitle}</b>{" "}
-              <span style={{ color: "var(--dtg-text-secondary)" }}>{t.btn2ExplainDesc}</span>
-            </div>
-            <div>
-              <b style={{ color: "var(--dtg-text)" }}>{t.btn3ExplainTitle}</b>{" "}
-              <span style={{ color: "var(--dtg-text-secondary)" }}>{t.btn3ExplainDesc}</span>
-            </div>
-          </div>
-
-          {sessionWatchMetrics && (
-            <div style={{ display: "flex", gap: "18px", flexWrap: "wrap", marginTop: "14px", paddingTop: "12px", borderTop: "1px solid rgba(26, 115, 232, 0.2)", fontSize: "12px" }}>
-              <div>
-                <span style={{ color: "var(--dtg-text-secondary)" }}>{t.metricCachedSerials} </span>
-                <b>{sessionWatchMetrics.metrics?.inventory_devices_cached ?? 0}</b>
-              </div>
-              <div>
-                <span style={{ color: "var(--dtg-text-secondary)" }}>{t.metricAttestedSessions} </span>
-                <b>{sessionWatchMetrics.active_attestations?.length ?? 0}</b>
-              </div>
-              <div>
-                <span style={{ color: "var(--dtg-text-secondary)" }}>{t.metricOnboardingPasses} </span>
-                <b>{sessionWatchMetrics.active_onboarding_leases?.length ?? 0}</b>
-              </div>
-              <div>
-                <span style={{ color: "var(--dtg-text-secondary)" }}>{t.metricEvaluatedLogins} </span>
-                <b>{sessionWatchMetrics.metrics?.login_events_evaluated ?? 0}</b>
-              </div>
-              <div>
-                <span style={{ color: "var(--dtg-text-secondary)" }}>{t.metricAuditDetections} </span>
-                <b
-                  data-testid="metric-audit-would-signout"
-                  style={{
-                    color:
-                      (sessionWatchMetrics.metrics?.audit_would_signout ?? 0) > 0 || sessionWatchDryRun
-                        ? "#e37400"
-                        : "inherit",
-                  }}
-                >
-                  {sessionWatchMetrics.metrics?.audit_would_signout ?? 0}
-                </b>
-              </div>
-              <div>
-                <span style={{ color: "var(--dtg-text-secondary)" }}>{t.metricSignOutsTriggered} </span>
-                <b style={{ color: (sessionWatchMetrics.metrics?.signouts_executed ?? 0) > 0 ? "var(--dtg-danger)" : "inherit" }}>
-                  {sessionWatchMetrics.metrics?.signouts_executed ?? 0}
-                </b>
-              </div>
-            </div>
-          )}
-
-          {opsStatusMessage && (
-            <div
-              role="status"
-              style={{
-                marginTop: "12px",
-                padding: "8px 12px",
-                borderRadius: "6px",
-                backgroundColor: "var(--dtg-surface)",
-                border: "1px solid var(--dtg-border)",
-                fontSize: "12px",
-                color: "var(--dtg-text)",
-              }}
-            >
-              {opsStatusMessage}
-            </div>
-          )}
-
-          {/* Live Session Enforcement & Audit-Only Log Viewer */}
-          <div
-            data-testid="admin-audit-log-table"
-            style={{
-              marginTop: "14px",
-              paddingTop: "12px",
-              borderTop: "1px dashed rgba(26, 115, 232, 0.25)",
-              fontSize: "11.5px",
-            }}
-          >
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px", marginBottom: "8px" }}>
-              <div>
-                <div style={{ fontWeight: 700, color: "var(--dtg-text)", fontSize: "12.5px" }}>
-                  {t.auditLogTitle} ({filteredActions.length} {t.auditLogShownSuffix})
-                </div>
-                <div style={{ color: "var(--dtg-text-secondary)", fontSize: "11px" }}>
-                  {t.auditLogSubtitle}
-                </div>
-              </div>
-
-              <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
-                {(
-                  [
-                    { key: "ALL", label: `${t.filterAll} (${allRecentActions.length})` },
-                    {
-                      key: "AUDIT_ONLY",
-                      label: `${t.filterAuditOnly} (${allRecentActions.filter((a) => a.decision === "AUDIT_WOULD_SIGN_OUT").length})`,
-                    },
-                    {
-                      key: "REVOKED",
-                      label: `${t.filterSignedOut} (${allRecentActions.filter((a) => a.decision === "REVOKE_SIGN_OUT").length})`,
-                    },
-                    {
-                      key: "ALLOWED",
-                      label: `${t.filterAllowed} (${allRecentActions.filter((a) => a.decision.startsWith("ALLOW") || a.decision.startsWith("SKIP")).length})`,
-                    },
-                  ] as const
-                ).map((tab) => (
-                  <button
-                    key={tab.key}
-                    type="button"
-                    onClick={() => setLogFilter(tab.key)}
-                    style={{
-                      fontSize: "11px",
-                      fontWeight: logFilter === tab.key ? 700 : 500,
-                      padding: "3px 8px",
-                      borderRadius: "999px",
-                      border: logFilter === tab.key ? "1px solid #1a73e8" : "1px solid var(--dtg-border)",
-                      backgroundColor: logFilter === tab.key ? "#e8f0fe" : "var(--dtg-surface)",
-                      color: logFilter === tab.key ? "#1967d2" : "var(--dtg-text-secondary)",
-                      cursor: "pointer",
-                    }}
-                  >
-                    {tab.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {filteredActions.length === 0 ? (
-              <div
-                style={{
-                  padding: "10px 12px",
-                  borderRadius: "6px",
-                  backgroundColor: "var(--dtg-surface)",
-                  border: "1px solid var(--dtg-border-subtle)",
-                  color: "var(--dtg-text-secondary)",
-                }}
-              >
-                {t.auditLogEmpty}
-              </div>
-            ) : (
-              <div style={{ display: "grid", gap: "6px", maxHeight: "260px", overflowY: "auto" }}>
-                {filteredActions.slice(0, 25).map((act, idx) => {
-                  const isRevoke = act.decision === "REVOKE_SIGN_OUT";
-                  const isAudit = act.decision === "AUDIT_WOULD_SIGN_OUT";
-                  const badgeBg = isRevoke
-                    ? "rgba(217, 48, 37, 0.12)"
-                    : isAudit
-                    ? "rgba(227, 116, 0, 0.15)"
-                    : "rgba(19, 115, 51, 0.12)";
-                  const badgeColor = isRevoke ? "#c5221f" : isAudit ? "#b06000" : "#137333";
-
-                  return (
-                    <div
-                      key={idx}
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "center",
-                        gap: "8px",
-                        flexWrap: "wrap",
-                        padding: "7px 10px",
-                        borderRadius: "6px",
-                        backgroundColor: "var(--dtg-surface)",
-                        border: isAudit
-                          ? "1px solid rgba(227, 116, 0, 0.4)"
-                          : isRevoke
-                          ? "1px solid rgba(217, 48, 37, 0.3)"
-                          : "1px solid var(--dtg-border-subtle)",
-                      }}
-                    >
-                      <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-                        <span
-                          style={{
-                            fontWeight: 700,
-                            fontSize: "10.5px",
-                            padding: "2px 6px",
-                            borderRadius: "4px",
-                            backgroundColor: badgeBg,
-                            color: badgeColor,
-                          }}
-                        >
-                          {isAudit ? "⚠️ AUDIT_WOULD_SIGN_OUT" : isRevoke ? "🚫 REVOKE_SIGN_OUT" : act.decision}
-                        </span>
-                        <b style={{ color: "var(--dtg-text)" }}>{act.user_email}</b>
-                        <span style={{ color: "var(--dtg-text-secondary)" }}>{act.reason}</span>
-                      </div>
-                      <span style={{ color: "var(--dtg-text-secondary)", fontFamily: "monospace", fontSize: "11px" }}>
-                        {act.timestamp_iso
-                          ? new Intl.DateTimeFormat(activeLang, {
-                              hour: "2-digit",
-                              minute: "2-digit",
-                              second: "2-digit",
-                            }).format(new Date(act.timestamp_iso))
-                          : ""}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-
-            {/* Cloud Logging Query Helper for Audit-Only Mode */}
-            <div
-              style={{
-                marginTop: "10px",
-                padding: "8px 10px",
-                borderRadius: "6px",
-                backgroundColor: "rgba(26, 115, 232, 0.04)",
-                border: "1px solid rgba(26, 115, 232, 0.15)",
-                fontSize: "11px",
-                color: "var(--dtg-text-secondary)",
-              }}
-            >
-              <b>{t.cloudLoggingHelperTitle}</b> {t.cloudLoggingHelperDesc}{" "}
-              <code style={{ userSelect: "all", color: "var(--dtg-text)" }}>
-                resource.type=&quot;cloud_run_revision&quot; jsonPayload.component=&quot;devicetrustportal.session_guard&quot; jsonPayload.decision=&quot;AUDIT_WOULD_SIGN_OUT&quot;
-              </code>
-            </div>
-          </div>
-        </section>
-
         <form onSubmit={handleSubmit} className="dtg-card">
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "8px", marginBottom: "6px" }}>
             <h2 style={{ margin: 0, fontSize: "18px", fontWeight: 600, color: "var(--dtg-text)" }}>
@@ -983,11 +530,11 @@ export const AdminConfig: React.FC = () => {
               borderRadius: "8px",
               border:
                 sessionWatchEnabled || caaEnforcementEnabled
-                  ? "1.5px solid #1a73e8"
+                  ? "1.5px solid #137333"
                   : "1px solid var(--dtg-border)",
               backgroundColor:
                 sessionWatchEnabled || caaEnforcementEnabled
-                  ? "rgba(26, 115, 232, 0.05)"
+                  ? "rgba(19, 115, 51, 0.04)"
                   : "var(--dtg-surface-subtle)",
             }}
           >
@@ -1005,9 +552,7 @@ export const AdminConfig: React.FC = () => {
                   backgroundColor:
                     enforcementMode === "DISABLED"
                       ? "#5f6368"
-                      : enforcementMode === "BOTH"
-                      ? "#0d652d"
-                      : "#1a73e8",
+                      : "#137333",
                   color: "#fff",
                 }}
               >
@@ -1037,7 +582,7 @@ export const AdminConfig: React.FC = () => {
                 testId="toggle-session-watch"
                 checked={sessionWatchEnabled}
                 disabled={saving}
-                activeColor="#1a73e8"
+                activeColor="#137333"
                 onToggle={(nextVal) =>
                   requestToggleWithConfirmation({
                     title: `${nextVal ? "Enable" : "Disable"} Session Management (Education Fundamentals)?`,
@@ -1100,7 +645,7 @@ export const AdminConfig: React.FC = () => {
                 gap: "14px",
               }}
             >
-              <div style={{ fontWeight: 700, fontSize: "13px", color: "#1967d2", textTransform: "uppercase", letterSpacing: "0.03em" }}>
+              <div style={{ fontWeight: 700, fontSize: "13px", color: "#137333", textTransform: "uppercase", letterSpacing: "0.03em" }}>
                 {t.rolloutScopingTitle}
               </div>
 
@@ -1109,7 +654,7 @@ export const AdminConfig: React.FC = () => {
                 testId="toggle-dry-run"
                 checked={sessionWatchDryRun}
                 disabled={saving}
-                activeColor="#e37400"
+                activeColor="#137333"
                 onToggle={(nextVal) =>
                   requestToggleWithConfirmation({
                     title: `${nextVal ? "Enable" : "Disable"} Audit-Only (Dry-Run) Mode?`,
@@ -1121,12 +666,44 @@ export const AdminConfig: React.FC = () => {
                 description={t.toggleDryRunDesc}
               />
 
+              {/* Cloud Logging Query Helper for Audit-Only & Enforcement Logs */}
+              <div
+                data-testid="cloud-logging-helper"
+                style={{
+                  padding: "10px 12px",
+                  borderRadius: "6px",
+                  backgroundColor: "rgba(19, 115, 51, 0.04)",
+                  border: "1px solid rgba(19, 115, 51, 0.25)",
+                  fontSize: "11.5px",
+                  color: "var(--dtg-text-secondary)",
+                  lineHeight: 1.5,
+                }}
+              >
+                <b style={{ color: "var(--dtg-text)" }}>{t.cloudLoggingHelperTitle}</b> {t.cloudLoggingHelperDesc}{" "}
+                <code
+                  style={{
+                    userSelect: "all",
+                    color: "var(--dtg-text)",
+                    display: "block",
+                    marginTop: "6px",
+                    padding: "6px 8px",
+                    borderRadius: "4px",
+                    backgroundColor: "var(--dtg-surface)",
+                    border: "1px solid var(--dtg-border-subtle)",
+                    fontFamily: "monospace",
+                    fontSize: "11px",
+                  }}
+                >
+                  resource.type=&quot;cloud_run_revision&quot; jsonPayload.component=&quot;devicetrustportal.session_guard&quot; jsonPayload.decision=&quot;AUDIT_WOULD_SIGN_OUT&quot;
+                </code>
+              </div>
+
               {/* Toggle 4: Admin Safe-Harbor Exemption */}
               <ToggleSwitch
                 testId="toggle-exempt-admins"
                 checked={sessionWatchExemptAdmins}
                 disabled={saving}
-                activeColor="#1a73e8"
+                activeColor="#137333"
                 onToggle={(nextVal) =>
                   requestToggleWithConfirmation({
                     title: `${nextVal ? "Enable" : "Disable"} Admin Safe-Harbor Exemption?`,
