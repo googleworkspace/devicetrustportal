@@ -84,7 +84,17 @@ export const GoogleLoginButton: React.FC<Props> = ({ onLoginSuccess }) => {
 
   return (
     <GoogleOAuthProvider key={clientId} clientId={clientId}>
-      <div style={{ marginTop: "8px", marginBottom: "8px", overflowX: "auto" }}>
+      <div
+        style={{
+          marginTop: "14px",
+          marginBottom: "14px",
+          padding: "6px 0",
+          minHeight: "52px",
+          display: "flex",
+          alignItems: "center",
+          overflow: "visible",
+        }}
+      >
         <GoogleLogin
           onSuccess={(credentialResponse) => {
             const token = credentialResponse.credential;

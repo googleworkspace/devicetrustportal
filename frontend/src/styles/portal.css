@@ -779,6 +779,7 @@
     background-color: transparent;
     border: none;
     box-shadow: none;
+    max-height: none;
     overflow: visible;
   }
 
@@ -896,6 +897,22 @@
 
   .dtg-session-actions .dtg-btn {
     flex: 1;
+  }
+
+  .dtg-section-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .dtg-section-header .dtg-btn {
+    width: 100%;
+    white-space: normal;
+    text-align: center;
+  }
+
+  .dtg-steps-grid {
+    grid-template-columns: 1fr;
+    gap: 14px;
   }
 
   .dtg-stats-grid {

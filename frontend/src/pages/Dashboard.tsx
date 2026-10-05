@@ -549,11 +549,11 @@ export const Dashboard: React.FC = () => {
 
       <main className="dtg-main">
         {/* Google Workspace Authentication Surface Card */}
-        <div className="dtg-card">
-          <div className="dtg-card-header" style={{ marginBottom: userEmail ? "14px" : "10px" }}>
+        <div className="dtg-card" style={{ padding: "clamp(20px, 3.2vw, 28px)" }}>
+          <div className="dtg-card-header" style={{ marginBottom: userEmail ? "16px" : "16px" }}>
             <div>
-              <h3 className="dtg-card-title">{t.googleAuthTitle}</h3>
-              <p className="dtg-card-desc">{t.signInPrompt}</p>
+              <h3 className="dtg-card-title" style={{ marginBottom: "6px" }}>{t.googleAuthTitle}</h3>
+              <p className="dtg-card-desc" style={{ marginTop: "6px", lineHeight: 1.6 }}>{t.signInPrompt}</p>
             </div>
           </div>
 
