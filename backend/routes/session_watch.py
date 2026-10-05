@@ -681,19 +681,19 @@ def _execute_single_live_sweep_pass(
                                             auto_blocked_byod_count += 1
                                         except Exception:
                                             pass
-                                session_guard.mark_device_sync_enforced(
-                                    rec["device_user_name"],
-                                    norm_user,
-                                    rec_sync_ep,
-                                    now_epoch=now,
-                                )
-                                session_guard.clear_unapproved_devices_for_user(
-                                    norm_user, device_user_name=rec["device_user_name"]
-                                )
                             except Exception as blk_err:
                                 print(
                                     f"WARNING [session_watch.py]: Could not auto-block pending device '{rec['device_user_name']}': {blk_err}"
                                 )
+                        session_guard.mark_device_sync_enforced(
+                            rec["device_user_name"],
+                            norm_user,
+                            rec_sync_ep,
+                            now_epoch=now,
+                        )
+                        session_guard.clear_unapproved_devices_for_user(
+                            norm_user, device_user_name=rec["device_user_name"]
+                        )
                         break
             except Exception as ci_err:
                 print(
@@ -855,7 +855,7 @@ async def get_session_watch_metrics() -> Dict[str, object]:
         },
         "active_attestations": session_guard.get_active_attestations(),
         "active_onboarding_leases": session_guard.get_active_onboarding_leases(),
-        "recent_actions": session_guard.get_recent_actions(limit=20),
+        "recent_actions": session_guard.get_recent_actions(limit=50),
     }
 
 

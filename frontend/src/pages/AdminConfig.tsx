@@ -60,11 +60,122 @@ function selectPlatformMatchedDevice(devices: DeviceInfo[], userAgent: string): 
   });
 }
 
+interface ToggleSwitchProps {
+  id?: string;
+  testId: string;
+  checked: boolean;
+  disabled?: boolean;
+  activeColor?: string;
+  onToggle: (nextChecked: boolean) => void;
+  label: React.ReactNode;
+  description?: React.ReactNode;
+}
+
+const ToggleSwitch: React.FC<ToggleSwitchProps> = ({
+  id,
+  testId,
+  checked,
+  disabled = false,
+  activeColor = "#1a73e8",
+  onToggle,
+  label,
+  description,
+}) => {
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "flex-start",
+        justifyContent: "space-between",
+        gap: "16px",
+        padding: "14px 16px",
+        borderRadius: "8px",
+        border: checked ? `1.5px solid ${activeColor}` : "1px solid var(--dtg-border)",
+        backgroundColor: "var(--dtg-surface)",
+        transition: "border-color 0.2s ease, box-shadow 0.2s ease",
+      }}
+    >
+      <div style={{ flex: 1, fontSize: "13px", lineHeight: 1.5 }}>
+        <div style={{ fontWeight: 700, color: "var(--dtg-text)", marginBottom: description ? "3px" : 0 }}>
+          {label}
+        </div>
+        {description && <div style={{ color: "var(--dtg-text-secondary)", fontSize: "12px" }}>{description}</div>}
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", gap: "8px", flexShrink: 0, paddingTop: "2px" }}>
+        <span
+          style={{
+            fontSize: "10.5px",
+            fontWeight: 700,
+            padding: "2px 7px",
+            borderRadius: "999px",
+            backgroundColor: checked ? activeColor : "#e8eaed",
+            color: checked ? "#ffffff" : "#5f6368",
+            letterSpacing: "0.03em",
+          }}
+        >
+          {checked ? "ON" : "OFF"}
+        </span>
+        <button
+          id={id}
+          type="button"
+          role="switch"
+          aria-checked={checked}
+          data-testid={testId}
+          disabled={disabled}
+          onClick={() => !disabled && onToggle(!checked)}
+          style={{
+            position: "relative",
+            width: "48px",
+            height: "26px",
+            borderRadius: "999px",
+            border: "none",
+            backgroundColor: checked ? activeColor : "#bdc1c6",
+            cursor: disabled ? "not-allowed" : "pointer",
+            padding: 0,
+            transition: "background-color 0.2s ease",
+            outline: "none",
+            boxShadow: checked ? "0 1px 3px rgba(0, 0, 0, 0.2)" : "inset 0 1px 2px rgba(0, 0, 0, 0.15)",
+          }}
+        >
+          <span
+            style={{
+              position: "absolute",
+              top: "3px",
+              left: checked ? "25px" : "3px",
+              width: "20px",
+              height: "20px",
+              borderRadius: "50%",
+              backgroundColor: "#ffffff",
+              boxShadow: "0 1px 3px rgba(0, 0, 0, 0.3)",
+              transition: "left 0.2s ease",
+            }}
+          />
+        </button>
+      </div>
+    </div>
+  );
+};
+
+interface PendingConfirmChange {
+  title: string;
+  summary: string;
+  overrides: Partial<{
+    sessionWatchEnabled: boolean;
+    caaEnforcementEnabled: boolean;
+    sessionWatchExemptAdmins: boolean;
+    sessionWatchDryRun: boolean;
+    portalAdmins: string[];
+  }>;
+}
+
 export const AdminConfig: React.FC = () => {
   const [config, setConfig] = useState<TenantConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
+  const [autoSaveBanner, setAutoSaveBanner] = useState<string>("");
+  const [lastSavedAt, setLastSavedAt] = useState<string>("");
   const [error, setError] = useState("");
 
   const [threshold, setThreshold] = useState(90);
@@ -80,8 +191,10 @@ export const AdminConfig: React.FC = () => {
   const [sessionWatchOnboardingGraceMinutes, setSessionWatchOnboardingGraceMinutes] = useState(15);
   const [newAdminEmail, setNewAdminEmail] = useState("");
   const [showAddAdminModal, setShowAddAdminModal] = useState(false);
+  const [pendingConfirm, setPendingConfirm] = useState<PendingConfirmChange | null>(null);
+  const [logFilter, setLogFilter] = useState<"ALL" | "AUDIT_ONLY" | "REVOKED" | "ALLOWED">("ALL");
 
-  // Admin-only Session Watch Operations & Telemetry state (moved from Dashboard)
+  // Admin-only Session Watch Operations & Telemetry state
   const [sessionWatchMetrics, setSessionWatchMetrics] = useState<SessionWatchMetricsResponse | null>(null);
   const [opsStatusMessage, setOpsStatusMessage] = useState<string>("");
   const [syncingInventory, setSyncingInventory] = useState<boolean>(false);
@@ -139,6 +252,117 @@ export const AdminConfig: React.FC = () => {
     load();
   }, [userEmail, loadMetrics]);
 
+  const persistConfiguration = async (
+    overrides: Partial<{
+      sessionWatchEnabled: boolean;
+      caaEnforcementEnabled: boolean;
+      sessionWatchExemptAdmins: boolean;
+      sessionWatchDryRun: boolean;
+      portalAdmins: string[];
+      threshold: number;
+      googleClientId: string;
+      defaultLocale: string;
+      sessionWatchTargetOusInput: string;
+      sessionWatchTargetGroupsInput: string;
+      sessionWatchOnboardingGraceMinutes: number;
+    }> = {},
+    changeSummary: string = "Configuration updated"
+  ) => {
+    setMessage("");
+    setError("");
+    setSaving(true);
+
+    const nextSw = overrides.sessionWatchEnabled ?? sessionWatchEnabled;
+    const nextCaa = overrides.caaEnforcementEnabled ?? caaEnforcementEnabled;
+    const nextExempt = overrides.sessionWatchExemptAdmins ?? sessionWatchExemptAdmins;
+    const nextDryRun = overrides.sessionWatchDryRun ?? sessionWatchDryRun;
+    const nextAdmins = overrides.portalAdmins ?? portalAdmins;
+    const nextThreshold = overrides.threshold ?? threshold;
+    const nextClientId = overrides.googleClientId ?? googleClientId;
+    const nextLocale = overrides.defaultLocale ?? defaultLocale;
+    const nextOusInput = overrides.sessionWatchTargetOusInput ?? sessionWatchTargetOusInput;
+    const nextGroupsInput = overrides.sessionWatchTargetGroupsInput ?? sessionWatchTargetGroupsInput;
+    const nextGraceMin = overrides.sessionWatchOnboardingGraceMinutes ?? sessionWatchOnboardingGraceMinutes;
+
+    const nextMode = deriveEnforcementMode(nextSw, nextCaa);
+    const parsedTargetOus = nextOusInput
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const parsedTargetGroups = nextGroupsInput
+      .split(",")
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean);
+
+    const updatedConfig: TenantConfig = {
+      customer_id: config?.customer_id || "customers/my_customer",
+      inactivity_threshold_days: Number(nextThreshold),
+      portal_admins: nextAdmins,
+      revocation_action: config?.revocation_action || "BLOCK",
+      google_client_id: nextClientId.trim(),
+      default_locale: nextLocale,
+      trusted_ip_ranges: config?.trusted_ip_ranges || [],
+      chaining_allowed_groups: config?.chaining_allowed_groups || [],
+      chaining_allowed_ous: config?.chaining_allowed_ous || [],
+      enforcement_mode: nextMode,
+      session_watch_enabled: nextSw,
+      caa_enforcement_enabled: nextCaa,
+      session_watch_target_ous: parsedTargetOus,
+      session_watch_target_groups: parsedTargetGroups,
+      session_watch_exempt_admins: nextExempt,
+      session_watch_dry_run: nextDryRun,
+      session_watch_onboarding_grace_minutes: Math.max(5, Math.min(120, Number(nextGraceMin) || 15)),
+    };
+
+    try {
+      await updateAdminConfig(updatedConfig);
+      setConfig(updatedConfig);
+      setSessionWatchEnabled(nextSw);
+      setCaaEnforcementEnabled(nextCaa);
+      setSessionWatchExemptAdmins(nextExempt);
+      setSessionWatchDryRun(nextDryRun);
+      setPortalAdmins(nextAdmins);
+
+      const timeStr = new Date().toLocaleTimeString();
+      setLastSavedAt(timeStr);
+      const confirmText = `✅ Auto-Saved (${timeStr}): ${changeSummary} — Effective Mode: ${nextMode}${nextDryRun ? " [AUDIT-ONLY DRY RUN]" : ""}`;
+      setAutoSaveBanner(confirmText);
+      setMessage(t.configSaveSuccess);
+      setSaving(false);
+      await loadMetrics();
+      sendClientLog("INFO", "ADMIN_CONFIG_SAVED", `Admin config auto-saved by ${userEmail}: ${changeSummary}`, {
+        inactivity_threshold_days: updatedConfig.inactivity_threshold_days,
+        portal_admins_count: updatedConfig.portal_admins.length,
+        default_locale: updatedConfig.default_locale,
+        enforcement_mode: updatedConfig.enforcement_mode,
+        session_watch_enabled: updatedConfig.session_watch_enabled,
+        caa_enforcement_enabled: updatedConfig.caa_enforcement_enabled,
+        session_watch_target_ous: updatedConfig.session_watch_target_ous,
+        session_watch_target_groups: updatedConfig.session_watch_target_groups,
+        session_watch_exempt_admins: updatedConfig.session_watch_exempt_admins,
+        session_watch_dry_run: updatedConfig.session_watch_dry_run,
+      });
+    } catch (err: any) {
+      const errMsg = `Update failed: ${err.message}`;
+      setError(errMsg);
+      setSaving(false);
+      sendClientLog("ERROR", "ADMIN_CONFIG_SAVE_ERROR", errMsg, {
+        error: err?.message || String(err),
+      });
+    }
+  };
+
+  const requestToggleWithConfirmation = (change: PendingConfirmChange) => {
+    setPendingConfirm(change);
+  };
+
+  const handleConfirmPendingToggle = async () => {
+    if (!pendingConfirm) return;
+    const toApply = pendingConfirm;
+    setPendingConfirm(null);
+    await persistConfiguration(toApply.overrides, toApply.summary);
+  };
+
   const handleSyncInventoryCache = async () => {
     setSyncingInventory(true);
     setOpsStatusMessage("");
@@ -188,8 +412,9 @@ export const AdminConfig: React.FC = () => {
     setOpsStatusMessage("");
     try {
       const res = await runLiveLoginSweep(60, true);
+      const auditCount = (res as any).audit_would_signout_count || 0;
       setOpsStatusMessage(
-        `Live Login & Cloud Identity Sweep Complete: ${res.fetched_login_events} audit event(s), ${res.unapproved_cloud_identity_byod_events || 0} unapproved Cloud Identity BYOD sync(s) (${res.evaluated_count || 0} evaluated, ${res.revoked_count} signed out, ${res.auto_blocked_byod_devices || 0} unapproved BYOD device(s) blocked).`
+        `Live Login & Cloud Identity Sweep Complete: ${res.fetched_login_events} audit event(s), ${res.unapproved_cloud_identity_byod_events || 0} unapproved Cloud Identity BYOD sync(s) (${res.evaluated_count || 0} evaluated, ${res.revoked_count} signed out, ${auditCount} audit-only would-sign-out, ${res.auto_blocked_byod_devices || 0} unapproved BYOD device(s) blocked).`
       );
       await loadMetrics();
     } catch (e: any) {
@@ -199,82 +424,24 @@ export const AdminConfig: React.FC = () => {
     }
   };
 
-  const handleAddAdmin = (e?: React.FormEvent) => {
+  const handleAddAdmin = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!newAdminEmail) return;
     const target = newAdminEmail.toLowerCase().trim();
-    if (!portalAdmins.includes(target)) {
-      setPortalAdmins([...portalAdmins, target]);
-    }
+    const updatedAdmins = portalAdmins.includes(target) ? portalAdmins : [...portalAdmins, target];
     setNewAdminEmail("");
     setShowAddAdminModal(false);
+    await persistConfiguration({ portalAdmins: updatedAdmins }, `Added delegated admin ${target}`);
   };
 
-  const handleRemoveAdmin = (email: string) => {
-    setPortalAdmins(portalAdmins.filter((a) => a !== email));
+  const handleRemoveAdmin = async (email: string) => {
+    const updatedAdmins = portalAdmins.filter((a) => a !== email);
+    await persistConfiguration({ portalAdmins: updatedAdmins }, `Removed delegated admin ${email}`);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setMessage("");
-    setError("");
-    setSaving(true);
-
-    const parsedTargetOus = sessionWatchTargetOusInput
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-    const parsedTargetGroups = sessionWatchTargetGroupsInput
-      .split(",")
-      .map((s) => s.trim().toLowerCase())
-      .filter(Boolean);
-
-    const updatedConfig: TenantConfig = {
-      customer_id: config?.customer_id || "customers/my_customer",
-      inactivity_threshold_days: Number(threshold),
-      portal_admins: portalAdmins,
-      revocation_action: config?.revocation_action || "BLOCK",
-      google_client_id: googleClientId.trim(),
-      default_locale: defaultLocale,
-      trusted_ip_ranges: config?.trusted_ip_ranges || [],
-      chaining_allowed_groups: config?.chaining_allowed_groups || [],
-      chaining_allowed_ous: config?.chaining_allowed_ous || [],
-      enforcement_mode: enforcementMode,
-      session_watch_enabled: sessionWatchEnabled,
-      caa_enforcement_enabled: caaEnforcementEnabled,
-      session_watch_target_ous: parsedTargetOus,
-      session_watch_target_groups: parsedTargetGroups,
-      session_watch_exempt_admins: sessionWatchExemptAdmins,
-      session_watch_dry_run: sessionWatchDryRun,
-      session_watch_onboarding_grace_minutes: Math.max(5, Math.min(120, Number(sessionWatchOnboardingGraceMinutes) || 15)),
-    };
-
-    try {
-      await updateAdminConfig(updatedConfig);
-      setConfig(updatedConfig);
-      setMessage(t.configSaveSuccess);
-      setSaving(false);
-      await loadMetrics();
-      sendClientLog("INFO", "ADMIN_CONFIG_SAVED", `Admin config updated by ${userEmail}`, {
-        inactivity_threshold_days: updatedConfig.inactivity_threshold_days,
-        portal_admins_count: updatedConfig.portal_admins.length,
-        default_locale: updatedConfig.default_locale,
-        enforcement_mode: updatedConfig.enforcement_mode,
-        session_watch_enabled: updatedConfig.session_watch_enabled,
-        caa_enforcement_enabled: updatedConfig.caa_enforcement_enabled,
-        session_watch_target_ous: updatedConfig.session_watch_target_ous,
-        session_watch_target_groups: updatedConfig.session_watch_target_groups,
-        session_watch_exempt_admins: updatedConfig.session_watch_exempt_admins,
-        session_watch_dry_run: updatedConfig.session_watch_dry_run,
-      });
-    } catch (err: any) {
-      const errMsg = `Update failed: ${err.message}`;
-      setError(errMsg);
-      setSaving(false);
-      sendClientLog("ERROR", "ADMIN_CONFIG_SAVE_ERROR", errMsg, {
-        error: err?.message || String(err),
-      });
-    }
+    await persistConfiguration({}, "All configuration settings saved");
   };
 
   if (loading) {
@@ -333,6 +500,14 @@ export const AdminConfig: React.FC = () => {
     );
   }
 
+  const allRecentActions = sessionWatchMetrics?.recent_actions || [];
+  const filteredActions = allRecentActions.filter((act) => {
+    if (logFilter === "AUDIT_ONLY") return act.decision === "AUDIT_WOULD_SIGN_OUT";
+    if (logFilter === "REVOKED") return act.decision === "REVOKE_SIGN_OUT";
+    if (logFilter === "ALLOWED") return act.decision.startsWith("ALLOW") || act.decision.startsWith("SKIP");
+    return true;
+  });
+
   return (
     <div className="dtg-shell">
       {/* Google Workspace Top App Bar */}
@@ -355,7 +530,23 @@ export const AdminConfig: React.FC = () => {
             </div>
           </div>
 
-          <div className="dtg-header-actions">
+          <div className="dtg-header-actions" style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            {lastSavedAt && (
+              <span
+                data-testid="header-autosave-indicator"
+                style={{
+                  fontSize: "11.5px",
+                  fontWeight: 600,
+                  padding: "4px 10px",
+                  borderRadius: "999px",
+                  backgroundColor: "#e6f4ea",
+                  color: "#137333",
+                  border: "1px solid #ceead6",
+                }}
+              >
+                ✓ Auto-saved at {lastSavedAt}
+              </span>
+            )}
             <a href="#/" className="dtg-btn dtg-btn-outline">
               {t.backToPortal}
             </a>
@@ -364,7 +555,33 @@ export const AdminConfig: React.FC = () => {
       </header>
 
       <main className="dtg-main dtg-main-narrow">
-        {message && (
+        {autoSaveBanner && (
+          <div
+            role="status"
+            aria-live="polite"
+            data-testid="auto-save-confirmation"
+            className="dtg-alert dtg-alert-success"
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              gap: "12px",
+              marginBottom: "16px",
+              fontWeight: 600,
+            }}
+          >
+            <span>{autoSaveBanner}</span>
+            <button
+              type="button"
+              onClick={() => setAutoSaveBanner("")}
+              className="dtg-btn dtg-btn-neutral"
+              style={{ padding: "3px 8px", fontSize: "11px" }}
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
+        {message && !autoSaveBanner && (
           <div role="status" aria-live="polite" className="dtg-alert dtg-alert-success">
             <span>{message}</span>
           </div>
@@ -375,7 +592,7 @@ export const AdminConfig: React.FC = () => {
           </div>
         )}
 
-        {/* Admin-Only Session Watch Operations & Telemetry Card (Moved from Dashboard) */}
+        {/* Admin-Only Session Watch Operations & Telemetry Card */}
         <section
           className="dtg-card"
           data-testid="admin-session-watch-operations"
@@ -412,6 +629,20 @@ export const AdminConfig: React.FC = () => {
                 >
                   {caaEnforcementEnabled ? "CAA ENFORCEMENT ACTIVE" : "CAA ENFORCEMENT DISABLED"}
                 </span>
+                {sessionWatchDryRun && (
+                  <span
+                    style={{
+                      fontSize: "11px",
+                      fontWeight: 700,
+                      padding: "2px 8px",
+                      borderRadius: "999px",
+                      backgroundColor: "#e37400",
+                      color: "#fff",
+                    }}
+                  >
+                    ⚠️ AUDIT-ONLY (DRY-RUN) MODE
+                  </span>
+                )}
               </div>
               <h2 style={{ margin: "0 0 4px 0", fontSize: "16px", fontWeight: 700, color: "var(--dtg-text)" }}>
                 Session Watch Admin Controls &amp; Live Telemetry
@@ -428,6 +659,7 @@ export const AdminConfig: React.FC = () => {
                 disabled={syncingInventory}
                 className="dtg-btn dtg-btn-outline"
                 style={{ fontSize: "12px", padding: "6px 12px" }}
+                title="Loads all company Chromebooks (Directory API) and APPROVED BYOD serials (Cloud Identity) into the backend SQLite/RAM cache"
               >
                 {syncingInventory ? "Syncing Cache..." : "🔄 Sync Inventory Cache"}
               </button>
@@ -437,6 +669,7 @@ export const AdminConfig: React.FC = () => {
                 disabled={attestingSession}
                 className="dtg-btn dtg-btn-outline"
                 style={{ fontSize: "12px", padding: "6px 12px" }}
+                title="Verifies your current browser OS against your APPROVED devices and registers an attested session heartbeat"
               >
                 {attestingSession ? "Attesting..." : "🛡️ Attest Current Session"}
               </button>
@@ -446,9 +679,46 @@ export const AdminConfig: React.FC = () => {
                 disabled={runningLiveSweep}
                 className="dtg-btn dtg-btn-primary"
                 style={{ fontSize: "12px", padding: "6px 12px" }}
+                title="Immediately sweeps Cloud Identity deviceUsers and Admin SDK login logs to enforce or audit unapproved sessions"
               >
                 {runningLiveSweep ? "Sweeping..." : "⚡ Run Live Login Sweep"}
               </button>
+            </div>
+          </div>
+
+          {/* Clear 3-Button Explanation Grid */}
+          <div
+            data-testid="admin-buttons-explanation"
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))",
+              gap: "10px",
+              marginTop: "14px",
+              padding: "10px 12px",
+              borderRadius: "8px",
+              backgroundColor: "rgba(255, 255, 255, 0.75)",
+              border: "1px solid rgba(26, 115, 232, 0.18)",
+              fontSize: "11.5px",
+              lineHeight: 1.45,
+            }}
+          >
+            <div>
+              <b style={{ color: "var(--dtg-text)" }}>🔄 Sync Inventory Cache:</b>{" "}
+              <span style={{ color: "var(--dtg-text-secondary)" }}>
+                Pulls all active company Chromebooks (Directory API) and <code>APPROVED</code> personal BYOD serials (Cloud Identity API) into the backend&apos;s &lt;1ms SQLite/RAM cache (<i>Cached Approved Serials</i>).
+              </span>
+            </div>
+            <div>
+              <b style={{ color: "var(--dtg-text)" }}>🛡️ Attest Current Session:</b>{" "}
+              <span style={{ color: "var(--dtg-text-secondary)" }}>
+                Checks that this browser&apos;s OS matches an <code>APPROVED</code> device in your inventory and registers a verified session heartbeat (<i>Active Attested Sessions</i>) binding your email, serial, and IP.
+              </span>
+            </div>
+            <div>
+              <b style={{ color: "var(--dtg-text)" }}>⚡ Run Live Login Sweep:</b>{" "}
+              <span style={{ color: "var(--dtg-text-secondary)" }}>
+                Immediately executes an on-demand sweep across Cloud Identity <code>PENDING_APPROVAL</code> / <code>BLOCKED</code> syncs and Admin SDK <code>login</code> events—either terminating unapproved sessions or logging <code>AUDIT_WOULD_SIGN_OUT</code> in Audit-Only mode.
+              </span>
             </div>
           </div>
 
@@ -471,66 +741,24 @@ export const AdminConfig: React.FC = () => {
                 <b>{sessionWatchMetrics.metrics?.login_events_evaluated ?? 0}</b>
               </div>
               <div>
+                <span style={{ color: "var(--dtg-text-secondary)" }}>Audit-Only Detections (Would Sign Out): </span>
+                <b
+                  data-testid="metric-audit-would-signout"
+                  style={{
+                    color:
+                      (sessionWatchMetrics.metrics?.audit_would_signout ?? 0) > 0 || sessionWatchDryRun
+                        ? "#e37400"
+                        : "inherit",
+                  }}
+                >
+                  {sessionWatchMetrics.metrics?.audit_would_signout ?? 0}
+                </b>
+              </div>
+              <div>
                 <span style={{ color: "var(--dtg-text-secondary)" }}>Sign-Outs Triggered: </span>
                 <b style={{ color: (sessionWatchMetrics.metrics?.signouts_executed ?? 0) > 0 ? "var(--dtg-danger)" : "inherit" }}>
                   {sessionWatchMetrics.metrics?.signouts_executed ?? 0}
                 </b>
-              </div>
-            </div>
-          )}
-
-          {sessionWatchMetrics?.recent_actions && sessionWatchMetrics.recent_actions.length > 0 && (
-            <div
-              style={{
-                marginTop: "12px",
-                paddingTop: "10px",
-                borderTop: "1px dashed rgba(26, 115, 232, 0.2)",
-                fontSize: "11.5px",
-              }}
-            >
-              <div style={{ fontWeight: 700, color: "var(--dtg-text)", marginBottom: "6px" }}>
-                Recent Session Enforcement &amp; Verification Events
-              </div>
-              <div style={{ display: "grid", gap: "6px" }}>
-                {sessionWatchMetrics.recent_actions.slice(0, 4).map((act, idx) => (
-                  <div
-                    key={idx}
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      gap: "8px",
-                      flexWrap: "wrap",
-                      padding: "6px 10px",
-                      borderRadius: "6px",
-                      backgroundColor: "var(--dtg-surface)",
-                      border: "1px solid var(--dtg-border-subtle)",
-                    }}
-                  >
-                    <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-                      <span
-                        style={{
-                          fontWeight: 700,
-                          fontSize: "10.5px",
-                          padding: "2px 6px",
-                          borderRadius: "4px",
-                          backgroundColor:
-                            act.decision === "REVOKE_SIGN_OUT"
-                              ? "rgba(217, 48, 37, 0.12)"
-                              : "rgba(19, 115, 51, 0.12)",
-                          color: act.decision === "REVOKE_SIGN_OUT" ? "#c5221f" : "#137333",
-                        }}
-                      >
-                        {act.decision}
-                      </span>
-                      <b style={{ color: "var(--dtg-text)" }}>{act.user_email}</b>
-                      <span style={{ color: "var(--dtg-text-secondary)" }}>{act.reason}</span>
-                    </div>
-                    <span style={{ color: "var(--dtg-text-secondary)", fontFamily: "monospace", fontSize: "11px" }}>
-                      {act.timestamp_iso ? new Date(act.timestamp_iso).toLocaleTimeString() : ""}
-                    </span>
-                  </div>
-                ))}
               </div>
             </div>
           )}
@@ -551,12 +779,163 @@ export const AdminConfig: React.FC = () => {
               {opsStatusMessage}
             </div>
           )}
+
+          {/* Live Session Enforcement & Audit-Only Log Viewer */}
+          <div
+            data-testid="admin-audit-log-table"
+            style={{
+              marginTop: "14px",
+              paddingTop: "12px",
+              borderTop: "1px dashed rgba(26, 115, 232, 0.25)",
+              fontSize: "11.5px",
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px", marginBottom: "8px" }}>
+              <div>
+                <div style={{ fontWeight: 700, color: "var(--dtg-text)", fontSize: "12.5px" }}>
+                  📋 Live Session Enforcement &amp; Audit-Only Log ({filteredActions.length} shown)
+                </div>
+                <div style={{ color: "var(--dtg-text-secondary)", fontSize: "11px" }}>
+                  When <b>Audit-Only (Dry-Run) Mode</b> is ON, unapproved device logins appear right here as <code>AUDIT_WOULD_SIGN_OUT</code> and in Google Cloud Logging (Logs Explorer).
+                </div>
+              </div>
+
+              <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                {(
+                  [
+                    { key: "ALL", label: `All (${allRecentActions.length})` },
+                    {
+                      key: "AUDIT_ONLY",
+                      label: `⚠️ Audit-Only (${allRecentActions.filter((a) => a.decision === "AUDIT_WOULD_SIGN_OUT").length})`,
+                    },
+                    {
+                      key: "REVOKED",
+                      label: `🚫 Signed Out (${allRecentActions.filter((a) => a.decision === "REVOKE_SIGN_OUT").length})`,
+                    },
+                    {
+                      key: "ALLOWED",
+                      label: `✅ Allowed (${allRecentActions.filter((a) => a.decision.startsWith("ALLOW") || a.decision.startsWith("SKIP")).length})`,
+                    },
+                  ] as const
+                ).map((tab) => (
+                  <button
+                    key={tab.key}
+                    type="button"
+                    onClick={() => setLogFilter(tab.key)}
+                    style={{
+                      fontSize: "11px",
+                      fontWeight: logFilter === tab.key ? 700 : 500,
+                      padding: "3px 8px",
+                      borderRadius: "999px",
+                      border: logFilter === tab.key ? "1px solid #1a73e8" : "1px solid var(--dtg-border)",
+                      backgroundColor: logFilter === tab.key ? "#e8f0fe" : "var(--dtg-surface)",
+                      color: logFilter === tab.key ? "#1967d2" : "var(--dtg-text-secondary)",
+                      cursor: "pointer",
+                    }}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {filteredActions.length === 0 ? (
+              <div
+                style={{
+                  padding: "10px 12px",
+                  borderRadius: "6px",
+                  backgroundColor: "var(--dtg-surface)",
+                  border: "1px solid var(--dtg-border-subtle)",
+                  color: "var(--dtg-text-secondary)",
+                }}
+              >
+                No session enforcement or audit events matching filter <b>{logFilter}</b> yet. Click <b>⚡ Run Live Login Sweep</b> above to evaluate current domain sessions.
+              </div>
+            ) : (
+              <div style={{ display: "grid", gap: "6px", maxHeight: "260px", overflowY: "auto" }}>
+                {filteredActions.slice(0, 25).map((act, idx) => {
+                  const isRevoke = act.decision === "REVOKE_SIGN_OUT";
+                  const isAudit = act.decision === "AUDIT_WOULD_SIGN_OUT";
+                  const badgeBg = isRevoke
+                    ? "rgba(217, 48, 37, 0.12)"
+                    : isAudit
+                    ? "rgba(227, 116, 0, 0.15)"
+                    : "rgba(19, 115, 51, 0.12)";
+                  const badgeColor = isRevoke ? "#c5221f" : isAudit ? "#b06000" : "#137333";
+
+                  return (
+                    <div
+                      key={idx}
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        gap: "8px",
+                        flexWrap: "wrap",
+                        padding: "7px 10px",
+                        borderRadius: "6px",
+                        backgroundColor: "var(--dtg-surface)",
+                        border: isAudit
+                          ? "1px solid rgba(227, 116, 0, 0.4)"
+                          : isRevoke
+                          ? "1px solid rgba(217, 48, 37, 0.3)"
+                          : "1px solid var(--dtg-border-subtle)",
+                      }}
+                    >
+                      <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                        <span
+                          style={{
+                            fontWeight: 700,
+                            fontSize: "10.5px",
+                            padding: "2px 6px",
+                            borderRadius: "4px",
+                            backgroundColor: badgeBg,
+                            color: badgeColor,
+                          }}
+                        >
+                          {isAudit ? "⚠️ AUDIT_WOULD_SIGN_OUT" : isRevoke ? "🚫 REVOKE_SIGN_OUT" : act.decision}
+                        </span>
+                        <b style={{ color: "var(--dtg-text)" }}>{act.user_email}</b>
+                        <span style={{ color: "var(--dtg-text-secondary)" }}>{act.reason}</span>
+                      </div>
+                      <span style={{ color: "var(--dtg-text-secondary)", fontFamily: "monospace", fontSize: "11px" }}>
+                        {act.timestamp_iso ? new Date(act.timestamp_iso).toLocaleTimeString() : ""}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Cloud Logging Query Helper for Audit-Only Mode */}
+            <div
+              style={{
+                marginTop: "10px",
+                padding: "8px 10px",
+                borderRadius: "6px",
+                backgroundColor: "rgba(26, 115, 232, 0.04)",
+                border: "1px solid rgba(26, 115, 232, 0.15)",
+                fontSize: "11px",
+                color: "var(--dtg-text-secondary)",
+              }}
+            >
+              <b>☁️ Google Cloud Logging (30-Day Retention):</b> Every <code>AUDIT_WOULD_SIGN_OUT</code> and <code>REVOKE_SIGN_OUT</code> event is also streamed as structured JSON to Cloud Run <code>stdout</code>. Query in <b>GCP Console &gt; Logs Explorer</b> with:{" "}
+              <code style={{ userSelect: "all", color: "var(--dtg-text)" }}>
+                resource.type=&quot;cloud_run_revision&quot; jsonPayload.component=&quot;devicetrustportal.session_guard&quot; jsonPayload.decision=&quot;AUDIT_WOULD_SIGN_OUT&quot;
+              </code>
+            </div>
+          </div>
         </section>
 
         <form onSubmit={handleSubmit} className="dtg-card">
-          <h2 style={{ margin: "0 0 6px 0", fontSize: "18px", fontWeight: 600, color: "var(--dtg-text)" }}>
-            {t.generalSecurityPolicies}
-          </h2>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "8px", marginBottom: "6px" }}>
+            <h2 style={{ margin: 0, fontSize: "18px", fontWeight: 600, color: "var(--dtg-text)" }}>
+              {t.generalSecurityPolicies}
+            </h2>
+            <span style={{ fontSize: "11.5px", color: "#137333", fontWeight: 600 }}>
+              ⚡ Toggle switches confirm &amp; auto-save immediately
+            </span>
+          </div>
           <p style={{ fontSize: "13px", color: "var(--dtg-text-secondary)", margin: "0 0 24px 0" }}>
             {t.generalSecurityPoliciesDesc}
           </p>
@@ -613,70 +992,60 @@ export const AdminConfig: React.FC = () => {
                   color: "var(--dtg-text)",
                 }}
               >
-                <b>New Installation Standby:</b> Both Session Management and Context-Aware Access monitoring are disabled by default so you can verify your device inventory first. Check one or both options below and click <b>Save Configurations</b> to activate enforcement.
+                <b>New Installation Standby:</b> Both Session Management and Context-Aware Access monitoring are disabled by default so you can verify your device inventory first. Flip either toggle switch below to confirm and auto-save enforcement.
               </div>
             )}
 
             <div style={{ display: "grid", gap: "14px" }}>
               {/* Toggle 1: Session Management for Education Fundamentals */}
-              <label
-                style={{
-                  display: "flex",
-                  alignItems: "flex-start",
-                  gap: "12px",
-                  padding: "12px 14px",
-                  borderRadius: "8px",
-                  border: sessionWatchEnabled ? "1.5px solid #1a73e8" : "1px solid var(--dtg-border)",
-                  backgroundColor: "var(--dtg-surface)",
-                  cursor: "pointer",
-                }}
-              >
-                <input
-                  type="checkbox"
-                  data-testid="toggle-session-watch"
-                  checked={sessionWatchEnabled}
-                  onChange={(e) => setSessionWatchEnabled(e.target.checked)}
-                  style={{ marginTop: "3px", width: "16px", height: "16px" }}
-                />
-                <div style={{ fontSize: "13px", lineHeight: 1.5 }}>
-                  <div style={{ fontWeight: 700, color: "var(--dtg-text)", marginBottom: "2px" }}>
+              <ToggleSwitch
+                testId="toggle-session-watch"
+                checked={sessionWatchEnabled}
+                disabled={saving}
+                activeColor="#1a73e8"
+                onToggle={(nextVal) =>
+                  requestToggleWithConfirmation({
+                    title: `${nextVal ? "Enable" : "Disable"} Session Management (Education Fundamentals)?`,
+                    summary: `Session Management (Education Fundamentals) turned ${nextVal ? "ON" : "OFF"}`,
+                    overrides: { sessionWatchEnabled: nextVal },
+                  })
+                }
+                label={
+                  <>
                     ⚡ Enable Session Management &amp; <code>users.signOut</code> Circuit Breaker (Education Fundamentals)
-                  </div>
-                  <div style={{ color: "var(--dtg-text-secondary)", fontSize: "12px" }}>
-                    <b>Disabled by default on new installs.</b> When enabled, enforces device trust without requiring Context-Aware Access licenses—or supplements CAA by terminating Google account sessions (<code>admin.directory.users.signOut</code> + OAuth token grant revocation) and auto-blocking unapproved personal devices (e.g. unapproved Mac/Windows laptops in <code>PENDING_APPROVAL</code> or re-authenticating <code>BLOCKED</code> devices) within seconds.
-                  </div>
-                </div>
-              </label>
+                  </>
+                }
+                description={
+                  <>
+                    <b>Disabled by default on new installs.</b> When toggled ON, enforces device trust without requiring Context-Aware Access licenses—or supplements CAA by terminating Google account sessions (<code>admin.directory.users.signOut</code> + OAuth token grant revocation) and auto-blocking unapproved personal devices (e.g. unapproved Mac/Windows laptops in <code>PENDING_APPROVAL</code> or re-authenticating <code>BLOCKED</code> devices) within seconds.
+                  </>
+                }
+              />
 
               {/* Toggle 2: CAA Access for Education Standard & Plus */}
-              <label
-                style={{
-                  display: "flex",
-                  alignItems: "flex-start",
-                  gap: "12px",
-                  padding: "12px 14px",
-                  borderRadius: "8px",
-                  border: caaEnforcementEnabled ? "1.5px solid #137333" : "1px solid var(--dtg-border)",
-                  backgroundColor: "var(--dtg-surface)",
-                  cursor: "pointer",
-                }}
-              >
-                <input
-                  type="checkbox"
-                  data-testid="toggle-caa-enforcement"
-                  checked={caaEnforcementEnabled}
-                  onChange={(e) => setCaaEnforcementEnabled(e.target.checked)}
-                  style={{ marginTop: "3px", width: "16px", height: "16px" }}
-                />
-                <div style={{ fontSize: "13px", lineHeight: 1.5 }}>
-                  <div style={{ fontWeight: 700, color: "var(--dtg-text)", marginBottom: "2px" }}>
+              <ToggleSwitch
+                testId="toggle-caa-enforcement"
+                checked={caaEnforcementEnabled}
+                disabled={saving}
+                activeColor="#137333"
+                onToggle={(nextVal) =>
+                  requestToggleWithConfirmation({
+                    title: `${nextVal ? "Enable" : "Disable"} Context-Aware Access Integration (Standard & Plus)?`,
+                    summary: `Context-Aware Access (CAA) Integration turned ${nextVal ? "ON" : "OFF"}`,
+                    overrides: { caaEnforcementEnabled: nextVal },
+                  })
+                }
+                label={
+                  <>
                     🛡️ Enable Context-Aware Access (CAA) Integration (Education Standard &amp; Plus)
-                  </div>
-                  <div style={{ color: "var(--dtg-text-secondary)", fontSize: "12px" }}>
+                  </>
+                }
+                description={
+                  <>
                     <b>Disabled by default on new installs.</b> Designed for Google Workspace for Education Standard, Education Plus, and Enterprise tiers. Pairs self-service Cloud Identity device approval with Google Admin Console Context-Aware Access CEL rules (<code>device.is_corp_owned_device == true || device.is_admin_approved_device == true</code>) to block Gmail, Drive, Docs, and Classroom on unapproved devices at the application edge.
-                  </div>
-                </div>
-              </label>
+                  </>
+                }
+              />
             </div>
 
             {/* Clear Architectural Explanation Box */}
@@ -706,129 +1075,149 @@ export const AdminConfig: React.FC = () => {
                   <b>Layer 2 — Sub-10s Cloud Identity <code>lastSyncTime</code> Polling (~2–10s):</b> Because Chrome Profile Reporting updates <code>DeviceUser.lastSyncTime</code> in ~1.7s on sign-in, the 1-minute Cloud Scheduler job runs 5 rapid 10-second sub-polls across both <code>PENDING_APPROVAL</code> and re-logged-in <code>BLOCKED</code> BYOD devices (plus Admin SDK login events) to boot unapproved sessions even if the user never opens the portal.
                 </li>
                 <li>
-                  <b>Enable Either or Both:</b> On new installs, both toggles start off. Enable <b>Session Management</b> for Fundamentals, <b>CAA Integration</b> for Standard/Plus edge blocking, or <b>Both</b> (as verified in live testing) for edge app blocking + immediate Google session termination.
+                  <b>Enable Either or Both:</b> On new installs, both toggles start OFF. Toggle ON <b>Session Management</b> for Fundamentals, <b>CAA Integration</b> for Standard/Plus edge blocking, or <b>Both</b> for edge app blocking + immediate Google session termination.
                 </li>
               </ul>
             </div>
 
-            {sessionWatchEnabled && (
-              <div
-                style={{
-                  marginTop: "16px",
-                  paddingTop: "16px",
-                  borderTop: "1px solid var(--dtg-border)",
-                  display: "grid",
-                  gap: "14px",
-                }}
-              >
-                <div style={{ fontWeight: 700, fontSize: "13px", color: "#1967d2", textTransform: "uppercase", letterSpacing: "0.03em" }}>
-                  Session Watch Rollout Scoping &amp; Onboarding Safeguards
-                </div>
-
-                <div>
-                  <label
-                    htmlFor="session-watch-target-ous"
-                    style={{ display: "block", fontWeight: 600, marginBottom: "4px", fontSize: "13px", color: "var(--dtg-text)" }}
-                  >
-                    Target Organizational Units (OUs) for Session Watch Rollout:
-                  </label>
-                  <input
-                    id="session-watch-target-ous"
-                    type="text"
-                    placeholder="/Students, /Staff/Pilot (leave blank to enforce across all OUs)"
-                    value={sessionWatchTargetOusInput}
-                    onChange={(e) => setSessionWatchTargetOusInput(e.target.value)}
-                    className="dtg-input"
-                  />
-                  <span style={{ fontSize: "11.5px", color: "var(--dtg-text-secondary)", display: "block", marginTop: "4px" }}>
-                    Hierarchical prefix match (e.g. <code>/Students</code> includes <code>/Students/HighSchool</code>). Leave blank for all domain OUs.
-                  </span>
-                </div>
-
-                <div>
-                  <label
-                    htmlFor="session-watch-target-groups"
-                    style={{ display: "block", fontWeight: 600, marginBottom: "4px", fontSize: "13px", color: "var(--dtg-text)" }}
-                  >
-                    Target Google Groups for Session Watch Rollout:
-                  </label>
-                  <input
-                    id="session-watch-target-groups"
-                    type="text"
-                    placeholder="session-watch-pilot@gwfe.org, byod-enforced@gwfe.org (leave blank for all)"
-                    value={sessionWatchTargetGroupsInput}
-                    onChange={(e) => setSessionWatchTargetGroupsInput(e.target.value)}
-                    className="dtg-input"
-                  />
-                  <span style={{ fontSize: "11.5px", color: "var(--dtg-text-secondary)", display: "block", marginTop: "4px" }}>
-                    Comma-separated Google Group emails. If both OUs and Groups are specified, users matching either are in scope.
-                  </span>
-                </div>
-
-                <div>
-                  <label
-                    htmlFor="session-watch-onboarding-grace"
-                    style={{ display: "block", fontWeight: 600, marginBottom: "4px", fontSize: "13px", color: "var(--dtg-text)" }}
-                  >
-                    Personal Device Onboarding Grace Pass Duration (Minutes):
-                  </label>
-                  <input
-                    id="session-watch-onboarding-grace"
-                    type="number"
-                    min={5}
-                    max={120}
-                    value={sessionWatchOnboardingGraceMinutes}
-                    onChange={(e) => setSessionWatchOnboardingGraceMinutes(Number(e.target.value))}
-                    className="dtg-input"
-                  />
-                  <span style={{ fontSize: "11.5px", color: "var(--dtg-text-secondary)", display: "block", marginTop: "4px" }}>
-                    Duration of the temporary grace pass when a user clicks <b>+ Add Personal Device</b> or generates a Trust Chaining pairing code.
-                  </span>
-                </div>
-
-                <label
-                  style={{
-                    display: "flex",
-                    alignItems: "flex-start",
-                    gap: "10px",
-                    fontSize: "13px",
-                    color: "var(--dtg-text)",
-                    cursor: "pointer",
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={sessionWatchExemptAdmins}
-                    onChange={(e) => setSessionWatchExemptAdmins(e.target.checked)}
-                    style={{ marginTop: "3px" }}
-                  />
-                  <span>
-                    <b>Admin Safe-Harbor Exemption (Recommended):</b> Exempt Workspace Super Admins and Portal Admins from automated <code>users.signOut</code> sweeps to prevent administrative lockout.
-                  </span>
-                </label>
-
-                <label
-                  style={{
-                    display: "flex",
-                    alignItems: "flex-start",
-                    gap: "10px",
-                    fontSize: "13px",
-                    color: "var(--dtg-text)",
-                    cursor: "pointer",
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={sessionWatchDryRun}
-                    onChange={(e) => setSessionWatchDryRun(e.target.checked)}
-                    style={{ marginTop: "3px" }}
-                  />
-                  <span>
-                    <b>Audit-Only (Dry-Run) Mode:</b> Evaluate all login events and record <code>AUDIT_WOULD_SIGN_OUT</code> in telemetry without calling <code>users.signOut</code>.
-                  </span>
-                </label>
+            <div
+              style={{
+                marginTop: "16px",
+                paddingTop: "16px",
+                borderTop: "1px solid var(--dtg-border)",
+                display: "grid",
+                gap: "14px",
+              }}
+            >
+              <div style={{ fontWeight: 700, fontSize: "13px", color: "#1967d2", textTransform: "uppercase", letterSpacing: "0.03em" }}>
+                Session Watch Rollout Scoping &amp; Onboarding Safeguards
               </div>
-            )}
+
+              {/* Toggle 3: Audit-Only (Dry-Run) Mode */}
+              <ToggleSwitch
+                testId="toggle-dry-run"
+                checked={sessionWatchDryRun}
+                disabled={saving}
+                activeColor="#e37400"
+                onToggle={(nextVal) =>
+                  requestToggleWithConfirmation({
+                    title: `${nextVal ? "Enable" : "Disable"} Audit-Only (Dry-Run) Mode?`,
+                    summary: `Audit-Only (Dry-Run) Mode turned ${nextVal ? "ON (no users will be signed out)" : "OFF (live users.signOut enforcement active)"}`,
+                    overrides: { sessionWatchDryRun: nextVal },
+                  })
+                }
+                label={
+                  <>
+                    ⚠️ Audit-Only (Dry-Run) Mode (<code>AUDIT_WOULD_SIGN_OUT</code>)
+                  </>
+                }
+                description={
+                  <>
+                    Evaluate all login events and Cloud Identity device syncs, recording <code>AUDIT_WOULD_SIGN_OUT</code> in the <b>Live Session Enforcement &amp; Audit-Only Log</b> above and in <b>Google Cloud Logging</b> without calling <code>users.signOut</code> or blocking devices.
+                  </>
+                }
+              />
+
+              {/* Toggle 4: Admin Safe-Harbor Exemption */}
+              <ToggleSwitch
+                testId="toggle-exempt-admins"
+                checked={sessionWatchExemptAdmins}
+                disabled={saving}
+                activeColor="#1a73e8"
+                onToggle={(nextVal) =>
+                  requestToggleWithConfirmation({
+                    title: `${nextVal ? "Enable" : "Disable"} Admin Safe-Harbor Exemption?`,
+                    summary: `Admin Safe-Harbor Exemption turned ${nextVal ? "ON" : "OFF"}`,
+                    overrides: { sessionWatchExemptAdmins: nextVal },
+                  })
+                }
+                label={<>🛡️ Admin Safe-Harbor Exemption</>}
+                description={
+                  <>
+                    Exempt Workspace Super Admins and Portal Admins from automated <code>users.signOut</code> sweeps to prevent administrative lockout. (Leave <b>OFF</b> when testing unapproved-device sign-out with your own admin account).
+                  </>
+                }
+              />
+
+              <div>
+                <label
+                  htmlFor="session-watch-target-ous"
+                  style={{ display: "block", fontWeight: 600, marginBottom: "4px", fontSize: "13px", color: "var(--dtg-text)" }}
+                >
+                  Target Organizational Units (OUs) for Session Watch Rollout:
+                </label>
+                <input
+                  id="session-watch-target-ous"
+                  type="text"
+                  placeholder="/Students, /Staff/Pilot (leave blank to enforce across all OUs)"
+                  value={sessionWatchTargetOusInput}
+                  onChange={(e) => setSessionWatchTargetOusInput(e.target.value)}
+                  onBlur={() =>
+                    persistConfiguration(
+                      { sessionWatchTargetOusInput },
+                      `Updated Target OUs (${sessionWatchTargetOusInput || "All OUs"})`
+                    )
+                  }
+                  className="dtg-input"
+                />
+                <span style={{ fontSize: "11.5px", color: "var(--dtg-text-secondary)", display: "block", marginTop: "4px" }}>
+                  Hierarchical prefix match (e.g. <code>/Students</code> includes <code>/Students/HighSchool</code>). Auto-saves when you leave the field.
+                </span>
+              </div>
+
+              <div>
+                <label
+                  htmlFor="session-watch-target-groups"
+                  style={{ display: "block", fontWeight: 600, marginBottom: "4px", fontSize: "13px", color: "var(--dtg-text)" }}
+                >
+                  Target Google Groups for Session Watch Rollout:
+                </label>
+                <input
+                  id="session-watch-target-groups"
+                  type="text"
+                  placeholder="session-watch-pilot@gwfe.org, byod-enforced@gwfe.org (leave blank for all)"
+                  value={sessionWatchTargetGroupsInput}
+                  onChange={(e) => setSessionWatchTargetGroupsInput(e.target.value)}
+                  onBlur={() =>
+                    persistConfiguration(
+                      { sessionWatchTargetGroupsInput },
+                      `Updated Target Groups (${sessionWatchTargetGroupsInput || "All Groups"})`
+                    )
+                  }
+                  className="dtg-input"
+                />
+                <span style={{ fontSize: "11.5px", color: "var(--dtg-text-secondary)", display: "block", marginTop: "4px" }}>
+                  Comma-separated Google Group emails. Auto-saves when you leave the field.
+                </span>
+              </div>
+
+              <div>
+                <label
+                  htmlFor="session-watch-onboarding-grace"
+                  style={{ display: "block", fontWeight: 600, marginBottom: "4px", fontSize: "13px", color: "var(--dtg-text)" }}
+                >
+                  Personal Device Onboarding Grace Pass Duration (Minutes):
+                </label>
+                <input
+                  id="session-watch-onboarding-grace"
+                  type="number"
+                  min={5}
+                  max={120}
+                  value={sessionWatchOnboardingGraceMinutes}
+                  onChange={(e) => setSessionWatchOnboardingGraceMinutes(Number(e.target.value))}
+                  onBlur={() =>
+                    persistConfiguration(
+                      { sessionWatchOnboardingGraceMinutes },
+                      `Updated Onboarding Grace Pass to ${sessionWatchOnboardingGraceMinutes}m`
+                    )
+                  }
+                  className="dtg-input"
+                />
+                <span style={{ fontSize: "11.5px", color: "var(--dtg-text-secondary)", display: "block", marginTop: "4px" }}>
+                  Duration of the temporary grace pass when a user clicks <b>+ Add Personal Device</b> or generates a Trust Chaining pairing code.
+                </span>
+              </div>
+            </div>
           </div>
 
           <div style={{ marginBottom: "22px" }}>
@@ -844,6 +1233,9 @@ export const AdminConfig: React.FC = () => {
               min={1}
               value={threshold}
               onChange={(e) => setThreshold(Number(e.target.value))}
+              onBlur={() =>
+                persistConfiguration({ threshold }, `Updated Inactivity Threshold to ${threshold} days`)
+              }
               className="dtg-input"
             />
             <span style={{ fontSize: "12px", color: "var(--dtg-text-secondary)", display: "block", marginTop: "5px" }}>
@@ -864,6 +1256,9 @@ export const AdminConfig: React.FC = () => {
               placeholder="1234567890-abcdefg.apps.googleusercontent.com"
               value={googleClientId}
               onChange={(e) => setGoogleClientId(e.target.value)}
+              onBlur={() =>
+                persistConfiguration({ googleClientId }, "Updated Google OAuth 2.0 Web Client ID")
+              }
               className="dtg-input"
             />
             <span style={{ fontSize: "12px", color: "var(--dtg-text-secondary)", display: "block", marginTop: "5px" }}>
@@ -881,7 +1276,11 @@ export const AdminConfig: React.FC = () => {
             <select
               id="default-locale-select"
               value={defaultLocale}
-              onChange={(e) => setDefaultLocale(e.target.value)}
+              onChange={(e) => {
+                const nextLoc = e.target.value;
+                setDefaultLocale(nextLoc);
+                persistConfiguration({ defaultLocale: nextLoc }, `Updated Default Portal Language to ${nextLoc}`);
+              }}
               className="dtg-select"
               style={{ width: "100%", padding: "10px 12px", fontSize: "14px" }}
             >
@@ -1000,6 +1399,47 @@ export const AdminConfig: React.FC = () => {
           </button>
         </form>
       </main>
+
+      {/* Confirmation Modal for Toggle Switch Auto-Save */}
+      {pendingConfirm && (
+        <div
+          className="dtg-modal-backdrop"
+          role="dialog"
+          aria-modal="true"
+          data-testid="confirm-toggle-modal"
+          aria-labelledby="confirm-toggle-modal-title"
+        >
+          <div className="dtg-modal" style={{ maxWidth: "460px" }}>
+            <h3
+              id="confirm-toggle-modal-title"
+              style={{ margin: "0 0 10px 0", fontSize: "17px", fontWeight: 700, color: "var(--dtg-text)" }}
+            >
+              {pendingConfirm.title}
+            </h3>
+            <p style={{ fontSize: "13px", color: "var(--dtg-text-secondary)", margin: "0 0 18px 0", lineHeight: 1.55 }}>
+              <b>Change Summary:</b> {pendingConfirm.summary}.<br />
+              Clicking <b>Confirm &amp; Auto-Save</b> will immediately persist this configuration to Secret Manager and apply it across your domain.
+            </p>
+            <div className="dtg-modal-actions">
+              <button
+                type="button"
+                onClick={() => setPendingConfirm(null)}
+                className="dtg-btn dtg-btn-neutral"
+              >
+                {t.cancelAction}
+              </button>
+              <button
+                type="button"
+                data-testid="confirm-autosave-btn"
+                onClick={handleConfirmPendingToggle}
+                className="dtg-btn dtg-btn-primary"
+              >
+                ✓ Confirm &amp; Auto-Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Add Authorized Administrator Modal Overlay */}
       {showAddAdminModal && (
