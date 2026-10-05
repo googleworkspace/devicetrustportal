@@ -34,6 +34,7 @@ vi.mock("../services/api", () => ({
   syncSessionWatchInventory: vi.fn(),
   attestBrowserSession: vi.fn(),
   startOnboardingLease: vi.fn(),
+  verifySessionStatus: vi.fn(),
   runLiveLoginSweep: vi.fn(),
 }));
 

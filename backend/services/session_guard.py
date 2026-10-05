@@ -103,8 +103,8 @@ class SessionGuardService:
         self,
         sqlite_path: str = ":memory:",
         attestation_ttl_sec: int = 14400,  # 4 hours per school block
-        grace_window_sec: int = 45,  # Wait up to 45s for extension heartbeat
-        signout_cooldown_sec: int = 300,  # Prevent duplicate signOut loops
+        grace_window_sec: int = 15,  # Wait up to 15s for extension heartbeat
+        signout_cooldown_sec: int = 300,  # Cooldown for duplicate events with older timestamps
         campus_egress_ips: Optional[Set[str]] = None,
         signout_callback: Optional[Callable[[str], bool]] = None,
     ) -> None:
@@ -125,8 +125,12 @@ class SessionGuardService:
         self._onboarding_lease_reasons: Dict[str, str] = {}
         # Active unapproved BYOD devices indexed by lowercase user_email -> {device_user_name -> metadata}
         self._unapproved_devices: Dict[str, Dict[str, Dict[str, Any]]] = {}
-        # Recent signOut timestamps indexed by user_email to avoid API storms
+        # Recent signOut timestamps indexed by user_email
         self._recent_signouts: Dict[str, float] = {}
+        # Enforced Cloud Identity device sync epochs indexed by device_user_name
+        self._enforced_device_syncs: Dict[str, float] = {}
+        # Enforced event IDs so the exact same event_id is never fired twice
+        self._enforced_event_ids: Set[str] = set()
 
         # Telemetry counters for scale/quota verification
         self.metrics: Dict[str, int] = {
@@ -171,6 +175,125 @@ class SessionGuardService:
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_decision ON session_enforcement_log(decision)"
             )
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS enforced_device_syncs (
+                    device_user_name TEXT PRIMARY KEY,
+                    user_email TEXT NOT NULL,
+                    last_enforced_sync_epoch REAL NOT NULL,
+                    updated_at_epoch REAL NOT NULL
+                )
+                """
+            )
+            # Hydrate in-memory state from SQLite on startup
+            cur = self._conn.cursor()
+            cur.execute("SELECT device_user_name, last_enforced_sync_epoch FROM enforced_device_syncs")
+            for du_name, sync_ep in cur.fetchall():
+                if du_name:
+                    self._enforced_device_syncs[str(du_name)] = float(sync_ep or 0.0)
+            cur.execute(
+                "SELECT event_id, user_email, timestamp_iso FROM session_enforcement_log WHERE decision = 'REVOKE_SIGN_OUT'"
+            )
+            for ev_id, u_email, ts_iso in cur.fetchall():
+                if ev_id:
+                    self._enforced_event_ids.add(str(ev_id))
+                if u_email and ts_iso:
+                    try:
+                        ep = datetime.datetime.fromisoformat(str(ts_iso).replace("Z", "+00:00")).timestamp()
+                        norm_u = str(u_email).strip().lower()
+                        if ep > self._recent_signouts.get(norm_u, 0.0):
+                            self._recent_signouts[norm_u] = ep
+                    except Exception:
+                        pass
+
+    def is_device_sync_already_enforced(self, device_user_name: str, sync_epoch: float) -> bool:
+        """Returns True if this device_user_name has already been enforced at or after sync_epoch."""
+        du_key = (device_user_name or "").strip()
+        if not du_key:
+            return False
+        with self._lock:
+            last_ep = self._enforced_device_syncs.get(du_key, 0.0)
+            return last_ep > 0.0 and sync_epoch <= (last_ep + 0.001)
+
+    def mark_device_sync_enforced(
+        self,
+        device_user_name: str,
+        user_email: str,
+        sync_epoch: float,
+        now_epoch: Optional[float] = None,
+    ) -> None:
+        """Records that a Cloud Identity device sync timestamp has been enforced."""
+        du_key = (device_user_name or "").strip()
+        email_key = (user_email or "").strip().lower()
+        if not du_key:
+            return
+        now = now_epoch if now_epoch is not None else time.time()
+        with self._lock:
+            prev = self._enforced_device_syncs.get(du_key, 0.0)
+            effective_ep = max(prev, float(sync_epoch))
+            self._enforced_device_syncs[du_key] = effective_ep
+            with self._conn:
+                self._conn.execute(
+                    """
+                    INSERT INTO enforced_device_syncs (device_user_name, user_email, last_enforced_sync_epoch, updated_at_epoch)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(device_user_name) DO UPDATE SET
+                        user_email = excluded.user_email,
+                        last_enforced_sync_epoch = MAX(enforced_device_syncs.last_enforced_sync_epoch, excluded.last_enforced_sync_epoch),
+                        updated_at_epoch = excluded.updated_at_epoch
+                    """,
+                    (du_key, email_key, effective_ep, now),
+                )
+
+    def get_last_signout_epoch(self, user_email: str) -> float:
+        """Returns the most recent Unix epoch when `users.signOut` was executed for `user_email`."""
+        email_key = (user_email or "").strip().lower()
+        with self._lock:
+            return self._recent_signouts.get(email_key, 0.0)
+
+    def execute_immediate_signout(
+        self,
+        user_email: str,
+        event_id: str,
+        reason: str,
+        ip_address: str = "portal-inline",
+        dry_run: bool = False,
+        now_epoch: Optional[float] = None,
+    ) -> EnforcementAction:
+        """Immediately executes `users.signOut` for an unapproved browser/device session and logs the action."""
+        now = now_epoch if now_epoch is not None else time.time()
+        now_iso = datetime.datetime.fromtimestamp(now, tz=datetime.timezone.utc).isoformat()
+        email_key = (user_email or "").strip().lower()
+        with self._lock:
+            self.metrics["login_events_evaluated"] += 1
+            if dry_run:
+                self.metrics["audit_would_signout"] += 1
+                action = EnforcementAction(
+                    event_id=event_id,
+                    user_email=email_key,
+                    ip_address=ip_address,
+                    decision="AUDIT_WOULD_SIGN_OUT",
+                    reason=f"[Audit Dry-Run] {reason}",
+                    matched_serial=None,
+                    detection_latency_sec=0.1,
+                    timestamp_iso=now_iso,
+                )
+            else:
+                self._recent_signouts[email_key] = now
+                self._enforced_event_ids.add(event_id)
+                action = EnforcementAction(
+                    event_id=event_id,
+                    user_email=email_key,
+                    ip_address=ip_address,
+                    decision="REVOKE_SIGN_OUT",
+                    reason=reason,
+                    matched_serial=None,
+                    detection_latency_sec=0.1,
+                    timestamp_iso=now_iso,
+                )
+                self._execute_batched_signouts([action])
+            self._persist_actions([action])
+            return action
 
     def load_device_inventory(self, devices: Iterable[DeviceRecord]) -> int:
         """Populates the O(1) in-memory inventory map from ChromeOS + Cloud Identity sync."""
@@ -459,6 +582,8 @@ class SessionGuardService:
         pending_signouts: List[EnforcementAction] = []
 
         for ev in events:
+            if ev.event_id in self._enforced_event_ids:
+                continue
             self.metrics["login_events_evaluated"] += 1
             email_key = ev.user_email.strip().lower()
             age_sec = max(0.0, now - ev.timestamp_epoch)
@@ -541,9 +666,15 @@ class SessionGuardService:
                     self.metrics["deferred_grace_window"] += 1
                     continue
 
-            # 6. Check signOut cooldown so we don't repeatedly call signOut for the same event
+            # 6. Check signOut cooldown so we don't repeatedly call signOut for older events that preceded last_signout.
+            # However, if a brand-new login (`ev.timestamp_epoch > last_signout`) or a fresh Cloud Identity
+            # unapproved/blocked device sync occurred AFTER the previous signOut, enforce immediately!
             last_signout = self._recent_signouts.get(email_key, 0.0)
-            if (now - last_signout) < self.signout_cooldown_sec:
+            is_new_post_signout_login = (
+                ev.login_type == "cloud_identity_device_sync"
+                or ev.timestamp_epoch > (last_signout + 1.0)
+            )
+            if not is_new_post_signout_login and (now - last_signout) < self.signout_cooldown_sec:
                 continue
 
             unapproved_desc = (
@@ -557,6 +688,7 @@ class SessionGuardService:
             # 7. Audit Dry-Run Mode vs. Active Circuit-Breaker Enforcement
             if dry_run:
                 self.metrics["audit_would_signout"] += 1
+                self._enforced_event_ids.add(ev.event_id)
                 actions.append(
                     EnforcementAction(
                         event_id=ev.event_id,
@@ -573,6 +705,7 @@ class SessionGuardService:
 
             # 8. Unattested / unapproved device session detected -> Queue `users.signOut`
             self._recent_signouts[email_key] = now
+            self._enforced_event_ids.add(ev.event_id)
             action = EnforcementAction(
                 event_id=ev.event_id,
                 user_email=email_key,

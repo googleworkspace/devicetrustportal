@@ -39,7 +39,23 @@ def get_current_user_email(
             id_info = id_token.verify_oauth2_token(token, requests.Request(), audience=audience)
             email = id_info.get("email")
             if email:
+                try:
+                    from backend.routes.session_watch import session_guard
+
+                    token_iat = float(id_info.get("iat") or 0.0)
+                    last_signout = session_guard.get_last_signout_epoch(email)
+                    if token_iat > 0.0 and last_signout > 0.0 and token_iat <= (last_signout + 2.0):
+                        raise HTTPException(
+                            status_code=401,
+                            detail="Session invalidated by Device Trust Session Watch (users.signOut). Please sign in from an approved device.",
+                        )
+                except HTTPException:
+                    raise
+                except Exception:
+                    pass
                 return email
+        except HTTPException:
+            raise
         except Exception as e:
             print(f"Google ID token validation failed: {e}")
 

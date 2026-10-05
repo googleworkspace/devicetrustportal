@@ -359,19 +359,20 @@ class DirectoryService:
         import datetime
 
         with self._lock:
-            creds = service_account.Credentials.from_service_account_file(
-                self.key_path,
-                scopes=["https://www.googleapis.com/auth/admin.reports.audit.readonly"],
-                subject=self.admin_email,
-            )
-            reports_service = build("admin", "reports_v1", credentials=creds)
+            if not getattr(self, "_reports_service", None):
+                creds = service_account.Credentials.from_service_account_file(
+                    self.key_path,
+                    scopes=["https://www.googleapis.com/auth/admin.reports.audit.readonly"],
+                    subject=self.admin_email,
+                )
+                self._reports_service = build("admin", "reports_v1", credentials=creds)
             start_dt = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(
                 minutes=max(1, lookback_minutes)
             )
             start_time_iso = start_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
             resp = (
-                reports_service.activities()
+                self._reports_service.activities()
                 .list(
                     userKey="all",
                     applicationName="login",
@@ -438,13 +439,25 @@ class DirectoryService:
             )
 
         with self._lock:
-            creds = service_account.Credentials.from_service_account_file(
-                self.key_path,
-                scopes=["https://www.googleapis.com/auth/admin.directory.user.security"],
-                subject=self.admin_email,
-            )
-            security_dir_service = build("admin", "directory_v1", credentials=creds)
-            security_dir_service.users().signOut(userKey=target_email).execute()
+            if not getattr(self, "_security_dir_service", None):
+                creds = service_account.Credentials.from_service_account_file(
+                    self.key_path,
+                    scopes=["https://www.googleapis.com/auth/admin.directory.user.security"],
+                    subject=self.admin_email,
+                )
+                self._security_dir_service = build("admin", "directory_v1", credentials=creds)
+            self._security_dir_service.users().signOut(userKey=target_email).execute()
+            # Also revoke OAuth 2.0 token grant for the portal client ID if configured
+            try:
+                from backend.services.config_service import config_service
+
+                cfg = config_service.get_tenant_config()
+                if cfg and getattr(cfg, "google_client_id", None):
+                    self._security_dir_service.tokens().delete(
+                        userKey=target_email, clientId=cfg.google_client_id
+                    ).execute()
+            except Exception:
+                pass
         print(
             f"WARNING [directory_service.py]: Executed users.signOut circuit breaker for '{target_email}'."
         )

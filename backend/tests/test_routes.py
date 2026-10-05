@@ -2012,3 +2012,83 @@ def test_session_watch_and_caa_disabled_by_default_and_cloud_identity_pending_by
         assert "devices/mac-stale-virtual/deviceUsers/du-stale" in blocked_names
 
 
+def test_relogin_on_already_blocked_mac_device_triggers_immediate_signout_and_session_status_401():
+    import time
+    from datetime import datetime, timezone
+    from backend.routes.session_watch import session_guard
+
+    session_guard._recent_signouts.clear()
+    session_guard._enforced_device_syncs.clear()
+    session_guard._enforced_event_ids.clear()
+    session_guard._unapproved_devices.clear()
+
+    # Simulate an already-BLOCKED Mac whose lastSyncTime just updated 2 seconds ago when user logged back in
+    fresh_sync_iso = datetime.fromtimestamp(time.time() - 2.0, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+
+    mock_ci = MagicMock()
+    mock_devices_res = MagicMock()
+    mock_du_res = MagicMock()
+    mock_ci.devices.return_value = mock_devices_res
+    mock_devices_res.deviceUsers.return_value = mock_du_res
+
+    mock_devices_res.list.return_value.execute.return_value = {
+        "devices": [
+            {
+                "name": "devices/mac-blocked",
+                "deviceType": "MAC_OS",
+                "model": "MacBook Pro",
+                "serialNumber": "C02F30BV0KPF",
+                "ownerType": "BYOD",
+                "lastSyncTime": fresh_sync_iso,
+            }
+        ]
+    }
+    mock_du_res.list.return_value.execute.return_value = {
+        "deviceUsers": [
+            {
+                "name": "devices/mac-blocked/deviceUsers/du-blocked",
+                "userEmail": "claycodes@gwfe.org",
+                "managementState": "BLOCKED",
+                "lastSyncTime": fresh_sync_iso,
+            }
+        ]
+    }
+
+    with patch("backend.routes.session_watch.cloud_identity_service.service", mock_ci), \
+         patch("backend.routes.devices.cloud_identity_service.service", mock_ci), \
+         patch("backend.routes.session_watch.cloud_identity_service.revoke_device_user", return_value=True), \
+         patch("backend.routes.session_watch.directory_service.get_user_chromeos_devices", return_value=[]), \
+         patch("backend.routes.session_watch.directory_service.list_recent_login_events", return_value=[]), \
+         patch("backend.routes.session_watch.directory_service.is_user_in_session_watch_scope", return_value=(True, "IN_SCOPE")), \
+         patch("backend.routes.session_watch.directory_service.sign_out_user", return_value=True) as mock_sign_out:
+        sweep_resp = client.post("/api/session-watch/live-sweep", json={"lookback_minutes": 60, "force": True})
+        assert sweep_resp.status_code == 200
+        res = sweep_resp.json()
+        assert res["unapproved_cloud_identity_byod_events"] == 1
+        assert res["revoked_count"] == 1
+        mock_sign_out.assert_called_once_with("claycodes@gwfe.org")
+
+        # Subsequent sweep with the exact same lastSyncTime does NOT re-trigger signout
+        mock_sign_out.reset_mock()
+        sweep_resp_2 = client.post("/api/session-watch/live-sweep", json={"lookback_minutes": 60, "force": True})
+        assert sweep_resp_2.status_code == 200
+        assert sweep_resp_2.json()["revoked_count"] == 0
+        mock_sign_out.assert_not_called()
+
+        # Verify inline GET /api/session-watch/session-status from an unapproved Mac User-Agent returns 401 and signs out
+        app.dependency_overrides[get_current_user_email] = lambda: "claycodes@gwfe.org"
+        with patch("backend.services.config_service.ConfigService.get_tenant_config") as mock_cfg:
+            mock_cfg.return_value = TenantConfig(
+                customer_id="customers/my_customer",
+                session_watch_enabled=True,
+                enforcement_mode="BOTH",
+            )
+            status_resp = client.get(
+                "/api/session-watch/session-status",
+                headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"},
+            )
+            assert status_resp.status_code == 401
+            mock_sign_out.assert_called_once_with("claycodes@gwfe.org")
+
+
+

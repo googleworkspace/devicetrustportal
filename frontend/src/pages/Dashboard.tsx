@@ -27,6 +27,7 @@ import {
   syncSessionWatchInventory,
   attestBrowserSession,
   startOnboardingLease,
+  verifySessionStatus,
   runLiveLoginSweep,
   DeviceUserItem,
   SessionWatchMetricsResponse,
@@ -281,6 +282,21 @@ export const Dashboard: React.FC = () => {
       setIsAdmin(false);
     }
   }, [userEmail, authToken, loadDevices, loadSessionWatchStatus]);
+
+  useEffect(() => {
+    if (!userEmail || !sessionWatchEnabled || typeof verifySessionStatus !== "function") {
+      return;
+    }
+    const checkStatus = () => {
+      const p = verifySessionStatus();
+      if (p && typeof p.catch === "function") {
+        p.catch(() => {});
+      }
+    };
+    checkStatus();
+    const intervalId = setInterval(checkStatus, 8000);
+    return () => clearInterval(intervalId);
+  }, [userEmail, authToken, sessionWatchEnabled]);
 
   const handleLoginSuccess = (email: string, token: string) => {
     setUserEmail(email);

@@ -363,6 +363,18 @@ export const startOnboardingLease = async (
   return response.json();
 };
 
+export const verifySessionStatus = async (): Promise<{
+  status: string;
+  user_email: string;
+  browser_platform: string;
+  session_watch_enabled: boolean;
+}> => {
+  const response = await fetchWithAuth(`${API_BASE_URL}/api/session-watch/session-status`, {
+    headers: getHeaders(),
+  });
+  return response.json();
+};
+
 export const runLiveLoginSweep = async (
   lookbackMinutes: number = 60,
   force: boolean = true
@@ -389,3 +401,4 @@ export const runLiveLoginSweep = async (
   });
   return response.json();
 };
+
