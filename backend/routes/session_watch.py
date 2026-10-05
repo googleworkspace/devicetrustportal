@@ -297,7 +297,8 @@ async def verify_active_session_status(
         return {"status": "OK", "session_watch_enabled": True, "exempt": True, "reason": scope_reason}
 
     ua = (request.headers.get("user-agent") or "").lower()
-    is_cros = "cros" in ua
+    sec_ch_platform = (request.headers.get("sec-ch-ua-platform") or "").lower()
+    is_cros = "cros" in ua or "chrome os" in sec_ch_platform or "chromeos" in sec_ch_platform
     if is_cros:
         return {"status": "OK", "session_watch_enabled": True, "platform": "CHROME_OS"}
 
@@ -314,13 +315,34 @@ async def verify_active_session_status(
     if os_family and cloud_identity_service.service:
         cid = normalize_customer_id(config.customer_id or "customers/my_customer")
         try:
-            from backend.routes.devices import crawl_devices_for_user
+            from backend.routes.devices import crawl_devices_for_user, sync_time_sort_key
 
+            now = time.time()
             user_items, _ = crawl_devices_for_user(
                 customer_id=cid,
                 target_email=norm_user,
                 query_filter=f"email:{norm_user}",
             )
+
+            def _parse_item_sync_epoch(sync_str: str) -> float:
+                ts = sync_time_sort_key(sync_str)
+                return ts if ts > 0 else 0.0
+
+            # If an APPROVED ChromeOS or Company device synced within the last 120s, the user is on
+            # their approved Chromebook (e.g. using Chrome DevTools Mobile Emulation) — do not sign out.
+            recent_approved_cros_sync = any(
+                (it.owner_type == "COMPANY" or "CHROME" in (it.device_type or "").upper())
+                and it.approval_state == "APPROVED"
+                and (now - _parse_item_sync_epoch(it.last_sync_time)) <= 120.0
+                for it in user_items
+            )
+            if recent_approved_cros_sync:
+                return {
+                    "status": "OK",
+                    "session_watch_enabled": True,
+                    "platform": "CHROME_OS_DEVTOOLS_OR_RECENT_SYNC",
+                }
+
             matching_os_items = [
                 it
                 for it in user_items
@@ -328,29 +350,44 @@ async def verify_active_session_status(
                 or os_family in (it.os_version or "").upper()
             ]
             has_approved_matching_os = any(
-                it.approval_state == "APPROVED" and it.serial_number and it.serial_number != "N/A"
-                for it in matching_os_items
-            )
-            has_pending_matching_os = any(
-                it.approval_state == "PENDING_APPROVAL" for it in matching_os_items
+                it.approval_state == "APPROVED" for it in matching_os_items
             )
 
-            if not has_approved_matching_os or has_pending_matching_os:
+            # Identify if there is a recently-synced (within 15m) unapproved device for this OS
+            active_unapproved_items = []
+            for it in matching_os_items:
+                if it.owner_type == "COMPANY" or it.approval_state == "APPROVED":
+                    continue
+                sync_ep = _parse_item_sync_epoch(it.last_sync_time)
+                age_sec = (now - sync_ep) if sync_ep > 0 else 999999.0
+                if it.approval_state == "PENDING_APPROVAL" and age_sec <= 900.0:
+                    active_unapproved_items.append((it, sync_ep))
+                elif (
+                    not has_approved_matching_os
+                    and it.approval_state in ("BLOCKED", "UNAPPROVED")
+                    and age_sec <= 900.0
+                ):
+                    active_unapproved_items.append((it, sync_ep))
+
+            if active_unapproved_items:
                 is_dry_run = getattr(config, "session_watch_dry_run", False)
-                if not is_dry_run:
-                    for it in matching_os_items:
-                        if it.owner_type != "COMPANY" and it.approval_state == "PENDING_APPROVAL":
-                            try:
-                                cloud_identity_service.revoke_device_user(
-                                    device_user_name=it.device_user_name,
-                                    customer_id=cid,
-                                    action="BLOCK",
-                                )
-                            except Exception:
-                                pass
+                for it, sync_ep in active_unapproved_items:
+                    if not is_dry_run and it.owner_type != "COMPANY" and it.approval_state == "PENDING_APPROVAL":
+                        try:
+                            cloud_identity_service.revoke_device_user(
+                                device_user_name=it.device_user_name,
+                                customer_id=cid,
+                                action="BLOCK",
+                            )
+                        except Exception:
+                            pass
+                    if sync_ep > 0:
+                        session_guard.mark_device_sync_enforced(
+                            it.device_user_name, norm_user, sync_ep, now_epoch=now
+                        )
                 action = session_guard.execute_immediate_signout(
                     user_email=norm_user,
-                    event_id=f"inline-session-guard:{norm_user}:{os_family}:{int(time.time())}",
+                    event_id=f"inline-session-guard:{norm_user}:{os_family}:{int(now)}",
                     reason=f"Immediate inline revocation: Unapproved {os_family} device accessed portal without an active 15m Onboarding Grace Pass.",
                     ip_address=_extract_client_ip(request),
                     dry_run=is_dry_run,

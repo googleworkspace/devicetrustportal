@@ -2091,4 +2091,95 @@ def test_relogin_on_already_blocked_mac_device_triggers_immediate_signout_and_se
             mock_sign_out.assert_called_once_with("claycodes@gwfe.org")
 
 
+def test_chromebook_with_devtools_mobile_emulation_and_stale_blocked_android_is_not_signed_out():
+    import time
+    from datetime import datetime, timezone
+    from backend.routes.session_watch import session_guard
 
+    session_guard._recent_signouts.clear()
+    session_guard._enforced_device_syncs.clear()
+    session_guard._enforced_event_ids.clear()
+    session_guard._unapproved_devices.clear()
+
+    fresh_cros_sync = datetime.fromtimestamp(time.time() - 3.0, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+    stale_android_sync = "2026-07-04T12:49:45.516Z"
+
+    mock_ci = MagicMock()
+    mock_devices_res = MagicMock()
+    mock_du_res = MagicMock()
+    mock_ci.devices.return_value = mock_devices_res
+    mock_devices_res.deviceUsers.return_value = mock_du_res
+
+    mock_devices_res.list.return_value.execute.return_value = {
+        "devices": [
+            {
+                "name": "devices/cros-approved",
+                "deviceType": "CHROME_OS",
+                "model": "Chromebook",
+                "serialNumber": "N9KS2WW002430173D37600",
+                "ownerType": "BYOD",
+                "lastSyncTime": fresh_cros_sync,
+            },
+            {
+                "name": "devices/android-stale-blocked",
+                "deviceType": "ANDROID",
+                "model": "Pixel 10 Pro",
+                "serialNumber": "",
+                "ownerType": "BYOD",
+                "lastSyncTime": stale_android_sync,
+            },
+        ]
+    }
+    mock_du_res.list.return_value.execute.return_value = {
+        "deviceUsers": [
+            {
+                "name": "devices/cros-approved/deviceUsers/du-cros",
+                "userEmail": "claycodes@gwfe.org",
+                "managementState": "APPROVED",
+                "lastSyncTime": fresh_cros_sync,
+            },
+            {
+                "name": "devices/android-stale-blocked/deviceUsers/du-android",
+                "userEmail": "claycodes@gwfe.org",
+                "managementState": "BLOCKED",
+                "lastSyncTime": stale_android_sync,
+            },
+        ]
+    }
+
+    app.dependency_overrides[get_current_user_email] = lambda: "claycodes@gwfe.org"
+    with patch("backend.routes.session_watch.cloud_identity_service.service", mock_ci), \
+         patch("backend.routes.devices.cloud_identity_service.service", mock_ci), \
+         patch("backend.routes.session_watch.directory_service.is_user_in_session_watch_scope", return_value=(True, "IN_SCOPE")), \
+         patch("backend.routes.session_watch.directory_service.sign_out_user", return_value=True) as mock_sign_out, \
+         patch("backend.services.config_service.ConfigService.get_tenant_config") as mock_cfg:
+        mock_cfg.return_value = TenantConfig(
+            customer_id="customers/my_customer",
+            session_watch_enabled=True,
+            enforcement_mode="BOTH",
+        )
+        # Case 1: Chrome DevTools Mobile Emulation sending Pixel 10 User-Agent right after Chromebook sign-in
+        status_resp = client.get(
+            "/api/session-watch/session-status",
+            headers={
+                "User-Agent": "Mozilla/5.0 (Linux; Android 16; Pixel 10) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Mobile Safari/537.36"
+            },
+        )
+        assert status_resp.status_code == 200
+        assert status_resp.json()["status"] == "OK"
+        mock_sign_out.assert_not_called()
+
+        # Case 2: Even if Chromebook synced >120s ago, a stale 3-month-old BLOCKED Android record does not trigger inline sign-out
+        older_cros_sync = datetime.fromtimestamp(time.time() - 600.0, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+        mock_devices_res.list.return_value.execute.return_value["devices"][0]["lastSyncTime"] = older_cros_sync
+        mock_du_res.list.return_value.execute.return_value["deviceUsers"][0]["lastSyncTime"] = older_cros_sync
+
+        status_resp_2 = client.get(
+            "/api/session-watch/session-status",
+            headers={
+                "User-Agent": "Mozilla/5.0 (Linux; Android 16; Pixel 10) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Mobile Safari/537.36"
+            },
+        )
+        assert status_resp_2.status_code == 200
+        assert status_resp_2.json()["status"] == "OK"
+        mock_sign_out.assert_not_called()
