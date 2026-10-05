@@ -500,8 +500,9 @@ def get_my_approved_devices(user_email: str = Depends(get_current_user_email)):
         for v in virtual_items:
             v.serial_number = "N/A"
 
+        unique_serial_list: List[DeviceUserItem] = []
         if serial_items:
-            # If physical hardware serial items exist for this platform, return unique hardware serial assets
+            # If physical hardware serial items exist for this platform, deduplicate by hardware serial
             unique_serials: Dict[str, DeviceUserItem] = {}
             for s_item in serial_items:
                 serial_key = s_item.serial_number.strip().upper()
@@ -543,34 +544,61 @@ def get_my_approved_devices(user_email: str = Depends(get_current_user_email)):
                             existing.model = s_item.model
                         if existing.os_version in ("Unknown OS", "") and s_item.os_version not in ("Unknown OS", ""):
                             existing.os_version = s_item.os_version
-            deduped_devices.extend(list(unique_serials.values()))
-        else:
-            # If only virtual extension assets exist, keep the single most recently synced asset for that platform
-            # Note: filter out "N/A" so it sorts chronologically and doesn't precede real ISO timestamps
+            unique_serial_list = list(unique_serials.values())
+            for u_item in unique_serial_list:
+                if dev_type == "CHROME_OS" and u_item.model in ("Unknown Model", ""):
+                    u_item.model = "Chromebook"
+            deduped_devices.extend(unique_serial_list)
+
+        if virtual_items:
+            # Sort virtual (serial="N/A") items chronologically so the most recently synced asset is primary
             virtual_items.sort(key=lambda x: sync_time_sort_key(x.last_sync_time), reverse=True)
-            if virtual_items:
-                primary = virtual_items[0]
-                primary.last_sync_time = normalize_sync_time(primary.last_sync_time)
-                for other in virtual_items[1:]:
-                    o_owner = str(other.owner_type or "").strip().upper()
-                    p_owner = str(primary.owner_type or "").strip().upper()
-                    o_state = str(other.approval_state or "").strip().upper()
-                    p_state = str(primary.approval_state or "").strip().upper()
+            primary = virtual_items[0]
+            primary.last_sync_time = normalize_sync_time(primary.last_sync_time)
+            for other in virtual_items[1:]:
+                o_owner = str(other.owner_type or "").strip().upper()
+                p_owner = str(primary.owner_type or "").strip().upper()
+                o_state = str(other.approval_state or "").strip().upper()
+                p_state = str(primary.approval_state or "").strip().upper()
 
-                    if o_owner == "COMPANY" and p_owner != "COMPANY":
-                        primary.owner_type = "COMPANY"
-                        primary.approval_state = "APPROVED"
+                if o_owner == "COMPANY" and p_owner != "COMPANY":
+                    primary.owner_type = "COMPANY"
+                    primary.approval_state = "APPROVED"
+                    primary.device_user_name = other.device_user_name
+                elif o_state == "APPROVED" and p_state != "APPROVED":
+                    primary.approval_state = "APPROVED"
+                    if p_owner != "COMPANY" or o_owner == "COMPANY":
                         primary.device_user_name = other.device_user_name
-                    elif o_state == "APPROVED" and p_state != "APPROVED":
-                        primary.approval_state = "APPROVED"
-                        if p_owner != "COMPANY" or o_owner == "COMPANY":
-                            primary.device_user_name = other.device_user_name
 
-                    if primary.model in ("Unknown Model", "") and other.model not in ("Unknown Model", ""):
-                        primary.model = other.model
-                    if primary.os_version in ("Unknown OS", "") and other.os_version not in ("Unknown OS", ""):
-                        primary.os_version = other.os_version
+                if primary.model in ("Unknown Model", "") and other.model not in ("Unknown Model", ""):
+                    primary.model = other.model
+                if primary.os_version in ("Unknown OS", "") and other.os_version not in ("Unknown OS", ""):
+                    primary.os_version = other.os_version
+
+            if dev_type == "CHROME_OS" and primary.model in ("Unknown Model", ""):
+                primary.model = "Chromebook"
+
+            if not unique_serial_list:
                 deduped_devices.append(primary)
+            elif primary.approval_state == "PENDING_APPROVAL" or (
+                dev_type == "CHROME_OS"
+                and str(primary.owner_type or "BYOD").strip().upper() == "BYOD"
+                and not any(
+                    str(s.owner_type or "").strip().upper() == "BYOD"
+                    and sync_time_sort_key(s.last_sync_time) >= sync_time_sort_key(primary.last_sync_time)
+                    for s in unique_serial_list
+                )
+            ):
+                deduped_devices.append(primary)
+
+    # Sort so PENDING_APPROVAL devices appear first, followed by most recently synced devices at the top
+    deduped_devices.sort(
+        key=lambda d: (
+            1 if d.approval_state == "PENDING_APPROVAL" else 0,
+            sync_time_sort_key(d.last_sync_time),
+        ),
+        reverse=True,
+    )
 
     # Warm SessionGuard approved serial cache and register any PENDING_APPROVAL BYOD devices
     # Note: Onboarding grace leases are NEVER auto-granted here; the user must explicitly click
@@ -579,12 +607,19 @@ def get_my_approved_devices(user_email: str = Depends(get_current_user_email)):
     session_guard.clear_unapproved_devices_for_user(target_email)
     for d in deduped_devices:
         if d.owner_type == "COMPANY" or d.approval_state == "APPROVED":
-            if is_valid_serial(d.serial_number):
+            effective_serial = (
+                d.serial_number.strip().upper()
+                if is_valid_serial(d.serial_number)
+                else d.device_user_name.strip().upper()
+            )
+            if effective_serial:
                 warm_records.append(
                     DeviceRecord(
                         device_id=d.device_user_name,
-                        serial_number=d.serial_number.strip().upper(),
-                        device_type="CHROMEOS" if d.owner_type == "COMPANY" else "CLOUD_IDENTITY_APPROVED",
+                        serial_number=effective_serial,
+                        device_type="CHROMEOS"
+                        if (d.owner_type == "COMPANY" or "CHROME" in (d.device_type or "").upper())
+                        else "CLOUD_IDENTITY_APPROVED",
                         status="APPROVED",
                         assigned_user=target_email,
                     )

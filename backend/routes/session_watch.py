@@ -732,6 +732,38 @@ def _execute_single_live_sweep_pass(
                             norm_user, device_user_name=rec["device_user_name"]
                         )
                         break
+
+                if found_dev is None:
+                    # If no unapproved device is active and Cloud Identity shows an APPROVED device
+                    # that synced within the last 180 seconds, auto-attest the user's login session
+                    # so logging into an approved Chromebook/BYOD device isn't signed out before opening the portal.
+                    for rec in raw_records:
+                        rec_sync_ep = float(rec.get("sync_epoch") or 0.0)
+                        if (
+                            rec.get("approval_state") == "APPROVED"
+                            and rec.get("last_sync_str")
+                            and 0.0 <= (now - rec_sync_ep) <= 180.0
+                        ):
+                            eff_serial = (
+                                rec["serial_number"].strip().upper()
+                                if rec.get("serial_number") and rec["serial_number"] != "N/A"
+                                else rec["device_user_name"].strip().upper()
+                            )
+                            dtype_tag = (
+                                "CHROMEOS"
+                                if "CHROME" in str(rec.get("device_type") or "").upper()
+                                else "CLOUD_IDENTITY_APPROVED"
+                            )
+                            for ev_item in audit_events:
+                                if ev_item.user_email.strip().lower() == norm_user:
+                                    session_guard.promote_approved_device(
+                                        user_email=norm_user,
+                                        serial_number=eff_serial,
+                                        device_type=dtype_tag,
+                                        ip_address=ev_item.ip_address,
+                                        now_epoch=now,
+                                    )
+                            break
             except Exception as ci_err:
                 print(
                     f"WARNING [session_watch.py]: Unapproved device check notice for '{norm_user}': {ci_err}"

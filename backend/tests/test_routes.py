@@ -2183,3 +2183,68 @@ def test_chromebook_with_devtools_mobile_emulation_and_stale_blocked_android_is_
         assert status_resp_2.status_code == 200
         assert status_resp_2.json()["status"] == "OK"
         mock_sign_out.assert_not_called()
+
+
+def test_get_my_devices_retains_byod_chromebook_alongside_company_chromebooks_and_sorts_newest_first():
+    app.dependency_overrides[get_current_user_email] = lambda: "claycodes@gwfe.org"
+
+    mock_service = MagicMock()
+    mock_devices_resource = MagicMock()
+    mock_device_users_resource = MagicMock()
+    mock_service.devices.return_value = mock_devices_resource
+    mock_devices_resource.deviceUsers.return_value = mock_device_users_resource
+
+    # Cloud Identity returns an APPROVED BYOD Chromebook (without a hardware serial) synced today
+    mock_devices_resource.list.return_value.execute.return_value = {
+        "devices": [
+            {
+                "name": "devices/EiRmZjIxM2FlYS1kYjkwLTRkZjAtOTE3Yi0zYmFkNGZiMTZkNmU%3D",
+                "deviceType": "CHROME_OS",
+                "model": None,
+                "osVersion": "ChromeOs 16733.48.0",
+                "serialNumber": None,
+                "ownerType": "BYOD",
+                "lastSyncTime": "2026-10-05T15:13:59.366Z",
+            }
+        ]
+    }
+    mock_device_users_resource.list.return_value.execute.return_value = {
+        "deviceUsers": [
+            {
+                "name": "devices/EiRmZjIxM2FlYS1kYjkwLTRkZjAtOTE3Yi0zYmFkNGZiMTZkNmU%3D/deviceUsers/ff213aea-db90-4df0-917b-3bad4fb16d6e",
+                "userEmail": "claycodes@gwfe.org",
+                "managementState": "APPROVED",
+                "lastSyncTime": "2026-10-05T15:13:59.366Z",
+            }
+        ]
+    }
+
+    # Directory API returns an older COMPANY Chromebook with a hardware serial
+    directory_cbs = [
+        {
+            "device_user_name": "directory/devices/72e1a092/deviceUsers/claycodes@gwfe.org",
+            "device_type": "CHROME_OS",
+            "model": "Chromebook x2 11-da0",
+            "os_version": "152.0.7977.74",
+            "serial_number": "C1L14000LH",
+            "approval_state": "APPROVED",
+            "owner_type": "COMPANY",
+            "last_sync_time": "2026-09-08T13:28:24.841Z",
+            "annotated_user": "claycodes@gwfe.org",
+        }
+    ]
+
+    with patch("backend.routes.devices.cloud_identity_service.service", mock_service), \
+         patch("backend.routes.devices.directory_service.verify_user_is_admin", return_value=True), \
+         patch("backend.routes.devices.directory_service.get_user_chromeos_devices", return_value=directory_cbs):
+        response = client.get("/api/devices/my-devices")
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) == 2
+        # Most recently synced BYOD Chromebook is #1, labeled "Chromebook" instead of "Unknown Model"
+        assert data[0]["device_user_name"] == "devices/EiRmZjIxM2FlYS1kYjkwLTRkZjAtOTE3Yi0zYmFkNGZiMTZkNmU%3D/deviceUsers/ff213aea-db90-4df0-917b-3bad4fb16d6e"
+        assert data[0]["model"] == "Chromebook"
+        assert data[0]["owner_type"] == "BYOD"
+        assert data[0]["approval_state"] == "APPROVED"
+        assert data[1]["serial_number"] == "C1L14000LH"
+        assert data[1]["owner_type"] == "COMPANY"

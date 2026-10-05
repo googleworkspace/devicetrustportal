@@ -65,19 +65,23 @@ const detectBrowserPlatform = (): "CHROME_OS" | "MAC_OS" | "WINDOWS" | "ANDROID"
 const selectPlatformMatchedDevice = (list: DeviceUserItem[]): DeviceUserItem | undefined => {
   const platform = detectBrowserPlatform();
   if (platform === "CHROME_OS") {
-    return list.find(
-      (d) =>
-        (d.owner_type === "COMPANY" || (d.device_type || "").toUpperCase().includes("CHROME")) &&
-        d.approval_state === "APPROVED" &&
-        d.serial_number &&
-        d.serial_number !== "N/A"
+    return (
+      list.find(
+        (d) =>
+          (d.owner_type === "COMPANY" || (d.device_type || "").toUpperCase().includes("CHROME")) &&
+          d.approval_state === "APPROVED" &&
+          d.serial_number &&
+          d.serial_number !== "N/A"
+      ) ||
+      list.find(
+        (d) =>
+          (d.owner_type === "COMPANY" || (d.device_type || "").toUpperCase().includes("CHROME")) &&
+          d.approval_state === "APPROVED"
+      )
     );
   }
   if (platform !== "UNKNOWN") {
-    return list.find((d) => {
-      if (d.approval_state !== "APPROVED" || !d.serial_number || d.serial_number === "N/A") {
-        return false;
-      }
+    const matchesPlatform = (d: DeviceUserItem) => {
       const dtype = (d.device_type || "").toUpperCase();
       const osVer = (d.os_version || "").toUpperCase();
       if (platform === "MAC_OS") return dtype.includes("MAC") || osVer.includes("MAC");
@@ -85,11 +89,21 @@ const selectPlatformMatchedDevice = (list: DeviceUserItem[]): DeviceUserItem | u
       if (platform === "ANDROID") return dtype.includes("ANDROID") || osVer.includes("ANDROID");
       if (platform === "IOS") return dtype.includes("IOS") || osVer.includes("IOS");
       return false;
-    });
+    };
+    return (
+      list.find(
+        (d) =>
+          d.approval_state === "APPROVED" &&
+          d.serial_number &&
+          d.serial_number !== "N/A" &&
+          matchesPlatform(d)
+      ) || list.find((d) => d.approval_state === "APPROVED" && matchesPlatform(d))
+    );
   }
   return (
     list.find((d) => d.owner_type === "COMPANY" && d.serial_number && d.serial_number !== "N/A") ||
-    list.find((d) => d.approval_state === "APPROVED" && d.serial_number && d.serial_number !== "N/A")
+    list.find((d) => d.approval_state === "APPROVED" && d.serial_number && d.serial_number !== "N/A") ||
+    list.find((d) => d.approval_state === "APPROVED")
   );
 };
 
@@ -229,7 +243,11 @@ export const Dashboard: React.FC = () => {
             typeof attestBrowserSession === "function"
           ) {
             autoAttestedForUserRef.current = userEmail;
-            const pAttest = attestBrowserSession(userEmail, trustedCandidate.serial_number);
+            const candidateSerial =
+              trustedCandidate.serial_number && trustedCandidate.serial_number !== "N/A"
+                ? trustedCandidate.serial_number
+                : trustedCandidate.device_user_name;
+            const pAttest = attestBrowserSession(userEmail, candidateSerial);
             if (pAttest && typeof pAttest.then === "function") {
               pAttest.then(() => loadSessionWatchStatus()).catch(() => {});
             }
