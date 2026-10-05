@@ -450,7 +450,7 @@ export const Dashboard: React.FC = () => {
             <div>
               <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
                 <h1 className="dtg-brand-title">{t.portalTitle}</h1>
-                {(sessionWatchEnabled || caaEnforcementEnabled) && (
+                {(sessionWatchEnabled || caaEnforcementEnabled) ? (
                   <span
                     data-testid="enforcement-mode-badge"
                     style={{
@@ -473,7 +473,29 @@ export const Dashboard: React.FC = () => {
                       ? "⚡ SESSION MANAGEMENT ACTIVE (FUNDAMENTALS)"
                       : "🛡️ CONTEXT-AWARE ACCESS (STANDARD & PLUS)"}
                   </span>
-                )}
+                ) : isAdmin ? (
+                  <a
+                    href="#/admin"
+                    data-testid="enforcement-standby-badge"
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: "5px",
+                      padding: "3px 10px",
+                      borderRadius: "999px",
+                      fontSize: "11px",
+                      fontWeight: 700,
+                      letterSpacing: "0.02em",
+                      backgroundColor: "#f1f3f4",
+                      color: "#5f6368",
+                      border: "1px solid #dadce0",
+                      textDecoration: "none",
+                    }}
+                    title="New install default: Both Session Management and CAA are disabled until configured in Admin Configurations"
+                  >
+                    ⚙️ ENFORCEMENT STANDBY — CONFIGURE IN ADMIN
+                  </a>
+                ) : null}
               </div>
               <div className="dtg-brand-subtitle">{t.subtitle}</div>
             </div>

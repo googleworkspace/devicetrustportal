@@ -479,6 +479,62 @@ export const AdminConfig: React.FC = () => {
             </div>
           )}
 
+          {sessionWatchMetrics?.recent_actions && sessionWatchMetrics.recent_actions.length > 0 && (
+            <div
+              style={{
+                marginTop: "12px",
+                paddingTop: "10px",
+                borderTop: "1px dashed rgba(26, 115, 232, 0.2)",
+                fontSize: "11.5px",
+              }}
+            >
+              <div style={{ fontWeight: 700, color: "var(--dtg-text)", marginBottom: "6px" }}>
+                Recent Session Enforcement &amp; Verification Events
+              </div>
+              <div style={{ display: "grid", gap: "6px" }}>
+                {sessionWatchMetrics.recent_actions.slice(0, 4).map((act, idx) => (
+                  <div
+                    key={idx}
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      gap: "8px",
+                      flexWrap: "wrap",
+                      padding: "6px 10px",
+                      borderRadius: "6px",
+                      backgroundColor: "var(--dtg-surface)",
+                      border: "1px solid var(--dtg-border-subtle)",
+                    }}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                      <span
+                        style={{
+                          fontWeight: 700,
+                          fontSize: "10.5px",
+                          padding: "2px 6px",
+                          borderRadius: "4px",
+                          backgroundColor:
+                            act.decision === "REVOKE_SIGN_OUT"
+                              ? "rgba(217, 48, 37, 0.12)"
+                              : "rgba(19, 115, 51, 0.12)",
+                          color: act.decision === "REVOKE_SIGN_OUT" ? "#c5221f" : "#137333",
+                        }}
+                      >
+                        {act.decision}
+                      </span>
+                      <b style={{ color: "var(--dtg-text)" }}>{act.user_email}</b>
+                      <span style={{ color: "var(--dtg-text-secondary)" }}>{act.reason}</span>
+                    </div>
+                    <span style={{ color: "var(--dtg-text-secondary)", fontFamily: "monospace", fontSize: "11px" }}>
+                      {act.timestamp_iso ? new Date(act.timestamp_iso).toLocaleTimeString() : ""}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {opsStatusMessage && (
             <div
               role="status"
@@ -523,7 +579,7 @@ export const AdminConfig: React.FC = () => {
           >
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "8px", marginBottom: "12px" }}>
               <div style={{ fontWeight: 700, fontSize: "15px", color: "var(--dtg-text)" }}>
-                Domain Enforcement Controls (Disabled by Default)
+                Domain Enforcement Controls (Disabled by Default on New Installs)
               </div>
               <span
                 data-testid="active-enforcement-mode-pill"
@@ -544,6 +600,22 @@ export const AdminConfig: React.FC = () => {
                 Effective Mode: {enforcementMode}
               </span>
             </div>
+
+            {!sessionWatchEnabled && !caaEnforcementEnabled && (
+              <div
+                style={{
+                  marginBottom: "14px",
+                  padding: "10px 12px",
+                  borderRadius: "6px",
+                  backgroundColor: "rgba(249, 171, 0, 0.12)",
+                  border: "1px solid rgba(249, 171, 0, 0.4)",
+                  fontSize: "12px",
+                  color: "var(--dtg-text)",
+                }}
+              >
+                <b>New Installation Standby:</b> Both Session Management and Context-Aware Access monitoring are disabled by default so you can verify your device inventory first. Check one or both options below and click <b>Save Configurations</b> to activate enforcement.
+              </div>
+            )}
 
             <div style={{ display: "grid", gap: "14px" }}>
               {/* Toggle 1: Session Management for Education Fundamentals */}
@@ -571,7 +643,7 @@ export const AdminConfig: React.FC = () => {
                     ⚡ Enable Session Management &amp; <code>users.signOut</code> Circuit Breaker (Education Fundamentals)
                   </div>
                   <div style={{ color: "var(--dtg-text-secondary)", fontSize: "12px" }}>
-                    <b>Disabled by default.</b> When enabled, enforces device trust without requiring Context-Aware Access licenses—or supplements CAA by actively terminating Google account sessions (<code>admin.directory.users.signOut</code>) and auto-blocking unapproved personal devices (e.g. unapproved Mac/Windows laptops in <code>PENDING_APPROVAL</code>) when they sign in or sync via Chrome Profile Reporting.
+                    <b>Disabled by default on new installs.</b> When enabled, enforces device trust without requiring Context-Aware Access licenses—or supplements CAA by terminating Google account sessions (<code>admin.directory.users.signOut</code> + OAuth token grant revocation) and auto-blocking unapproved personal devices (e.g. unapproved Mac/Windows laptops in <code>PENDING_APPROVAL</code> or re-authenticating <code>BLOCKED</code> devices) within seconds.
                   </div>
                 </div>
               </label>
@@ -601,7 +673,7 @@ export const AdminConfig: React.FC = () => {
                     🛡️ Enable Context-Aware Access (CAA) Integration (Education Standard &amp; Plus)
                   </div>
                   <div style={{ color: "var(--dtg-text-secondary)", fontSize: "12px" }}>
-                    <b>Disabled by default.</b> Designed for Google Workspace for Education Standard, Education Plus, and Enterprise tiers. Pairs self-service Cloud Identity device approval with Google Admin Console Context-Aware Access CEL rules (<code>device.is_corp_owned_device == true || device.is_admin_approved_device == true</code>) to block Gmail, Drive, Docs, and Classroom on unapproved devices at the application edge.
+                    <b>Disabled by default on new installs.</b> Designed for Google Workspace for Education Standard, Education Plus, and Enterprise tiers. Pairs self-service Cloud Identity device approval with Google Admin Console Context-Aware Access CEL rules (<code>device.is_corp_owned_device == true || device.is_admin_approved_device == true</code>) to block Gmail, Drive, Docs, and Classroom on unapproved devices at the application edge.
                   </div>
                 </div>
               </label>
@@ -621,17 +693,20 @@ export const AdminConfig: React.FC = () => {
               }}
             >
               <div style={{ fontWeight: 700, color: "var(--dtg-text)", marginBottom: "4px" }}>
-                ℹ️ How Enforcement Modes Work Together
+                ℹ️ How the 3-Layer Enforcement Pipeline &amp; CAA Work Together
               </div>
               <ul style={{ margin: 0, paddingLeft: "18px" }}>
                 <li>
-                  <b>Why CAA blocks apps while <code>accounts.google.com</code> stays signed in:</b> Context-Aware Access blocks Workspace apps (Gmail, Drive, Docs) at the application edge, but Google must allow initial <code>accounts.google.com</code> login so Chrome Profile Reporting / Endpoint Verification can register the device in Cloud Identity and so the user can open this portal to request approval.
+                  <b>Why CAA blocks apps while <code>accounts.google.com</code> stays signed in:</b> Context-Aware Access blocks Workspace apps (Gmail, Drive, Docs) at the application edge, but Google allows initial <code>accounts.google.com</code> login so Chrome Profile Reporting / Endpoint Verification can register the device in Cloud Identity.
                 </li>
                 <li>
-                  <b>How Session Management closes the account sign-in gap:</b> Enabling <b>Session Management</b> runs a 2-minute sweep across both Admin SDK Login Audit logs and live Cloud Identity <code>PENDING_APPROVAL</code> BYOD syncs. If a user signs in on an unapproved Mac or Windows PC without an active 15-minute Onboarding Grace Pass, Session Watch calls <code>users.signOut</code> to terminate the Google session and transitions the unapproved device to <code>BLOCKED</code>.
+                  <b>Layer 1 — Inline Portal Check (&lt; 0.5s) &amp; 8s Heartbeat:</b> Opening the portal on an unapproved device without an active 15-minute Onboarding Grace Pass immediately triggers <code>GET /api/session-watch/session-status</code>, executing <code>users.signOut</code>, revoking the portal OAuth grant, and returning <code>HTTP 401</code> to clear the browser session.
                 </li>
                 <li>
-                  <b>Enable Either or Both:</b> Education Fundamentals domains enable <b>Session Management</b>. Education Standard &amp; Plus domains can enable <b>CAA Integration</b> alone (edge app blocking) or enable <b>both</b> together for immediate edge app blocking + automated account sign-out.
+                  <b>Layer 2 — Sub-10s Cloud Identity <code>lastSyncTime</code> Polling (~2–10s):</b> Because Chrome Profile Reporting updates <code>DeviceUser.lastSyncTime</code> in ~1.7s on sign-in, the 1-minute Cloud Scheduler job runs 5 rapid 10-second sub-polls across both <code>PENDING_APPROVAL</code> and re-logged-in <code>BLOCKED</code> BYOD devices (plus Admin SDK login events) to boot unapproved sessions even if the user never opens the portal.
+                </li>
+                <li>
+                  <b>Enable Either or Both:</b> On new installs, both toggles start off. Enable <b>Session Management</b> for Fundamentals, <b>CAA Integration</b> for Standard/Plus edge blocking, or <b>Both</b> (as verified in live testing) for edge app blocking + immediate Google session termination.
                 </li>
               </ul>
             </div>

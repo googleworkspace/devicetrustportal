@@ -177,10 +177,10 @@ The portal displays a red alert banner:
 * `Failed to load approved devices: {"detail":"Cloud Identity API device lookup failed (HttpError 403 ... Request had insufficient authentication scopes / unauthorized_client)..."}`
 
 ### Resolution Checklist
-1. **Verify the 4 Exact OAuth Scopes in Google Workspace Admin Console:**
-   Open [Security > Access and data control > API controls > Domain-wide Delegation](https://admin.google.com/ac/owl/domainwidedelegation) and confirm your Service Account's **Numeric Client ID** has all four comma-separated scopes:
+1. **Verify the 6 Exact OAuth Scopes in Google Workspace Admin Console:**
+   Open [Security > Access and data control > API controls > Domain-wide Delegation](https://admin.google.com/ac/owl/domainwidedelegation) and confirm your Service Account's **Numeric Client ID** has all six comma-separated scopes:
    ```text
-   https://www.googleapis.com/auth/cloud-identity.devices,https://www.googleapis.com/auth/admin.directory.user.readonly,https://www.googleapis.com/auth/admin.directory.group.member.readonly,https://www.googleapis.com/auth/admin.directory.device.chromeos.readonly
+   https://www.googleapis.com/auth/cloud-identity.devices,https://www.googleapis.com/auth/admin.directory.user.readonly,https://www.googleapis.com/auth/admin.directory.group.member.readonly,https://www.googleapis.com/auth/admin.directory.device.chromeos.readonly,https://www.googleapis.com/auth/admin.reports.audit.readonly,https://www.googleapis.com/auth/admin.directory.user.security
    ```
 2. **Verify `WORKSPACE_ADMIN_EMAIL` Is an Active Super Administrator:**
    Domain-Wide Delegation requires impersonating a Google Workspace user who holds privileges to query Cloud Identity Devices and Directory APIs. Check the configured email on Cloud Run:
@@ -253,7 +253,28 @@ The portal displays a red alert banner:
 
 ---
 
-## 🔄 10. Updating an Existing Deployment to the Latest Release
+## ⚡ 10. Unapproved Mac/PC Sessions Staying Signed In After Login (3-Layer Session Termination)
+
+### Symptom
+* Context-Aware Access (CAA) blocks Gmail and Google Drive (`403 Access Denied`), **or** you are testing on an Education Fundamentals domain without CAA, and a user who logs into an unapproved personal Mac or Windows laptop remains signed into `accounts.google.com` or the browser profile.
+
+### Why This Happens in Google Workspace
+1. **New Installs Start Disabled by Default (`enforcement_mode: "DISABLED"`):** On a fresh installation (`./deploy.sh`), both **Session Management** (`session_watch_enabled: false`) and **CAA Integration** (`caa_enforcement_enabled: false`) start disabled until enabled by an administrator in `#/admin`.
+2. **CAA Blocks Apps at the Edge, Not `accounts.google.com`:** Even when CAA is active, Google permits initial `accounts.google.com` authentication so Chrome Profile Reporting and Endpoint Verification can register the device in Cloud Identity (`PENDING_APPROVAL`).
+3. **Re-Logins on Previously `BLOCKED` Devices:** Once an unapproved Mac is transitioned from `PENDING_APPROVAL` to `BLOCKED`, signing in again updates `DeviceUser.lastSyncTime` in **~1.7 seconds**, while `managementState` stays `BLOCKED` (and Admin SDK `login` audit logs can lag 15–60 minutes).
+
+### Resolution: Enable Session Management in `#/admin`
+1. Open the Admin Portal (`#/admin`) and enable **Session Management (Education Fundamentals)** (either alone or alongside **Context-Aware Access Integration** as `BOTH`).
+2. Click **💾 Save Configurations**, then click **🔄 Sync Inventory Cache** to load your approved ChromeOS and BYOD serials into the SQLite/RAM cache.
+3. If testing with an administrator account, ensure **Exempt Super Admins & Portal Admins (`session_watch_exempt_admins`)** is **unchecked** (`false`).
+4. Once enabled, the **3-Layer Immediate Enforcement Pipeline** terminates unapproved device sessions automatically:
+   * **Layer 1 (`< 0.5s` Inline Portal Check + `8s` Heartbeat):** Opening the portal on an unapproved or `BLOCKED` device (without an active 15-minute onboarding lease) immediately fires `users.signOut` + OAuth grant revocation and signs the browser out with `401 SESSION_REVOKED_UNAPPROVED_DEVICE`.
+   * **Layer 2 (`~2–10s` Cloud Identity `lastSyncTime` Sub-Polling):** The 1-minute Cloud Scheduler job (`session-watch-login-sweep`) runs 5 sub-polls spaced 10s apart (`t=0s, 10s, 20s, 30s, 40s`), detecting any `PENDING_APPROVAL` or re-authenticated `BLOCKED` BYOD `lastSyncTime` newer than the user's last sign-out and immediately executing `users.signOut` + `directory.tokens.delete`.
+   * **Layer 3 (Admin SDK Reports API Sweep):** Catches external unmanaged browser logins that do not report via Chrome Profile Reporting.
+
+---
+
+## 🔄 11. Updating an Existing Deployment to the Latest Release
 
 Whenever new fixes or UI improvements are pushed to the repository, update your local checkout and redeploy with:
 
@@ -264,4 +285,5 @@ git reset --hard origin/main
 ./deploy.sh
 ```
 
-*(Note: `./deploy.sh` also checks `origin/main` automatically at startup and fast-forwards your checkout before building the container).*
+*(Note: `./deploy.sh` also checks `origin/main` automatically at startup and fast-forwards your checkout before building the container, while preserving your existing Secret Manager `device_trust_gateway_config` settings).*
+

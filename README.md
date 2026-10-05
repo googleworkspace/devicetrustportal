@@ -33,23 +33,29 @@ For complete documentation detailing supported Workspace editions, end-user flow
 👉 **[docs/caa_architecture_overview.md](docs/caa_architecture_overview.md)** — Enterprise zero-trust architecture whitepaper.
 
 ### Key Architectural Principles:
-* **Unmanaged BYOD Hardware:** Personal devices do **not** require intrusive Mobile Device Management (MDM) enrollment or profiles. Users install the lightweight Endpoint Verification browser extension, registering the device as "Unmanaged" while still allowing our backend to approve them (`devices.deviceUsers.approve`), satisfying CAA policy rules while preserving user privacy.
-* **Trust Anchor:** Automatically trusts company-owned inventory (e.g. ChromeOS zero-touch devices).
-* **Minimalist Single Portal:** Consolidates all device reporting, administrative configurations, and lifecycle approvals into a unified, highly responsive centerpiece layout.
-* **Automated Lifecycle Management:** A secure cron endpoint (`/api/cron/cleanup`) automatically revokes access for inactive BYOD devices older than X days.
+* **Dual Enforcement Modes — Disabled by Default on New Installs:** Supports **Session Management & Circuit Breaker** for Google Workspace for Education Fundamentals (`session_watch_enabled`), **Context-Aware Access (CAA) Integration** for Education Standard/Plus (`caa_enforcement_enabled`), or **BOTH** simultaneously. On any **new installation** (`./deploy.sh`), both modes start **disabled by default (`enforcement_mode: "DISABLED"`)** in safe standby mode until an administrator explicitly configures and enables them in `#/admin`.
+* **Sub-10-Second Unapproved Device Termination (3-Layer Pipeline):**
+  1. **Layer 1 (`< 0.5s` Inline Portal Check & `8s` Heartbeat):** Opening the portal on an unapproved or `BLOCKED` device immediately triggers `users.signOut` + OAuth grant revocation and returns `401 SESSION_REVOKED_UNAPPROVED_DEVICE`. Backend JWT authentication compares the token's `iat` claim against the user's last sign-out timestamp to immediately reject pre-revocation tokens.
+  2. **Layer 2 (`~2–10s` Cloud Identity `lastSyncTime` Sub-Polling):** A 1-minute Cloud Scheduler job (`session-watch-login-sweep`) executes 5 rapid sub-polls spaced 10 seconds apart (`t=0s, 10s, 20s, 30s, 40s`), inspecting Cloud Identity `deviceUsers` for both `PENDING_APPROVAL` and re-logged-in `BLOCKED` BYOD devices whose `lastSyncTime` updated after the user's last sign-out.
+  3. **Layer 3 (Admin SDK `login` Audit Sweep + OAuth Token Revocation):** Sweeps `admin.reports_v1.activities.list(applicationName='login')` and revokes both Google session cookies (`users.signOut`) and OAuth token grants (`directory.tokens.delete`).
+* **Unified User & Admin Experience:** All users—including Super Administrators—see the exact same clean device approval view on `#/`, with **Company-Owned Devices** strictly filtered to hardware the signed-in user has personally accessed (`recentUsers`). Admin-only operational controls (`Sync Inventory Cache`, `Attest Current Session`, `Run Live Login Sweep`) and enforcement telemetry reside exclusively on `#/admin`.
+* **Unmanaged BYOD Hardware:** Personal devices do **not** require intrusive Mobile Device Management (MDM) enrollment or profiles. Users sign into their managed Chrome profile with the Endpoint Verification extension, registering the device as "Unmanaged" while allowing the backend to approve (`devices.deviceUsers.approve`) or block (`devices.deviceUsers.block`) access.
+* **Automated Lifecycle Management:** A secure cron endpoint (`/api/cron/cleanup`) automatically revokes access for inactive BYOD devices older than X days and syncs newly enrolled Chromebooks.
 
 ---
 
 ## 🛠 Prerequisites & Billing Check
 
 - **Google Cloud Project** with an **Active Billing Account** linked. *(Google Cloud Run, Cloud Build, Cloud Scheduler, and Secret Manager require billing to be enabled before APIs can be activated).*
-- **Google Workspace / Cloud Identity** tenant with Context-Aware Access (CAA) enabled.
+- **Google Workspace / Cloud Identity** tenant (supports **Education Fundamentals**, **Education Standard / Plus**, and **Enterprise** editions).
 - **Google Endpoint Verification Chrome Extension** force-installed across target Organizational Units (OUs) to collect device signals and answer Context-Aware Access challenges (Extension ID: `callobklhcbilhphinckomhgkigmfocg`).
-- **Service Account Credentials** with Domain-Wide Delegation (DWD) authorized in Google Workspace Admin Console (`https://admin.google.com/ac/owl/domainwidedelegation`) for the following 4 required OAuth scopes:
+- **Service Account Credentials** with Domain-Wide Delegation (DWD) authorized in Google Workspace Admin Console (`https://admin.google.com/ac/owl/domainwidedelegation`) for the following **6 required OAuth scopes**:
   - `https://www.googleapis.com/auth/cloud-identity.devices`
   - `https://www.googleapis.com/auth/admin.directory.user.readonly`
   - `https://www.googleapis.com/auth/admin.directory.group.member.readonly`
   - `https://www.googleapis.com/auth/admin.directory.device.chromeos.readonly`
+  - `https://www.googleapis.com/auth/admin.reports.audit.readonly` *(Required for Session Management login audit sweeps)*
+  - `https://www.googleapis.com/auth/admin.directory.user.security` *(Required for `users.signOut` & OAuth token revocation circuit breaker)*
 - **Node.js (v20+)** and **Python (3.11+)** installed for local development. *(Note: Node.js is only required if building the React frontend locally outside of Docker. The automated `./deploy.sh` script and Docker builds manage Node.js 20 and Python 3.11 automatically inside container build stages).*
 
 > [!IMPORTANT]
@@ -151,6 +157,7 @@ You can pass command-line flags to customize execution or troubleshoot deploymen
 | `--project <PROJECT_ID>` | `GCP_PROJECT=<PROJECT_ID>` | Sets the Google Cloud Project ID directly from the CLI. |
 | `--region <REGION>` | `GCP_REGION=<REGION>` | Sets the target GCP region (default: `us-central1`). |
 | `--target <1\|2>` | `DEPLOY_TARGET=<1\|2>` | Pre-selects deployment target (`1`: Google Cloud Run, `2`: On-Premise Docker). |
+| `--mode <MODE>` | `ENFORCEMENT_MODE=<MODE>` | Sets initial enforcement mode (`DISABLED` [default for new installs], `SESSION_WATCH`, `CAA`, or `BOTH`). |
 | `-h`, `--help` | — | Displays the help and options menu. |
 
 ---
@@ -237,7 +244,7 @@ The deployment wizard will guide you through the setup automatically. Here is wh
      - Verify the Endpoint Verification extension (`callobklhcbilhphinckomhgkigmfocg`) is installed and click **Sync now** (or verify `CloudProfileReportingEnabled` and `UserSecuritySignalsReporting` are `true` at `chrome://policy`).
      - The device will immediately register in Cloud Identity in **Pending approval** (`PENDING_APPROVAL`) state and appear in the Device Trust Gateway Portal ready for approval.
 
-8. **Activate Workspace Policy (Context-Aware Access):**
+8. **Activate Workspace Policy (Context-Aware Access — Education Standard/Plus & Enterprise):**
    - Open [Google Workspace Admin Console > Security > Access and data control > Context-Aware Access](https://admin.google.com/ac/security/contextaware).
    - Click **Create Access Level**, switch to **Advanced mode**, and create an Access Level named `Approved Devices Only` with CEL expression:
      ```text
@@ -252,6 +259,12 @@ The deployment wizard will guide you through the setup automatically. Here is wh
      - **App Assignment:** Assign this level to the Workspace Apps of your choice (eg. Gmail, Drive…).
      - **Enforcement Policy:** Set policies to **Block** when policies / access levels are not met.
      - **Desktop & Mobile Apps:** Ensure policy is set to Enable for **Apply to Google desktop and mobile apps** (to enforce policy across native clients like Gmail mobile and Google Drive for Desktop in addition to web browsers).
+
+9. **Enable Enforcement in the Admin Portal (`#/admin` — Disabled by Default on New Installs):**
+   - For safety, every fresh installation starts with both **Session Management** (`session_watch_enabled: false`) and **Context-Aware Access Integration** (`caa_enforcement_enabled: false`) **disabled by default** (`⚙️ ENFORCEMENT STANDBY — CONFIGURE IN ADMIN`).
+   - Open your live portal URL and click **⚙️ Admin Config** (`#/admin`).
+   - Toggle on **Session Management (Education Fundamentals)**, **Context-Aware Access Integration (Education Standard & Plus)**, or **Both**, configure your target Organizational Units / Groups if desired, and click **💾 Save Configurations**.
+   - Click **🔄 Sync Inventory Cache** in the Admin Telemetry card to pre-warm your approved device inventory.
 
 🎉 **Done!** Your portal is now fully live and securing your enterprise workspace!
 
@@ -297,6 +310,7 @@ You can pass command-line flags or environment variables to customize the deploy
 | `--project <ID>` | `GCP_PROJECT=<ID>` | Pre-configures Google Cloud Project ID. |
 | `--region <REGION>` | `GCP_REGION=<REGION>` | Pre-configures Cloud Run / Scheduler target region (default: `us-central1`). |
 | `--target <1\|2>` | `DEPLOY_TARGET=<1\|2>` | Pre-selects deployment target (`1`: Google Cloud Run, `2`: On-Premise Docker). |
+| `--mode <MODE>` | `ENFORCEMENT_MODE=<MODE>` | Sets initial enforcement mode (`DISABLED` [default for new installs], `SESSION_WATCH`, `CAA`, or `BOTH`). |
 | `-h`, `--help` | — | Displays the CLI help and options menu. |
 
 You will be presented with a simplified interactive menu:
@@ -485,14 +499,62 @@ gcloud run deploy device-trust-gateway --image gcr.io/YOUR_PROJECT_ID/device-tru
 
 ---
 
-## ⚙️ Configuration & Admin UI
+## ⚙️ Configuration & Admin UI (`#/admin`)
 
-Once the application is running, Workspace Administrators can dynamically update tenant configurations directly via the UI.
+Once the application is running, Workspace Administrators can dynamically configure enforcement modes, rollout scope, and inspect real-time session telemetry directly via the Admin Portal (`#/admin`).
 
-1. Access the portal and navigate to **Admin Configurations** (or visit `#/admin`).
-2. Ensure your active user profile has Workspace Super Admin privileges or is listed in the `portal_admins` delegation list.
-3. Update settings such as **Inactivity Threshold (Days)** and **Authorized Portal Administrators**.
-4. Click **Save Configurations**. Changes will instantly persist to Secret Manager (GCP mode) or your local `.env` file (on-premise mode).
+### 1. New Installation Default (`DISABLED` Standby Mode) vs. Active Enforcement
+* **Fresh Installations Start Disabled by Default:** Every new installation via `./deploy.sh`, Docker Compose, or a blank Secret Manager secret initializes with:
+  * `session_watch_enabled: false` (Session Management for Education Fundamentals)
+  * `caa_enforcement_enabled: false` (Context-Aware Access Integration for Education Standard & Plus)
+  * `enforcement_mode: "DISABLED"`
+* **Why Standby by Default?** This ensures zero unexpected session revocations or user lockouts while the administrator completes initial Domain-Wide Delegation, Chrome Profile Reporting, and Chromebook inventory seeding. While disabled, administrators see a prominent `⚙️ ENFORCEMENT STANDBY — CONFIGURE IN ADMIN` badge in the top bar, and the 1-minute Cloud Scheduler sweep safely returns `SKIPPED_DISABLED`.
+* **Activating Enforcement in `#/admin`:**
+  1. Navigate to `#/admin` (or click **⚙️ Admin Config** in the top navigation bar).
+  2. Check **Session Management (Education Fundamentals)** to enable the 3-layer `<0.5s` inline check + `~2–10s` Cloud Identity `lastSyncTime` sub-polling + `users.signOut` & OAuth grant revocation pipeline.
+  3. Check **Context-Aware Access Integration (Education Standard & Plus)** to enable CAA policy remediation banners and self-service pairing code workflows.
+  4. *(Optional)* Enable **Both** simultaneously (`enforcement_mode: "BOTH"`) for defense-in-depth (CAA blocks Workspace web apps at the edge while Session Management immediately terminates underlying `accounts.google.com` sessions and OAuth tokens on unapproved devices).
+  5. Click **💾 Save Configurations**. Changes persist immediately to Google Cloud Secret Manager (`device_trust_gateway_config`) or `.env`.
+
+### 2. Unified User/Admin View (`#/`) vs. Admin-Only Controls (`#/admin`)
+* **Unified Main Dashboard (`#/`):** All users—including Super Administrators—experience the exact same clean device approval interface on `#/`.
+  * **Company-Owned Devices (`ownerType: COMPANY`):** Strictly filtered to hardware the signed-in user has personally accessed (`email in recentUsers`). Administrators are never cluttered with domain-wide Chromebooks they haven't logged into.
+  * **Personal BYOD Devices (`ownerType: USER`):** Displays the user's personal laptops and phones with self-service **✓ Approve**, **✕ Revoke**, **🔗 Generate Pairing Code**, and **⏱️ + Add Personal Device (15m Grace Pass)** actions.
+* **Admin-Only Operational Controls (`#/admin`):**
+  * **🔄 Sync Inventory Cache:** Pre-warms and synchronizes approved ChromeOS serials and Cloud Identity `APPROVED` BYOD serials into the backend SQLite/RAM cache.
+  * **🛡️ Attest Current Session:** Manually records an attested browser heartbeat for the admin's current session.
+  * **⚡ Run Live Login Sweep:** Triggers an immediate on-demand audit sweep (`force=true`) across Cloud Identity `deviceUsers` (`PENDING_APPROVAL` & `BLOCKED` syncs) and Admin SDK Reports API `login` events, displaying evaluated counts, revocations, and the **Recent Session Enforcement & Verification Events** feed.
+
+---
+
+## 🧪 Testing & Live Verification Matrix
+
+### Live Test Environment (`devicetrustportal` / `gwfe.org`) vs. New Installs
+| Setting / Capability | New Install Default (`./deploy.sh`) | Active Live Test Environment (`gwfe.org`) |
+| :--- | :--- | :--- |
+| **`session_watch_enabled` (Fundamentals Session Management)** | `false` (Standby until enabled in `#/admin`) | **`true` (Enabled for live testing)** |
+| **`caa_enforcement_enabled` (Standard/Plus CAA Integration)** | `false` (Standby until enabled in `#/admin`) | **`true` (Enabled for live testing)** |
+| **`enforcement_mode`** | `"DISABLED"` | **`"BOTH"`** |
+| **Cloud Scheduler (`session-watch-login-sweep`)** | `* * * * *` (No-ops with `SKIPPED_DISABLED` until enabled) | **`* * * * *` (Active: 5x 10s sub-polls per minute)** |
+| **Inline Portal Session Check (`GET /api/session-watch/session-status`)** | Inactive until `session_watch_enabled: true` | **Active (`< 0.5s` on mount + `8s` heartbeat + JWT `iat` validation)** |
+| **Admin Exemption (`session_watch_exempt_admins`)** | `false` (Admins can test enforcement with their own account) | **`false` (Verified live with `claycodes@gwfe.org`)** |
+
+### Running the Automated Test Suite (85 Total Tests)
+You can run the complete backend and frontend test suites locally before deploying:
+
+```bash
+# 1. Run Backend Unit & Integration Tests (75 pytest tests covering 3-layer session guard,
+#    Cloud Identity PENDING_APPROVAL & re-logged-in BLOCKED sweeps, JWT iat invalidation,
+#    shared Wi-Fi NAT protection, OU/Group scoping, and strict recentUsers filtering):
+PYTHONPATH=. backend/venv/bin/pytest backend/tests/ -q
+
+# 2. Run Frontend Component & Heartbeat Tests (10 Vitest tests covering unified Dashboard,
+#    inline 401 session termination, 15m onboarding grace pass, and Admin Config):
+npm --prefix frontend test
+
+# 3. Verify Production Frontend Bundle Compilation:
+npm --prefix frontend run build
+```
 
 ---
 

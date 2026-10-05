@@ -49,21 +49,16 @@ The **Device Trust Gateway** is a zero-trust bridge application that decouples a
 
 ## 2. Google Workspace Edition & Licensing Requirements
 
-Context-Aware Access (CAA) and advanced Cloud Identity device approval APIs require specific Google Workspace or Cloud Identity editions. 
+The Device Trust Gateway supports **all** Google Workspace for Education and Enterprise editions via two independent (or combined) enforcement toggles in the Admin Portal (`#/admin`). **Both toggles are disabled by default on new installations** so administrators can complete initial setup safely before turning on enforcement:
 
-### Supported Google Workspace & Cloud Identity Editions
-To deploy Context-Aware Access policies and integrate with the Devices API, your tenant must hold licenses for at least one of the following editions:
-
-| License Category | Supported Editions |
-| :--- | :--- |
-| **Education** | • Google Workspace for Education Plus<br>• Google Workspace for Education Standard<br>• Endpoint Education Upgrade |
-| **Enterprise** | • Google Workspace Enterprise Plus<br>• Google Workspace Enterprise Standard<br>• Google Workspace Enterprise Essentials / Essentials Plus |
-| **Business** | • Google Workspace Business Plus *(Computers/Laptops via Endpoint Verification)* |
-| **Frontline** | • Google Workspace Frontline Standard<br>• Google Workspace Frontline Plus |
-| **Standalone Identity** | • Cloud Identity Premium |
+| Enforcement Mode Toggle (`#/admin`) | Supported Editions | How It Enforces Device Trust |
+| :--- | :--- | :--- |
+| **Session Management & Circuit Breaker** (`session_watch_enabled`) | • **Google Workspace for Education Fundamentals**<br>• Also works on Education Standard / Plus & Enterprise | Enforces approved devices **without** requiring Context-Aware Access licenses using a 3-layer sub-10s pipeline:<br>1. **Layer 1 (`< 0.5s` Inline Portal Check + `8s` Heartbeat):** Immediately terminates sessions and returns `HTTP 401` if opened on an unapproved or `BLOCKED` device.<br>2. **Layer 2 (`~2–10s` Cloud Identity `lastSyncTime` Sub-Polling):** 1-minute Cloud Scheduler runs 5x 10s sub-polls inspecting `PENDING_APPROVAL` and re-logged-in `BLOCKED` BYOD syncs.<br>3. **Layer 3 (Admin SDK `login` Audit Sweep + Circuit Breaker):** Calls `users.signOut` + `directory.tokens.delete`. |
+| **Context-Aware Access (CAA) Integration** (`caa_enforcement_enabled`) | • **Google Workspace for Education Plus & Standard**<br>• Endpoint Education Upgrade<br>• Google Workspace Enterprise Plus / Standard / Essentials<br>• Google Workspace Business Plus / Frontline<br>• Cloud Identity Premium | Enforces inline `403 Access Denied` edge blocks on Gmail, Drive, Docs, and Classroom via the CEL Access Level:<br>`device.is_corp_owned_device == true \|\| device.is_admin_approved_device == true` |
+| **Combined Defense-in-Depth (`BOTH`)** | • **Google Workspace for Education Standard / Plus** *(Configured on live `gwfe.org` test environment)* | CAA blocks Workspace apps inline at the edge while Session Management immediately terminates the underlying `accounts.google.com` login session and OAuth grants within seconds. |
 
 > [!IMPORTANT]
-> **Licensing Verification:** Ensure that target users (especially Super Administrators and staff) have one of the above licenses assigned in **Directory > Users**. Without a supported edition, Context-Aware Access rules will not be evaluated for the user account.
+> **New Install Default (`DISABLED` Standby Mode):** Fresh deployments via `./deploy.sh` initialize with `session_watch_enabled: false` and `caa_enforcement_enabled: false` (`enforcement_mode: "DISABLED"`). Navigate to `#/admin` after deployment to enable the mode(s) matching your domain edition.
 
 ---
 
@@ -261,6 +256,7 @@ The repository includes an interactive deployment script (`deploy.sh`) that auto
 * `--project <ID>` (`GCP_PROJECT=<ID>`): Pre-specifies target Google Cloud Project ID.
 * `--region <REGION>` (`GCP_REGION=<REGION>`): Pre-specifies target Cloud Run and Cloud Scheduler region (default: `us-central1`).
 * `--target <1|2>` (`DEPLOY_TARGET=<1|2>`): Pre-selects deployment target (`1` for Cloud Run, `2` for Docker Compose).
+* `--mode <MODE>` (`ENFORCEMENT_MODE=<MODE>`): Sets initial enforcement mode (`DISABLED` [default for new installs], `SESSION_WATCH`, `CAA`, or `BOTH`).
 
 #### 🪟 Windows Deployment Instructions (Git Bash / WSL)
 For Windows 10 / 11 / Server environments:
@@ -286,11 +282,12 @@ For Windows 10 / 11 / Server environments:
 
 **Automated Deployment Phases:**
 1. **Pre-flight Billing Check & Diagnostics:** Verifies GCP billing enablement before creating resources. If verification fails (e.g. missing IAM permissions or disabled Cloud Billing API), the script prints the exact `gcloud` error message and diagnostic remedies directly to the console.
-2. **Phase 1 (Baseline Container Build):** Deploys the initial FastAPI/React container to Cloud Run to generate your live HTTPS domain (`https://device-trust-gateway-HASH-uc.a.run.app`).
+2. **Phase 1 (Baseline Container Build):** Deploys the initial FastAPI/React container to Cloud Run (`--max-instances=1`) to generate your live HTTPS domain (`https://device-trust-gateway-HASH-uc.a.run.app`).
 3. **Phase 2 (OAuth Origin Registration):** Prompts you to paste your live Cloud Run URL into Google Cloud Console as an Authorized JavaScript Origin, collecting your Client ID string.
 4. **Phase 3 (Final Revision Build):** Re-compiles the React frontend bundle with your Client ID and deploys the final Cloud Run revision.
-5. **Phase 4 (Domain-Wide Delegation Setup):** Creates the service account `device-trust-gateway-sa`, exports `dwd_key.json`, and displays client ID authorization links for the Workspace Admin Console.
+5. **Phase 4 (Domain-Wide Delegation Setup):** Creates the service account `device-trust-gateway-sa`, exports `dwd_key.json`, and displays client ID authorization links for the Workspace Admin Console (with all 6 required scopes).
 6. **Phase 5 (Identity-Aware Proxy / IAP Edge Defense):** Prompts to automatically restrict Cloud Run ingress to Internal/Load Balancer traffic, creates the Serverless NEG and Backend Service, and enables Google Cloud IAP.
+7. **Phase 6 (Post-Install Activation in `#/admin` — Disabled by Default on New Installs):** New installations start in safe Standby Mode (`session_watch_enabled: false`, `caa_enforcement_enabled: false`, `enforcement_mode: "DISABLED"`). Navigate to `#/admin` to toggle on **Session Management (Education Fundamentals)**, **Context-Aware Access Integration (Education Standard & Plus)**, or **Both**, and click **🔄 Sync Inventory Cache**.
 
 ---
 
@@ -306,6 +303,7 @@ For on-premise virtual machines or internal servers:
    TENANT_PORTAL_ADMINS=["admin@yourdomain.com"]
    WORKSPACE_ADMIN_EMAIL=admin@yourdomain.com
    GOOGLE_APPLICATION_CREDENTIALS=dwd_key.json
+   ENFORCEMENT_MODE=DISABLED
    ```
 2. Build and launch the container stack:
    ```bash
@@ -326,13 +324,14 @@ gcloud services enable run.googleapis.com secretmanager.googleapis.com cloudiden
 gcloud secrets create device_trust_gateway_config --replication-policy="automatic"
 
 # 3. Build container image via Cloud Build
-gcloud builds submit --tag gcr.io/$GOOGLE_CLOUD_PROJECT/device-trust-gateway deploy/
+gcloud builds submit --config cloudbuild.yaml . --substitutions=_GOOGLE_CLIENT_ID="YOUR_OAUTH_CLIENT_ID"
 
 # 4. Deploy service to Cloud Run
 gcloud run deploy device-trust-gateway \
   --image gcr.io/$GOOGLE_CLOUD_PROJECT/device-trust-gateway \
   --platform managed \
   --region us-central1 \
+  --max-instances=1 \
   --set-env-vars="USE_SECRET_MANAGER=true,SECRET_NAME=device_trust_gateway_config"
 ```
 
@@ -377,17 +376,29 @@ If your security policy mandates strict on-campus-only gating:
 
 ## 6. Operational Runbook & Troubleshooting
 
-### Daily/Weekly Operations & Cleanup Cron
-The Gateway backend includes an automated cleanup endpoint `/api/cron/cleanup` that revokes BYOD devices inactive for longer than your threshold (default: 90 days).
-
-To configure a recurring Cloud Scheduler job:
-```bash
-gcloud scheduler jobs create http byod-inactivity-cleanup \
-  --schedule="0 2 * * *" \
-  --uri="https://YOUR-GATEWAY-URL/api/cron/cleanup" \
-  --headers="X-CloudScheduler=true" \
-  --http-method=POST
-```
+### Sub-Minute Session Management Sweep & Daily Cleanup Cron
+1. **1-Minute Session Management Login Sweep (`session-watch-login-sweep`):**
+   Configured automatically by `./deploy.sh` to run every 1 minute (`* * * * *`) with a 60-second deadline (executing 5 sub-polls spaced 10s apart when `session_watch_enabled: true`, and safely skipping with `SKIPPED_DISABLED` when disabled on a fresh install):
+   ```bash
+   gcloud scheduler jobs create http session-watch-login-sweep \
+     --schedule="* * * * *" \
+     --uri="https://YOUR-GATEWAY-URL/api/session-watch/live-sweep" \
+     --headers="X-CloudScheduler=true,Content-Type=application/json" \
+     --message-body='{"max_results":250}' \
+     --attempt-deadline=60s \
+     --http-method=POST \
+     --location=us-central1
+   ```
+2. **Daily BYOD Inactivity Cleanup & Chromebook Fleet Sync (`byod-inactivity-cleanup`):**
+   Revokes BYOD devices inactive for longer than your threshold (default: 90 days) and synchronizes newly enrolled Chromebooks:
+   ```bash
+   gcloud scheduler jobs create http byod-inactivity-cleanup \
+     --schedule="0 2 * * *" \
+     --uri="https://YOUR-GATEWAY-URL/api/cron/cleanup" \
+     --headers="X-CloudScheduler=true" \
+     --http-method=POST \
+     --location=us-central1
+   ```
 
 ### Domain Audit & Troubleshooting Command
 To inspect Cloud Identity device bindings, serial numbers, and audit events directly from your terminal:
@@ -437,6 +448,8 @@ If you misplaced your unique Cloud Run portal URL after deployment:
 
 | Issue | Cause | Fix |
 | :--- | :--- | :--- |
+| **Enforcement appears inactive after fresh install (`⚙️ ENFORCEMENT STANDBY`)** | Both `session_watch_enabled` and `caa_enforcement_enabled` start `false` by default on new installs | Open `#/admin`, toggle on **Session Management (Education Fundamentals)** and/or **Context-Aware Access Integration (Education Standard & Plus)**, click **💾 Save Configurations**, and click **🔄 Sync Inventory Cache**. |
+| **User stays signed into `accounts.google.com` on an unapproved Mac even though CAA blocks Gmail/Drive** | CAA blocks Workspace apps at the edge, while `accounts.google.com` stays signed in unless Session Management (`users.signOut`) is enabled | Enable **Session Management (Education Fundamentals)** alongside CAA in `#/admin` (`enforcement_mode: "BOTH"`). The 3-layer pipeline (`<0.5s` inline portal check + `~2–10s` Cloud Identity `lastSyncTime` sub-polls on `PENDING_APPROVAL` & `BLOCKED` devices) immediately revokes the Google session and OAuth grants. |
 | **Did not seed company inventory during `./deploy.sh`** | Skipped prompt or deployment finished before seeding | Run `backend/venv/bin/python backend/scripts/seed_company_inventory.py` to seed Chromebooks, or upload Mac/PC serials to Google Admin Console > Company-owned inventory. |
 | **Misplaced or forgot unique Cloud Run Portal URL** | Portal URL was lost in terminal scrollback or between testing sessions | View it in [Cloud Run Console](https://console.cloud.google.com/run) > `device-trust-gateway` (at top of page), or run `gcloud run services describe device-trust-gateway --region <REGION> --format='value(status.url)'`. Append `/#/admin` for Admin UI. |
 | **Deployment stuck at billing check or fails with permission error** | Deploying account lacks `roles/billing.viewer` or `cloudbilling.googleapis.com` is disabled | Run with `./deploy.sh --verbose` to view exact CLI error details. If billing is managed centrally, run with `./deploy.sh --skip-billing-check` to bypass the verification. |

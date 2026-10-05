@@ -280,4 +280,42 @@ describe("Dashboard Page", () => {
       ).toBeInTheDocument();
     });
   });
+
+  test("renders enforcement standby badge for admin on new install (both toggles disabled) and active badge when enabled", async () => {
+    localStorage.setItem("userEmail", "admin@example.com");
+    localStorage.setItem("googleIdToken", "mock-token");
+
+    mockGetPublicConfig.mockResolvedValue({
+      default_locale: "en",
+      enforcement_mode: "DISABLED",
+      session_watch_enabled: false,
+      caa_enforcement_enabled: false,
+    });
+    mockCheckIsAdmin.mockResolvedValue(true);
+    mockGetMyDevices.mockResolvedValue([]);
+
+    const { unmount } = render(<Dashboard />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("enforcement-standby-badge")).toBeInTheDocument();
+      expect(screen.getByText(/ENFORCEMENT STANDBY — CONFIGURE IN ADMIN/i)).toBeInTheDocument();
+    });
+
+    unmount();
+
+    mockGetPublicConfig.mockResolvedValue({
+      default_locale: "en",
+      enforcement_mode: "BOTH",
+      session_watch_enabled: true,
+      caa_enforcement_enabled: true,
+    });
+
+    render(<Dashboard />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("enforcement-mode-badge")).toBeInTheDocument();
+      expect(screen.getByText(/CAA \+ SESSION MANAGEMENT ACTIVE/i)).toBeInTheDocument();
+    });
+  });
 });
+
