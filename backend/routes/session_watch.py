@@ -34,14 +34,29 @@ from backend.services.session_guard import (
 
 router = APIRouter(prefix="/api/session-watch", tags=["Session Watch (CAA-Free)"])
 
-
 def _live_signout_callback(user_email: str) -> bool:
     """Executes real Admin SDK Directory users.signOut circuit breaker."""
     return directory_service.sign_out_user(user_email)
 
 
 # Singleton guard service for runtime enforcement
-session_guard = SessionGuardService(signout_callback=_live_signout_callback)
+session_guard = SessionGuardService(
+    signout_callback=_live_signout_callback,
+    user_ou_lookup=lambda email: directory_service.get_user_details(email).get("orgUnitPath", "/"),
+)
+
+
+def _sync_guard_config() -> None:
+    cfg = config_service.get_tenant_config()
+    sw_active = bool(
+        getattr(cfg, "session_watch_enabled", False)
+        or getattr(cfg, "enable_session_guard", False)
+    )
+    is_dry = bool(getattr(cfg, "session_watch_dry_run", False)) or getattr(cfg, "session_guard_mode", "DISABLED") == "AUDIT_SIMULATION"
+    session_guard.enabled = sw_active and not is_dry
+    session_guard.exempt_ous = getattr(cfg, "session_guard_exempt_ous", [])
+    session_guard.exempt_groups = getattr(cfg, "session_guard_exempt_groups", [])
+    session_guard.campus_egress_ips = set(getattr(cfg, "trusted_ip_ranges", []))
 
 
 class ExtensionAttestRequest(BaseModel):
@@ -293,6 +308,8 @@ async def verify_active_session_status(
         target_groups=getattr(config, "session_watch_target_groups", []),
         exempt_admins=getattr(config, "session_watch_exempt_admins", False),
         portal_admins=getattr(config, "portal_admins", []),
+        exempt_ous=getattr(config, "session_guard_exempt_ous", []),
+        exempt_groups=getattr(config, "session_guard_exempt_groups", []),
     )
     if not in_scope:
         return {"status": "OK", "session_watch_enabled": True, "exempt": True, "reason": scope_reason}
@@ -460,6 +477,7 @@ async def attest_device_session(
 @router.post("/sweep")
 async def evaluate_login_sweep(body: SweepRequest) -> Dict[str, object]:
     """Evaluates a 1-to-5 minute window of domain login events and revokes unattested sessions."""
+    _sync_guard_config()
     config = config_service.get_tenant_config()
     sw_enabled = bool(
         getattr(config, "session_watch_enabled", False)
@@ -486,14 +504,18 @@ async def evaluate_login_sweep(body: SweepRequest) -> Dict[str, object]:
         print(session_guard.format_cloud_logging_entry(action), flush=True)
     revoked = [a for a in actions if a.decision == "REVOKE_SIGN_OUT"]
     simulated = [a for a in actions if a.decision == "WOULD_REVOKE_DISABLED"]
+    exempt = [a for a in actions if a.decision == "ALLOW_EXEMPT"]
     return {
         "session_guard_enabled": sw_enabled,
+        "session_guard_mode": getattr(config, "session_guard_mode", "DISABLED"),
         "dry_run": not sw_enabled,
         "evaluated_count": len(audit_events),
         "revoked_count": len(revoked),
         "simulated_count": len(simulated),
+        "exempt_count": len(exempt),
         "revoked_users": [a.user_email for a in revoked],
         "simulated_users": [a.user_email for a in simulated],
+        "exempt_users": [a.user_email for a in exempt],
         "metrics": session_guard.metrics,
     }
 
@@ -501,6 +523,7 @@ async def evaluate_login_sweep(body: SweepRequest) -> Dict[str, object]:
 @router.post("/sweep-tokens")
 async def evaluate_token_sweep(body: TokenSweepRequest) -> Dict[str, object]:
     """Evaluates a batch of token audit events to detect cloud hosting ASNs and foreign IP pivots."""
+    _sync_guard_config()
     config = config_service.get_tenant_config()
     cookie_sentinel_active = bool(
         getattr(config, "cookie_threat_detection_enabled", False)
@@ -533,14 +556,20 @@ async def evaluate_token_sweep(body: TokenSweepRequest) -> Dict[str, object]:
     simulated = [
         a for a in actions if a.decision.startswith("WOULD_REVOKE_")
     ]
+    exempt = [a for a in actions if a.decision == "ALLOW_EXEMPT"]
     return {
         "session_guard_enabled": not is_dry_run,
+        "session_guard_mode": getattr(config, "session_guard_mode", "DISABLED"),
         "session_watch_enabled": bool(getattr(config, "session_watch_enabled", False)),
         "cookie_threat_detection_enabled": bool(getattr(config, "cookie_threat_detection_enabled", False)),
         "dry_run": is_dry_run,
         "evaluated_count": len(audit_events),
         "revoked_count": len(revoked),
         "simulated_count": len(simulated),
+        "exempt_count": len(exempt),
+        "revoked_users": [a.user_email for a in revoked],
+        "simulated_users": [a.user_email for a in simulated],
+        "exempt_users": [a.user_email for a in exempt],
         "flagged_actions": [
             {
                 "event_id": a.event_id,

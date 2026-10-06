@@ -137,6 +137,10 @@ class SessionGuardService:
         campus_egress_ips: Optional[Set[str]] = None,
         signout_callback: Optional[Callable[[str], bool]] = None,
         enabled: bool = False,  # Off by default in Admin Config
+        exempt_ous: Optional[List[str]] = None,
+        exempt_groups: Optional[List[str]] = None,
+        user_ou_lookup: Optional[Callable[[str], str]] = None,
+        user_groups_lookup: Optional[Callable[[str], List[str]]] = None,
     ) -> None:
         self.sqlite_path = sqlite_path
         self.attestation_ttl_sec = attestation_ttl_sec
@@ -145,6 +149,10 @@ class SessionGuardService:
         self.campus_egress_ips: Set[str] = campus_egress_ips or set()
         self.signout_callback = signout_callback
         self.enabled = enabled
+        self.exempt_ous: List[str] = exempt_ous or []
+        self.exempt_groups: List[str] = exempt_groups or []
+        self.user_ou_lookup = user_ou_lookup
+        self.user_groups_lookup = user_groups_lookup
 
         self._lock = threading.RLock()
         # O(1) RAM cache for 40,000+ devices (~4 MB memory footprint)
@@ -590,6 +598,35 @@ class SessionGuardService:
                     return att
         return None
 
+    def _is_ou_matching(self, user_ou: str, target_ou: str) -> bool:
+        if not user_ou or not target_ou:
+            return False
+        u = "/" + user_ou.strip().strip("/")
+        t = "/" + target_ou.strip().strip("/")
+        if t == "/":
+            return True
+        u_lower = u.lower()
+        t_lower = t.lower()
+        return u_lower == t_lower or u_lower.startswith(t_lower + "/")
+
+    def _is_user_exempt(self, user_email: str) -> Tuple[bool, str]:
+        """Checks if a user is exempt from automated session revocation by OU or Group."""
+        if self.user_ou_lookup and self.exempt_ous:
+            user_ou = self.user_ou_lookup(user_email)
+            if user_ou:
+                for eou in self.exempt_ous:
+                    if self._is_ou_matching(user_ou, eou):
+                        return True, f"User in exempt OU '{user_ou}' (matched rule '{eou}')"
+
+        if self.user_groups_lookup and self.exempt_groups:
+            user_groups = self.user_groups_lookup(user_email)
+            if user_groups:
+                for eg in self.exempt_groups:
+                    if eg.lower().strip() in [g.lower().strip() for g in user_groups]:
+                        return True, f"User in exempt Group '{eg}'"
+
+        return False, ""
+
     def evaluate_login_batch(
         self,
         events: List[LoginAuditEvent],
@@ -715,6 +752,27 @@ class SessionGuardService:
             if not is_new_post_signout_login and (now - last_signout) < self.signout_cooldown_sec:
                 continue
 
+            # 6. Check for OU or Group exemption (Super Admins, exempt staff, emergency responders)
+            is_exempt, exempt_reason = self._is_user_exempt(email_key)
+            if is_exempt:
+                self.metrics["exemptions_skipped"] = (
+                    self.metrics.get("exemptions_skipped", 0) + 1
+                )
+                if persist_all_allowed:
+                    actions.append(
+                        EnforcementAction(
+                            event_id=ev.event_id,
+                            user_email=email_key,
+                            ip_address=ev.ip_address,
+                            decision="ALLOW_EXEMPT",
+                            reason=exempt_reason,
+                            matched_serial=None,
+                            detection_latency_sec=age_sec,
+                            timestamp_iso=now_iso,
+                        )
+                    )
+                continue
+
             unapproved_desc = (
                 f"Unapproved BYOD device '{unapproved_dev.get('model', 'Personal Device')}' "
                 f"({unapproved_dev.get('device_type', 'BYOD')}, state={unapproved_dev.get('approval_state', 'PENDING_APPROVAL')}) "
@@ -831,6 +889,25 @@ class SessionGuardService:
                             )
                         )
                     continue
+
+            # Check for OU or Group exemption
+            is_exempt, exempt_reason = self._is_user_exempt(email_key)
+            if is_exempt:
+                self.metrics["exemptions_skipped"] = self.metrics.get("exemptions_skipped", 0) + 1
+                if persist_all_allowed:
+                    actions.append(
+                        EnforcementAction(
+                            event_id=ev.event_id,
+                            user_email=email_key,
+                            ip_address=ev.ip_address,
+                            decision="ALLOW_EXEMPT",
+                            reason=exempt_reason,
+                            matched_serial=None,
+                            detection_latency_sec=age_sec,
+                            timestamp_iso=now_iso,
+                        )
+                    )
+                continue
 
             # Pathway 3 Check A: Datacenter / Cloud Hosting ASN Sentinel
             if asn_norm in KNOWN_HOSTING_ASNS:

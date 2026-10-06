@@ -29,8 +29,14 @@ class TenantConfig(BaseModel):
     google_client_id: str = Field(default="", description="Google OAuth 2.0 Client ID for frontend Google Sign-In")
     default_locale: str = Field(default="en", description="Default UI language code fallback for end users (e.g., 'en', 'es', 'fr', 'ja')")
     trusted_ip_ranges: List[str] = Field(default=[], description="Trusted campus CIDR ranges for network-gated approvals")
+    enable_network_approval: bool = Field(default=False, description="Master admin switch: Enable self-service device approval when connected to campus trusted Wi-Fi / IP ranges")
+    network_approval_allowed_ous: List[str] = Field(default=[], description="Organizational Units authorized for network-gated device approval")
+    network_approval_allowed_groups: List[str] = Field(default=[], description="Google Groups authorized for network-gated device approval")
+    enable_trust_chaining: bool = Field(default=False, description="Master admin switch: Enable trust chaining pairing codes from approved devices")
     chaining_allowed_groups: List[str] = Field(default=[], description="Google Groups authorized to perform trust chaining")
     chaining_allowed_ous: List[str] = Field(default=[], description="Organizational Units authorized to perform trust chaining")
+    chaining_denied_groups: List[str] = Field(default=[], description="Google Groups explicitly denied from trust chaining (overrides allow)")
+    chaining_denied_ous: List[str] = Field(default=[], description="Organizational Units explicitly denied from trust chaining (overrides allow)")
     enforcement_mode: str = Field(
         default="DISABLED",
         description="Enforcement architecture mode: 'DISABLED' (default), 'SESSION_WATCH' (Education Fundamentals), 'CAA' (Education Standard/Plus), 'COOKIE_SENTINEL', or 'BOTH'",
@@ -53,7 +59,19 @@ class TenantConfig(BaseModel):
     )
     enable_session_guard: bool = Field(
         default=False,
-        description="Enable automated session monitoring and token revocation",
+        description="Master admin switch: Enable automated session monitoring and token revocation",
+    )
+    session_guard_mode: str = Field(
+        default="DISABLED",
+        description="Session Guard enforcement mode: 'DISABLED', 'AUDIT_SIMULATION', or 'ENFORCE_ACTIVE'",
+    )
+    session_guard_exempt_ous: List[str] = Field(
+        default=[],
+        description="Organizational Units exempt from automated session revocation",
+    )
+    session_guard_exempt_groups: List[str] = Field(
+        default=[],
+        description="Google Groups exempt from automated session revocation",
     )
     caa_enforcement_enabled: bool = Field(
         default=False,
@@ -82,7 +100,14 @@ class TenantConfig(BaseModel):
 
     @model_validator(mode="after")
     def _sync_session_guard_aliases(self) -> "TenantConfig":
-        if self.session_watch_enabled != self.enable_session_guard:
+        if self.session_guard_mode == "AUDIT_SIMULATION":
+            self.session_watch_dry_run = True
+            self.enable_session_guard = True
+            self.session_watch_enabled = True
+        elif self.session_guard_mode == "ENFORCE_ACTIVE":
+            self.enable_session_guard = True
+            self.session_watch_enabled = True
+        elif self.session_watch_enabled != self.enable_session_guard:
             merged_sw = bool(self.session_watch_enabled or self.enable_session_guard)
             self.session_watch_enabled = merged_sw
             self.enable_session_guard = merged_sw
@@ -95,6 +120,11 @@ class TenantConfig(BaseModel):
             self.cookie_threat_detection_enabled = True
             self.session_guard_watch_token_stream = True
             self.session_guard_block_hosting_asns = True
+
+        if self.session_watch_enabled and self.session_guard_mode == "DISABLED":
+            self.session_guard_mode = (
+                "AUDIT_SIMULATION" if self.session_watch_dry_run else "ENFORCE_ACTIVE"
+            )
 
         if self.enforcement_mode == "DISABLED" and (
             self.session_watch_enabled
@@ -123,6 +153,7 @@ def _derive_enforcement_mode(
     if cookie_threat_detection_enabled:
         return "COOKIE_SENTINEL"
     return "DISABLED"
+
 
 class ConfigService:
     def __init__(self):
@@ -193,6 +224,7 @@ class ConfigService:
         derived_mode = _derive_enforcement_mode(sw_enabled_env, caa_enabled_env, cookie_enabled_env)
         exempt_admins_env = os.getenv("TENANT_SESSION_WATCH_EXEMPT_ADMINS", "false").lower() == "true"
         dry_run_env = os.getenv("TENANT_SESSION_WATCH_DRY_RUN", "false").lower() == "true"
+        guard_mode_env = os.getenv("TENANT_SESSION_GUARD_MODE", "DISABLED").upper()
 
         return TenantConfig(
             customer_id=os.getenv("TENANT_CUSTOMER_ID", "customers/my_customer"),
@@ -202,14 +234,23 @@ class ConfigService:
             google_client_id=os.getenv("TENANT_GOOGLE_CLIENT_ID", "") or env_client_id,
             default_locale=os.getenv("TENANT_DEFAULT_LOCALE", "en"),
             trusted_ip_ranges=json.loads(os.getenv("TENANT_TRUSTED_IPS", '[]')),
+            enable_network_approval=os.getenv("TENANT_ENABLE_NETWORK_APPROVAL", "false").lower() == "true",
+            network_approval_allowed_ous=json.loads(os.getenv("TENANT_NETWORK_APPROVAL_OUS", '[]')),
+            network_approval_allowed_groups=json.loads(os.getenv("TENANT_NETWORK_APPROVAL_GROUPS", '[]')),
+            enable_trust_chaining=os.getenv("TENANT_ENABLE_TRUST_CHAINING", "false").lower() == "true",
             chaining_allowed_groups=json.loads(os.getenv("TENANT_CHAINING_GROUPS", '[]')),
             chaining_allowed_ous=json.loads(os.getenv("TENANT_CHAINING_OUS", '[]')),
+            chaining_denied_groups=json.loads(os.getenv("TENANT_CHAINING_DENIED_GROUPS", '[]')),
+            chaining_denied_ous=json.loads(os.getenv("TENANT_CHAINING_DENIED_OUS", '[]')),
             enforcement_mode=derived_mode,
             session_watch_enabled=sw_enabled_env,
             cookie_threat_detection_enabled=cookie_enabled_env,
             session_guard_watch_token_stream=cookie_enabled_env,
             session_guard_block_hosting_asns=cookie_enabled_env,
             enable_session_guard=enable_guard_env,
+            session_guard_mode=guard_mode_env,
+            session_guard_exempt_ous=json.loads(os.getenv("TENANT_SESSION_GUARD_EXEMPT_OUS", '[]')),
+            session_guard_exempt_groups=json.loads(os.getenv("TENANT_SESSION_GUARD_EXEMPT_GROUPS", '[]')),
             caa_enforcement_enabled=caa_enabled_env,
             session_watch_target_ous=json.loads(os.getenv("TENANT_SESSION_WATCH_TARGET_OUS", '[]')),
             session_watch_target_groups=json.loads(os.getenv("TENANT_SESSION_WATCH_TARGET_GROUPS", '[]')),
@@ -230,6 +271,12 @@ class ConfigService:
         config.session_guard_watch_token_stream = cookie_flag
         config.session_guard_block_hosting_asns = cookie_flag
         config.enable_session_guard = bool(sw_flag or cookie_flag)
+        if sw_flag or cookie_flag:
+            config.session_guard_mode = (
+                "AUDIT_SIMULATION" if config.session_watch_dry_run else "ENFORCE_ACTIVE"
+            )
+        else:
+            config.session_guard_mode = "DISABLED"
         config.enforcement_mode = _derive_enforcement_mode(
             sw_flag, bool(config.caa_enforcement_enabled), cookie_flag
         )
@@ -258,14 +305,23 @@ class ConfigService:
         set_key(dotenv_path, "TENANT_GOOGLE_CLIENT_ID", config.google_client_id)
         set_key(dotenv_path, "TENANT_DEFAULT_LOCALE", config.default_locale)
         set_key(dotenv_path, "TENANT_TRUSTED_IPS", json.dumps(config.trusted_ip_ranges))
+        set_key(dotenv_path, "TENANT_ENABLE_NETWORK_APPROVAL", str(config.enable_network_approval).lower())
+        set_key(dotenv_path, "TENANT_NETWORK_APPROVAL_OUS", json.dumps(config.network_approval_allowed_ous))
+        set_key(dotenv_path, "TENANT_NETWORK_APPROVAL_GROUPS", json.dumps(config.network_approval_allowed_groups))
+        set_key(dotenv_path, "TENANT_ENABLE_TRUST_CHAINING", str(config.enable_trust_chaining).lower())
         set_key(dotenv_path, "TENANT_CHAINING_GROUPS", json.dumps(config.chaining_allowed_groups))
         set_key(dotenv_path, "TENANT_CHAINING_OUS", json.dumps(config.chaining_allowed_ous))
+        set_key(dotenv_path, "TENANT_CHAINING_DENIED_GROUPS", json.dumps(config.chaining_denied_groups))
+        set_key(dotenv_path, "TENANT_CHAINING_DENIED_OUS", json.dumps(config.chaining_denied_ous))
         set_key(dotenv_path, "TENANT_ENFORCEMENT_MODE", config.enforcement_mode)
         set_key(dotenv_path, "TENANT_SESSION_WATCH_ENABLED", "true" if config.session_watch_enabled else "false")
         set_key(dotenv_path, "TENANT_COOKIE_THREAT_DETECTION_ENABLED", "true" if config.cookie_threat_detection_enabled else "false")
         set_key(dotenv_path, "TENANT_SESSION_GUARD_WATCH_TOKEN_STREAM", "true" if config.session_guard_watch_token_stream else "false")
         set_key(dotenv_path, "TENANT_SESSION_GUARD_BLOCK_HOSTING_ASNS", "true" if config.session_guard_block_hosting_asns else "false")
         set_key(dotenv_path, "TENANT_ENABLE_SESSION_GUARD", "true" if config.enable_session_guard else "false")
+        set_key(dotenv_path, "TENANT_SESSION_GUARD_MODE", config.session_guard_mode)
+        set_key(dotenv_path, "TENANT_SESSION_GUARD_EXEMPT_OUS", json.dumps(config.session_guard_exempt_ous))
+        set_key(dotenv_path, "TENANT_SESSION_GUARD_EXEMPT_GROUPS", json.dumps(config.session_guard_exempt_groups))
         set_key(dotenv_path, "TENANT_CAA_ENFORCEMENT_ENABLED", "true" if config.caa_enforcement_enabled else "false")
         set_key(dotenv_path, "TENANT_SESSION_WATCH_TARGET_OUS", json.dumps(config.session_watch_target_ous))
         set_key(dotenv_path, "TENANT_SESSION_WATCH_TARGET_GROUPS", json.dumps(config.session_watch_target_groups))

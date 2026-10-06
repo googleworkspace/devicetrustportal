@@ -46,6 +46,8 @@ def mock_services():
             customer_id="customers/my_customer",
             inactivity_threshold_days=90,
             trusted_ip_ranges=["127.0.0.1/32"],
+            enable_network_approval=True,
+            enable_trust_chaining=True,
             chaining_allowed_groups=["trust-chaining-allowed@example.com"],
             chaining_allowed_ous=["/Staff"]
         )

@@ -113,12 +113,22 @@ def consume_pairing_code(code: str) -> str:
 def generate_pairing_code(user_email: str = Depends(get_current_user_email)):
     """Generates a temporary pairing code if caller is permitted to chain trust."""
     config = config_service.get_tenant_config()
+
+    # Master Admin Switch check
+    if not config.enable_trust_chaining:
+        raise HTTPException(
+            status_code=403, 
+            detail="Device trust chaining is disabled by domain policy."
+        )
     
-    # Verify user chaining policy (Group overriding OU)
+    # Verify user chaining policy (Group overriding OU, hierarchical matching, negative deny lists)
     is_allowed = directory_service.get_user_chaining_policy(
         user_email=user_email,
         allowed_groups=config.chaining_allowed_groups,
-        allowed_ous=config.chaining_allowed_ous
+        allowed_ous=config.chaining_allowed_ous,
+        denied_groups=config.chaining_denied_groups,
+        denied_ous=config.chaining_denied_ous,
+        feature_enabled=config.enable_trust_chaining,
     )
     
     if not is_allowed:

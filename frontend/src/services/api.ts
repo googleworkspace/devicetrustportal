@@ -26,8 +26,18 @@ export interface TenantConfig {
   google_client_id?: string;
   default_locale?: string;
   trusted_ip_ranges?: string[];
+  enable_network_approval?: boolean;
+  network_approval_allowed_ous?: string[];
+  network_approval_allowed_groups?: string[];
+  enable_trust_chaining?: boolean;
   chaining_allowed_groups?: string[];
   chaining_allowed_ous?: string[];
+  chaining_denied_groups?: string[];
+  chaining_denied_ous?: string[];
+  enable_session_guard?: boolean;
+  session_guard_mode?: string;
+  session_guard_exempt_ous?: string[];
+  session_guard_exempt_groups?: string[];
   enforcement_mode?: string;
   session_watch_enabled?: boolean;
   cookie_threat_detection_enabled?: boolean;
@@ -58,6 +68,7 @@ export interface SessionWatchMetricsResponse {
     deferred_grace_window: number;
     onboarding_grace_allowed?: number;
     skipped_out_of_scope?: number;
+    exemptions_skipped?: number;
     audit_would_signout?: number;
     signouts_executed: number;
     reports_api_calls: number;
