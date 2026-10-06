@@ -24,7 +24,8 @@ class DirectoryService:
         self.scopes = [
             "https://www.googleapis.com/auth/admin.directory.user.readonly",
             "https://www.googleapis.com/auth/admin.directory.group.member.readonly",
-            "https://www.googleapis.com/auth/admin.directory.device.chromeos.readonly"
+            "https://www.googleapis.com/auth/admin.directory.device.chromeos.readonly",
+            "https://www.googleapis.com/auth/admin.directory.user.security",
         ]
         self.init_error: Optional[str] = None
         self.key_path = resolve_dwd_key_path()
@@ -194,5 +195,22 @@ class DirectoryService:
         except Exception as e:
             print(f"Unexpected error fetching ChromeOS devices for {target_email}: {e}")
             return []
+
+    def sign_out_user(self, user_email: str) -> bool:
+        """Immediately invalidates all active login sessions and OAuth tokens for userKey."""
+        target_email = user_email.lower().strip()
+        if not self.service:
+            print(f"ERROR [directory_service.py]: Directory API service not initialized; cannot sign out '{target_email}'.")
+            return False
+        try:
+            self.service.users().signOut(userKey=target_email).execute()
+            print(f"SUCCESS [directory_service.py]: Revoked all active sessions for '{target_email}' via users.signOut.")
+            return True
+        except HttpError as e:
+            print(f"ERROR [directory_service.py]: Failed users.signOut for '{target_email}': {e}")
+            return False
+        except Exception as e:
+            print(f"ERROR [directory_service.py]: Unexpected error in users.signOut for '{target_email}': {e}")
+            return False
 
 directory_service = DirectoryService()

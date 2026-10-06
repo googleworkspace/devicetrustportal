@@ -37,6 +37,7 @@ class SessionGuardScaleTest(unittest.TestCase):
             grace_window_sec=45,
             signout_cooldown_sec=300,
             signout_callback=lambda email: revoked_users.append(email) or True,
+            enabled=True,
         )
 
         # 1. Load 40,000 district Chromebooks + 3,000 approved staff devices into RAM cache
@@ -160,6 +161,108 @@ class SessionGuardScaleTest(unittest.TestCase):
             f"\n- Directory API Calls Used : {guard.metrics['directory_api_calls']} / {guard.DIRECTORY_API_QPM_LIMIT} QPM limit "
             f"({guard.metrics['directory_batch_http_calls']} BatchHttpRequest)"
         )
+
+    def test_session_guard_disabled_by_default_simulates_only(self) -> None:
+        """Verifies that when enabled=False (default), session guard only logs WOULD_REVOKE_DISABLED without executing signOut."""
+        revoked_users = []
+        guard = SessionGuardService(
+            sqlite_path=":memory:",
+            signout_callback=lambda email: revoked_users.append(email) or True,
+            enabled=False,  # Disabled by default
+        )
+        login_events = [
+            LoginAuditEvent(
+                event_id="evt-unauthorized-1",
+                user_email="student99@district.edu",
+                ip_address="198.51.100.99",
+                timestamp_epoch=1000.0,
+            )
+        ]
+        actions = guard.evaluate_login_batch(login_events, now_epoch=1100.0)
+        self.assertEqual(len(actions), 1)
+        self.assertEqual(actions[0].decision, "WOULD_REVOKE_DISABLED")
+        self.assertEqual(guard.metrics["signouts_executed"], 0)
+        self.assertEqual(guard.metrics["signouts_simulated"], 1)
+        self.assertEqual(len(revoked_users), 0)
+
+    def test_token_stream_datacenter_hosting_asn_sentinel(self) -> None:
+        """Verifies that token activity from cloud hosting ASNs (Cloudflare, Latitude.sh) is flagged."""
+        from backend.services.session_guard import TokenAuditEvent
+
+        revoked_users = []
+        guard = SessionGuardService(
+            sqlite_path=":memory:",
+            signout_callback=lambda email: revoked_users.append(email) or True,
+            enabled=True,  # Active enforcement
+        )
+        token_events = [
+            TokenAuditEvent(
+                event_id="tok-cf-1",
+                user_email="student1@district.edu",
+                ip_address="2a09:bac3:bcee:2e28:0:0:499:2",
+                timestamp_epoch=1000.0,
+                app_name="Gmail Web",
+                asn="AS13335",  # Cloudflare
+            ),
+            TokenAuditEvent(
+                event_id="tok-lat-1",
+                user_email="student2@district.edu",
+                ip_address="103.14.26.50",
+                timestamp_epoch=1000.0,
+                app_name="Google Drive",
+                asn="AS396356",  # Latitude.sh (Mexico)
+            ),
+        ]
+        actions = guard.evaluate_token_batch(token_events, now_epoch=1010.0)
+        self.assertEqual(len(actions), 2)
+        self.assertEqual(actions[0].decision, "REVOKE_SIGN_OUT")
+        self.assertEqual(actions[1].decision, "REVOKE_SIGN_OUT")
+        self.assertEqual(guard.metrics["tokens_flagged_hosting_asn"], 2)
+        self.assertEqual(guard.metrics["signouts_executed"], 2)
+        self.assertEqual(set(revoked_users), {"student1@district.edu", "student2@district.edu"})
+
+    def test_token_stream_foreign_ip_divergence(self) -> None:
+        """Verifies that token activity diverging from an active approved device IP is revoked."""
+        from backend.services.session_guard import TokenAuditEvent
+
+        revoked_users = []
+        guard = SessionGuardService(
+            sqlite_path=":memory:",
+            signout_callback=lambda email: revoked_users.append(email) or True,
+            enabled=True,
+        )
+        # 1. Load approved device and attest session on home IP
+        guard.load_device_inventory([
+            DeviceRecord(
+                device_id="dev-staff-1",
+                serial_number="BYOD-APPROVED-01",
+                device_type="CLOUD_IDENTITY_APPROVED",
+                status="APPROVED",
+                assigned_user="teacher1@district.edu",
+            )
+        ])
+        guard.record_extension_attestation(
+            user_email="teacher1@district.edu",
+            serial_number="BYOD-APPROVED-01",
+            ip_address="73.1.2.3",  # Home Comcast IP
+            now_epoch=1000.0,
+        )
+
+        # 2. Token activity arrives from foreign unknown IP
+        token_events = [
+            TokenAuditEvent(
+                event_id="tok-div-1",
+                user_email="teacher1@district.edu",
+                ip_address="198.51.100.77",  # Foreign attacker IP
+                timestamp_epoch=1050.0,
+                app_name="Workspace Add-on",
+            )
+        ]
+        actions = guard.evaluate_token_batch(token_events, now_epoch=1060.0)
+        self.assertEqual(len(actions), 1)
+        self.assertEqual(actions[0].decision, "REVOKE_SIGN_OUT")
+        self.assertEqual(guard.metrics["tokens_flagged_ip_mismatch"], 1)
+        self.assertEqual(revoked_users, ["teacher1@district.edu"])
 
 
 if __name__ == "__main__":
