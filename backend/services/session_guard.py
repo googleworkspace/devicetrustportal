@@ -72,6 +72,35 @@ class LoginAuditEvent:
     is_suspicious: bool = False
 
 
+# Known cloud hosting / proxy ASNs frequently weaponized for token theft or proxy pivots
+KNOWN_HOSTING_ASNS: Set[str] = {
+    "AS13335",   # Cloudflare
+    "AS396356",  # Latitude.sh
+    "AS16509",   # Amazon AWS
+    "AS14618",   # Amazon AWS
+    "AS14061",   # DigitalOcean
+    "AS24940",   # Hetzner
+    "AS63949",   # Linode / Akamai
+    "AS8075",    # Microsoft Azure
+    "AS20473",   # AS-CHOOPA / Vultr
+    "AS16276",   # OVH
+}
+
+
+@dataclasses.dataclass
+class TokenAuditEvent:
+    """Normalized Admin SDK Reports API `token` activity event (OAuth grant/refresh)."""
+
+    event_id: str
+    user_email: str
+    ip_address: str
+    timestamp_epoch: float
+    app_name: str = ""
+    client_id: str = ""
+    asn: Optional[str] = None
+    is_suspicious: bool = False
+
+
 @dataclasses.dataclass
 class EnforcementAction:
     """Audit record of a session evaluation and circuit-breaker decision."""
@@ -107,6 +136,7 @@ class SessionGuardService:
         signout_cooldown_sec: int = 300,  # Cooldown for duplicate events with older timestamps
         campus_egress_ips: Optional[Set[str]] = None,
         signout_callback: Optional[Callable[[str], bool]] = None,
+        enabled: bool = False,  # Off by default in Admin Config
     ) -> None:
         self.sqlite_path = sqlite_path
         self.attestation_ttl_sec = attestation_ttl_sec
@@ -114,6 +144,7 @@ class SessionGuardService:
         self.signout_cooldown_sec = signout_cooldown_sec
         self.campus_egress_ips: Set[str] = campus_egress_ips or set()
         self.signout_callback = signout_callback
+        self.enabled = enabled
 
         self._lock = threading.RLock()
         # O(1) RAM cache for 40,000+ devices (~4 MB memory footprint)
@@ -138,12 +169,16 @@ class SessionGuardService:
             "attestations_received": 0,
             "onboarding_leases_granted": 0,
             "login_events_evaluated": 0,
+            "token_events_evaluated": 0,
             "allowed_attested": 0,
             "allowed_onboarding_grace": 0,
             "skipped_out_of_scope": 0,
             "deferred_grace_window": 0,
             "audit_would_signout": 0,
             "signouts_executed": 0,
+            "signouts_simulated": 0,
+            "tokens_flagged_hosting_asn": 0,
+            "tokens_flagged_ip_mismatch": 0,
             "reports_api_calls": 0,
             "directory_api_calls": 0,
             "directory_batch_http_calls": 0,
@@ -373,6 +408,7 @@ class SessionGuardService:
         user_email: str = "",
         ip_address: Optional[str] = None,
         now_epoch: Optional[float] = None,
+        device_type: str = "CLOUD_IDENTITY_APPROVED",
     ) -> str:
         """Immediately promotes a newly approved personal or corporate device into the O(1) cache
         and optionally attests the user's current browser session IP so they are never signed out.
@@ -388,7 +424,7 @@ class SessionGuardService:
         rec = DeviceRecord(
             device_id=device_id or clean_serial,
             serial_number=clean_serial,
-            device_type="CLOUD_IDENTITY_APPROVED",
+            device_type=device_type or "CLOUD_IDENTITY_APPROVED",
             status="APPROVED",
             assigned_user=email_key,
         )
@@ -558,10 +594,10 @@ class SessionGuardService:
         self,
         events: List[LoginAuditEvent],
         now_epoch: Optional[float] = None,
+        dry_run: Optional[bool] = None,
         persist_all_allowed: bool = False,
         scope_checker: Optional[Callable[[str], Tuple[bool, str]]] = None,
         unapproved_device_checker: Optional[Callable[[str, float], Optional[Dict[str, Any]]]] = None,
-        dry_run: bool = False,
     ) -> List[EnforcementAction]:
         """Evaluates a window of Admin SDK Reports `login` events and executes batched signOuts.
 
@@ -572,6 +608,8 @@ class SessionGuardService:
         """
         now = now_epoch if now_epoch is not None else time.time()
         now_iso = datetime.datetime.fromtimestamp(now, tz=datetime.timezone.utc).isoformat()
+        is_disabled_sim = (dry_run is None) and (not self.enabled)
+        is_audit_dry_run = dry_run is True
 
         # Count paginated Reports API calls required to fetch `len(events)`
         if events:
@@ -685,9 +723,10 @@ class SessionGuardService:
                 else f"Login session has no matching district device attestation (IP {ev.ip_address}, login_type={ev.login_type})"
             )
 
-            # 7. Audit Dry-Run Mode vs. Active Circuit-Breaker Enforcement
-            if dry_run:
+            # 7. Audit Dry-Run Mode or Disabled Simulation Mode vs. Active Circuit-Breaker Enforcement
+            if is_audit_dry_run:
                 self.metrics["audit_would_signout"] += 1
+                self.metrics["signouts_simulated"] += 1
                 self._enforced_event_ids.add(ev.event_id)
                 actions.append(
                     EnforcementAction(
@@ -696,6 +735,23 @@ class SessionGuardService:
                         ip_address=ev.ip_address,
                         decision="AUDIT_WOULD_SIGN_OUT",
                         reason=f"[Audit Dry-Run] {unapproved_desc}; signOut skipped in dry-run mode.",
+                        matched_serial=None,
+                        detection_latency_sec=age_sec,
+                        timestamp_iso=now_iso,
+                    )
+                )
+                continue
+
+            if is_disabled_sim:
+                self._recent_signouts[email_key] = now
+                self.metrics["signouts_simulated"] += 1
+                actions.append(
+                    EnforcementAction(
+                        event_id=ev.event_id,
+                        user_email=email_key,
+                        ip_address=ev.ip_address,
+                        decision="WOULD_REVOKE_DISABLED",
+                        reason=f"{unapproved_desc} [Session Guard Disabled/Dry-Run].",
                         matched_serial=None,
                         detection_latency_sec=age_sec,
                         timestamp_iso=now_iso,
@@ -724,6 +780,106 @@ class SessionGuardService:
             self._execute_batched_signouts(pending_signouts)
 
         # Persist enforcement actions to SQLite / structured log
+        if actions:
+            self._persist_actions(actions)
+
+        return actions
+
+    def evaluate_token_batch(
+        self,
+        events: List[TokenAuditEvent],
+        now_epoch: Optional[float] = None,
+        dry_run: Optional[bool] = None,
+        persist_all_allowed: bool = False,
+    ) -> List[EnforcementAction]:
+        """Evaluates Admin SDK Reports `token` events for hosting ASN or foreign IP pivots."""
+        now = now_epoch if now_epoch is not None else time.time()
+        now_iso = datetime.datetime.fromtimestamp(now, tz=datetime.timezone.utc).isoformat()
+        is_dry_run = dry_run if dry_run is not None else (not self.enabled)
+
+        if events:
+            pages = (len(events) + self.REPORTS_PAGE_SIZE - 1) // self.REPORTS_PAGE_SIZE
+            self.metrics["reports_api_calls"] += pages
+
+        actions: List[EnforcementAction] = []
+        pending_signouts: List[EnforcementAction] = []
+
+        for ev in events:
+            self.metrics["token_events_evaluated"] += 1
+            email_key = ev.user_email.strip().lower()
+            age_sec = max(0.0, now - ev.timestamp_epoch)
+            asn_norm = (ev.asn or "").strip().upper()
+
+            # Pathway 3 Check A: Datacenter / Cloud Hosting ASN Sentinel
+            if asn_norm in KNOWN_HOSTING_ASNS:
+                self.metrics["tokens_flagged_hosting_asn"] += 1
+                decision = "WOULD_REVOKE_HOSTING_ASN" if is_dry_run else "REVOKE_SIGN_OUT"
+                action = EnforcementAction(
+                    event_id=ev.event_id,
+                    user_email=email_key,
+                    ip_address=ev.ip_address,
+                    decision=decision,
+                    reason=f"Token activity from cloud hosting ASN '{asn_norm}' (IP {ev.ip_address}, app={ev.app_name}).",
+                    matched_serial=None,
+                    detection_latency_sec=age_sec,
+                    timestamp_iso=now_iso,
+                )
+                actions.append(action)
+                if is_dry_run:
+                    self.metrics["signouts_simulated"] += 1
+                else:
+                    pending_signouts.append(action)
+                continue
+
+            # Pathway 3 Check B: Foreign IP Divergence From Active Attested Sessions
+            active_att = self._active_attestations.get(email_key, [])
+            cutoff = now - self.attestation_ttl_sec
+            fresh_att = [a for a in active_att if a.attested_at_epoch >= cutoff]
+            if fresh_att:
+                known_ips = {a.ip_address for a in fresh_att}
+                if self.campus_egress_ips:
+                    known_ips.update(self.campus_egress_ips)
+                if ev.ip_address not in known_ips:
+                    self.metrics["tokens_flagged_ip_mismatch"] += 1
+                    decision = "WOULD_REVOKE_TOKEN_IP_MISMATCH" if is_dry_run else "REVOKE_SIGN_OUT"
+                    action = EnforcementAction(
+                        event_id=ev.event_id,
+                        user_email=email_key,
+                        ip_address=ev.ip_address,
+                        decision=decision,
+                        reason=(
+                            f"Token activity on foreign IP '{ev.ip_address}' diverging from "
+                            f"attested session IPs {sorted(known_ips)} (app={ev.app_name})."
+                        ),
+                        matched_serial=None,
+                        detection_latency_sec=age_sec,
+                        timestamp_iso=now_iso,
+                    )
+                    actions.append(action)
+                    if is_dry_run:
+                        self.metrics["signouts_simulated"] += 1
+                    else:
+                        pending_signouts.append(action)
+                    continue
+
+            # Legitimate token activity
+            if persist_all_allowed:
+                actions.append(
+                    EnforcementAction(
+                        event_id=ev.event_id,
+                        user_email=email_key,
+                        ip_address=ev.ip_address,
+                        decision="ALLOW_TOKEN_ACTIVITY",
+                        reason=f"Token activity on verified network (app={ev.app_name})",
+                        matched_serial=None,
+                        detection_latency_sec=age_sec,
+                        timestamp_iso=now_iso,
+                    )
+                )
+
+        if pending_signouts:
+            self._execute_batched_signouts(pending_signouts)
+
         if actions:
             self._persist_actions(actions)
 

@@ -39,6 +39,10 @@ class TenantConfig(BaseModel):
         default=False,
         description="Enable CAA-Free Session Management & users.signOut circuit breaker for Education Fundamentals domains (Disabled by default)",
     )
+    enable_session_guard: bool = Field(
+        default=False,
+        description="Enable automated session monitoring and token revocation for unattested/unapproved devices",
+    )
     caa_enforcement_enabled: bool = Field(
         default=False,
         description="Enable Context-Aware Access (CAA) device approval integration for Education Standard & Plus domains (Disabled by default)",
@@ -74,7 +78,6 @@ def _derive_enforcement_mode(session_watch_enabled: bool, caa_enforcement_enable
         return "CAA"
     return "DISABLED"
 
-
 class ConfigService:
     def __init__(self):
         self.project_id = os.getenv("GOOGLE_CLOUD_PROJECT")
@@ -102,9 +105,10 @@ class ConfigService:
                 response = self.sm_client.access_secret_version(request={"name": name})
                 payload = response.payload.data.decode("UTF-8")
                 data = json.loads(payload)
-                sw_enabled = bool(data.get("session_watch_enabled", False))
+                sw_enabled = bool(data.get("session_watch_enabled", False) or data.get("enable_session_guard", False))
                 caa_enabled = bool(data.get("caa_enforcement_enabled", False))
                 data["session_watch_enabled"] = sw_enabled
+                data["enable_session_guard"] = sw_enabled
                 data["caa_enforcement_enabled"] = caa_enabled
                 data["enforcement_mode"] = _derive_enforcement_mode(sw_enabled, caa_enabled)
                 config = TenantConfig(**data)
@@ -120,7 +124,10 @@ class ConfigService:
         if env_admin and env_admin not in [a.lower().strip() for a in local_admins]:
             local_admins.append(env_admin)
 
-        sw_enabled_env = os.getenv("TENANT_SESSION_WATCH_ENABLED", "false").lower() == "true"
+        sw_enabled_env = (
+            os.getenv("TENANT_SESSION_WATCH_ENABLED", "false").lower() == "true"
+            or os.getenv("TENANT_ENABLE_SESSION_GUARD", "false").lower() == "true"
+        )
         caa_enabled_env = os.getenv("TENANT_CAA_ENFORCEMENT_ENABLED", "false").lower() == "true"
         derived_mode = _derive_enforcement_mode(sw_enabled_env, caa_enabled_env)
         exempt_admins_env = os.getenv("TENANT_SESSION_WATCH_EXEMPT_ADMINS", "false").lower() == "true"
@@ -138,6 +145,7 @@ class ConfigService:
             chaining_allowed_ous=json.loads(os.getenv("TENANT_CHAINING_OUS", '[]')),
             enforcement_mode=derived_mode,
             session_watch_enabled=sw_enabled_env,
+            enable_session_guard=sw_enabled_env,
             caa_enforcement_enabled=caa_enabled_env,
             session_watch_target_ous=json.loads(os.getenv("TENANT_SESSION_WATCH_TARGET_OUS", '[]')),
             session_watch_target_groups=json.loads(os.getenv("TENANT_SESSION_WATCH_TARGET_GROUPS", '[]')),
@@ -147,8 +155,11 @@ class ConfigService:
         )
 
     def update_tenant_config(self, config: TenantConfig) -> bool:
+        sw_flag = bool(config.session_watch_enabled or config.enable_session_guard)
+        config.session_watch_enabled = sw_flag
+        config.enable_session_guard = sw_flag
         config.enforcement_mode = _derive_enforcement_mode(
-            bool(config.session_watch_enabled), bool(config.caa_enforcement_enabled)
+            sw_flag, bool(config.caa_enforcement_enabled)
         )
         config_dict = config.model_dump()
         config_json = json.dumps(config_dict)
@@ -179,6 +190,7 @@ class ConfigService:
         set_key(dotenv_path, "TENANT_CHAINING_OUS", json.dumps(config.chaining_allowed_ous))
         set_key(dotenv_path, "TENANT_ENFORCEMENT_MODE", config.enforcement_mode)
         set_key(dotenv_path, "TENANT_SESSION_WATCH_ENABLED", "true" if config.session_watch_enabled else "false")
+        set_key(dotenv_path, "TENANT_ENABLE_SESSION_GUARD", "true" if config.enable_session_guard else "false")
         set_key(dotenv_path, "TENANT_CAA_ENFORCEMENT_ENABLED", "true" if config.caa_enforcement_enabled else "false")
         set_key(dotenv_path, "TENANT_SESSION_WATCH_TARGET_OUS", json.dumps(config.session_watch_target_ous))
         set_key(dotenv_path, "TENANT_SESSION_WATCH_TARGET_GROUPS", json.dumps(config.session_watch_target_groups))

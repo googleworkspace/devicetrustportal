@@ -28,7 +28,8 @@ class DirectoryService:
         self.scopes = [
             "https://www.googleapis.com/auth/admin.directory.user.readonly",
             "https://www.googleapis.com/auth/admin.directory.group.member.readonly",
-            "https://www.googleapis.com/auth/admin.directory.device.chromeos.readonly"
+            "https://www.googleapis.com/auth/admin.directory.device.chromeos.readonly",
+            "https://www.googleapis.com/auth/admin.directory.user.security",
         ]
         self.init_error: Optional[str] = None
         self.key_path = resolve_dwd_key_path()
@@ -434,6 +435,13 @@ class DirectoryService:
         """
         target_email = user_email.strip().lower()
         if not self.key_path or not self.admin_email:
+            if self.service:
+                try:
+                    self.service.users().signOut(userKey=target_email).execute()
+                    return True
+                except Exception as e:
+                    print(f"ERROR [directory_service.py]: Failed users.signOut for '{target_email}': {e}")
+                    return False
             raise RuntimeError(
                 self.init_error or "DWD service account key or WORKSPACE_ADMIN_EMAIL is not configured."
             )
@@ -462,6 +470,5 @@ class DirectoryService:
             f"WARNING [directory_service.py]: Executed users.signOut circuit breaker for '{target_email}'."
         )
         return True
-
 
 directory_service = DirectoryService()

@@ -29,6 +29,7 @@ from backend.services.session_guard import (
     DeviceRecord,
     LoginAuditEvent,
     SessionGuardService,
+    TokenAuditEvent,
 )
 
 router = APIRouter(prefix="/api/session-watch", tags=["Session Watch (CAA-Free)"])
@@ -406,6 +407,24 @@ async def verify_active_session_status(
     return {"status": "OK", "session_watch_enabled": True}
 
 
+class TokenEventPayload(BaseModel):
+    event_id: str
+    user_email: str
+    ip_address: str
+    timestamp_epoch: Optional[float] = None
+    app_name: str = ""
+    client_id: str = ""
+    asn: Optional[str] = None
+    is_suspicious: bool = False
+
+
+class TokenSweepRequest(BaseModel):
+    events: List[TokenEventPayload] = Field(
+        default_factory=list,
+        description="Batch of token events fetched from Admin SDK Reports API activities.list(applicationName='token')",
+    )
+
+
 @router.post("/attest")
 async def attest_device_session(
     body: ExtensionAttestRequest,
@@ -440,7 +459,14 @@ async def attest_device_session(
 
 @router.post("/sweep")
 async def evaluate_login_sweep(body: SweepRequest) -> Dict[str, object]:
-    """Evaluates a batch of domain login events and revokes unattested sessions."""
+    """Evaluates a 1-to-5 minute window of domain login events and revokes unattested sessions."""
+    config = config_service.get_tenant_config()
+    sw_enabled = bool(
+        getattr(config, "session_watch_enabled", False)
+        or getattr(config, "enable_session_guard", False)
+    )
+    session_guard.enabled = sw_enabled
+
     now = time.time()
     audit_events = [
         LoginAuditEvent(
@@ -459,10 +485,60 @@ async def evaluate_login_sweep(body: SweepRequest) -> Dict[str, object]:
     for action in actions:
         print(session_guard.format_cloud_logging_entry(action), flush=True)
     revoked = [a for a in actions if a.decision == "REVOKE_SIGN_OUT"]
+    simulated = [a for a in actions if a.decision == "WOULD_REVOKE_DISABLED"]
     return {
+        "session_guard_enabled": sw_enabled,
+        "dry_run": not sw_enabled,
         "evaluated_count": len(audit_events),
         "revoked_count": len(revoked),
+        "simulated_count": len(simulated),
         "revoked_users": [a.user_email for a in revoked],
+        "simulated_users": [a.user_email for a in simulated],
+        "metrics": session_guard.metrics,
+    }
+
+
+@router.post("/sweep-tokens")
+async def evaluate_token_sweep(body: TokenSweepRequest) -> Dict[str, object]:
+    """Evaluates a batch of token audit events to detect cloud hosting ASNs and foreign IP pivots."""
+    config = config_service.get_tenant_config()
+    session_guard.enabled = config.enable_session_guard
+
+    now = time.time()
+    audit_events = [
+        TokenAuditEvent(
+            event_id=e.event_id,
+            user_email=e.user_email,
+            ip_address=e.ip_address,
+            timestamp_epoch=e.timestamp_epoch or (now - 60.0),
+            app_name=e.app_name,
+            client_id=e.client_id,
+            asn=e.asn,
+            is_suspicious=e.is_suspicious,
+        )
+        for e in body.events
+    ]
+    actions = session_guard.evaluate_token_batch(audit_events, now_epoch=now)
+    revoked = [a for a in actions if a.decision == "REVOKE_SIGN_OUT"]
+    simulated = [
+        a for a in actions if a.decision.startswith("WOULD_REVOKE_")
+    ]
+    return {
+        "session_guard_enabled": config.enable_session_guard,
+        "dry_run": not config.enable_session_guard,
+        "evaluated_count": len(audit_events),
+        "revoked_count": len(revoked),
+        "simulated_count": len(simulated),
+        "flagged_actions": [
+            {
+                "event_id": a.event_id,
+                "user_email": a.user_email,
+                "ip_address": a.ip_address,
+                "decision": a.decision,
+                "reason": a.reason,
+            }
+            for a in (revoked + simulated)
+        ],
         "metrics": session_guard.metrics,
     }
 
@@ -902,9 +978,14 @@ async def execute_live_reports_sweep(
 async def get_session_watch_metrics() -> Dict[str, object]:
     """Returns live quota utilization, rollout scope, onboarding leases, and enforcement metrics."""
     config = config_service.get_tenant_config()
+    sw_enabled = bool(
+        getattr(config, "session_watch_enabled", False)
+        or getattr(config, "enable_session_guard", False)
+    )
     return {
         "enforcement_mode": getattr(config, "enforcement_mode", "DISABLED"),
-        "session_watch_enabled": bool(getattr(config, "session_watch_enabled", False)),
+        "session_watch_enabled": sw_enabled,
+        "session_guard_enabled": sw_enabled,
         "caa_enforcement_enabled": bool(getattr(config, "caa_enforcement_enabled", False)),
         "branch_variation": "poc/fundamentals-session-watch",
         "dry_run": getattr(config, "session_watch_dry_run", False),
