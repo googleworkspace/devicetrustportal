@@ -31,6 +31,7 @@ class TenantConfig(BaseModel):
     trusted_ip_ranges: List[str] = Field(default=[], description="Trusted campus CIDR ranges for network-gated approvals")
     chaining_allowed_groups: List[str] = Field(default=[], description="Google Groups authorized to perform trust chaining")
     chaining_allowed_ous: List[str] = Field(default=[], description="Organizational Units authorized to perform trust chaining")
+    enable_session_guard: bool = Field(default=False, description="Enable automated session monitoring and token revocation for unattested/unapproved devices")
 
 class ConfigService:
     def __init__(self):
@@ -81,7 +82,8 @@ class ConfigService:
             default_locale=os.getenv("TENANT_DEFAULT_LOCALE", "en"),
             trusted_ip_ranges=json.loads(os.getenv("TENANT_TRUSTED_IPS", '[]')),
             chaining_allowed_groups=json.loads(os.getenv("TENANT_CHAINING_GROUPS", '[]')),
-            chaining_allowed_ous=json.loads(os.getenv("TENANT_CHAINING_OUS", '[]'))
+            chaining_allowed_ous=json.loads(os.getenv("TENANT_CHAINING_OUS", '[]')),
+            enable_session_guard=os.getenv("TENANT_ENABLE_SESSION_GUARD", "false").lower() == "true",
         )
 
     def update_tenant_config(self, config: TenantConfig) -> bool:
@@ -112,6 +114,7 @@ class ConfigService:
         set_key(dotenv_path, "TENANT_TRUSTED_IPS", json.dumps(config.trusted_ip_ranges))
         set_key(dotenv_path, "TENANT_CHAINING_GROUPS", json.dumps(config.chaining_allowed_groups))
         set_key(dotenv_path, "TENANT_CHAINING_OUS", json.dumps(config.chaining_allowed_ous))
+        set_key(dotenv_path, "TENANT_ENABLE_SESSION_GUARD", str(config.enable_session_guard).lower())
         
         load_dotenv(dotenv_path, override=True)
         return True
