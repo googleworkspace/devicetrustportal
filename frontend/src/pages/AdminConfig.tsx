@@ -25,12 +25,9 @@ import { getTranslator } from "../i18n/translations";
 
 function deriveEnforcementMode(
   sessionWatch: boolean,
-  caa: boolean,
   cookieThreat: boolean = false
 ): string {
-  if (sessionWatch && caa) return "BOTH";
   if (sessionWatch) return "SESSION_WATCH";
-  if (caa) return "CAA";
   if (cookieThreat) return "COOKIE_SENTINEL";
   return "DISABLED";
 }
@@ -138,7 +135,6 @@ interface PendingConfirmChange {
   overrides: Partial<{
     sessionWatchEnabled: boolean;
     cookieThreatDetectionEnabled: boolean;
-    caaEnforcementEnabled: boolean;
     sessionWatchExemptAdmins: boolean;
     sessionWatchDryRun: boolean;
     enableNetworkApproval: boolean;
@@ -163,7 +159,6 @@ export const AdminConfig: React.FC = () => {
   const [uiLocale, setUiLocale] = useState(() => localStorage.getItem("userLocale") || "en");
   const [sessionWatchEnabled, setSessionWatchEnabled] = useState(false);
   const [cookieThreatDetectionEnabled, setCookieThreatDetectionEnabled] = useState(false);
-  const [caaEnforcementEnabled, setCaaEnforcementEnabled] = useState(false);
   const [sessionWatchTargetOusInput, setSessionWatchTargetOusInput] = useState("");
   const [sessionWatchTargetGroupsInput, setSessionWatchTargetGroupsInput] = useState("");
   const [sessionWatchExemptAdmins, setSessionWatchExemptAdmins] = useState(false);
@@ -200,7 +195,6 @@ export const AdminConfig: React.FC = () => {
   const t = getTranslator(uiLocale || defaultLocale || "en");
   const enforcementMode = deriveEnforcementMode(
     sessionWatchEnabled,
-    caaEnforcementEnabled,
     cookieThreatDetectionEnabled
   );
 
@@ -226,7 +220,6 @@ export const AdminConfig: React.FC = () => {
         }
         setSessionWatchEnabled(Boolean(data.session_watch_enabled));
         setCookieThreatDetectionEnabled(Boolean(data.cookie_threat_detection_enabled));
-        setCaaEnforcementEnabled(Boolean(data.caa_enforcement_enabled));
         setSessionWatchTargetOusInput((data.session_watch_target_ous || []).join(", "));
         setSessionWatchTargetGroupsInput((data.session_watch_target_groups || []).join(", "));
         setSessionWatchExemptAdmins(Boolean(data.session_watch_exempt_admins));
@@ -270,7 +263,6 @@ export const AdminConfig: React.FC = () => {
     overrides: Partial<{
       sessionWatchEnabled: boolean;
       cookieThreatDetectionEnabled: boolean;
-      caaEnforcementEnabled: boolean;
       sessionWatchExemptAdmins: boolean;
       sessionWatchDryRun: boolean;
       enableNetworkApproval: boolean;
@@ -291,7 +283,6 @@ export const AdminConfig: React.FC = () => {
 
     const nextSw = overrides.sessionWatchEnabled ?? sessionWatchEnabled;
     const nextCookieThreat = overrides.cookieThreatDetectionEnabled ?? cookieThreatDetectionEnabled;
-    const nextCaa = overrides.caaEnforcementEnabled ?? caaEnforcementEnabled;
     const nextExempt = overrides.sessionWatchExemptAdmins ?? sessionWatchExemptAdmins;
     const nextDryRun = overrides.sessionWatchDryRun ?? sessionWatchDryRun;
     const nextNetApp = overrides.enableNetworkApproval ?? enableNetworkApproval;
@@ -304,7 +295,7 @@ export const AdminConfig: React.FC = () => {
     const nextGroupsInput = overrides.sessionWatchTargetGroupsInput ?? sessionWatchTargetGroupsInput;
     const nextGraceMin = overrides.sessionWatchOnboardingGraceMinutes ?? sessionWatchOnboardingGraceMinutes;
 
-    const nextMode = deriveEnforcementMode(nextSw, nextCaa, nextCookieThreat);
+    const nextMode = deriveEnforcementMode(nextSw, nextCookieThreat);
     const parsedTargetOus = nextOusInput
       .split(",")
       .map((s) => s.trim())
@@ -343,7 +334,7 @@ export const AdminConfig: React.FC = () => {
       enforcement_mode: nextMode,
       session_watch_enabled: nextSw,
       cookie_threat_detection_enabled: nextCookieThreat,
-      caa_enforcement_enabled: nextCaa,
+      caa_enforcement_enabled: false,
       session_watch_target_ous: parsedTargetOus,
       session_watch_target_groups: parsedTargetGroups,
       session_watch_exempt_admins: nextExempt,
@@ -356,7 +347,6 @@ export const AdminConfig: React.FC = () => {
       setConfig(updatedConfig);
       setSessionWatchEnabled(nextSw);
       setCookieThreatDetectionEnabled(nextCookieThreat);
-      setCaaEnforcementEnabled(nextCaa);
       setSessionWatchExemptAdmins(nextExempt);
       setSessionWatchDryRun(nextDryRun);
       setEnableNetworkApproval(nextNetApp);
@@ -615,11 +605,11 @@ export const AdminConfig: React.FC = () => {
               padding: "18px",
               borderRadius: "8px",
               border:
-                sessionWatchEnabled || cookieThreatDetectionEnabled || caaEnforcementEnabled
+                sessionWatchEnabled || cookieThreatDetectionEnabled
                   ? "1.5px solid #137333"
                   : "1px solid var(--dtg-border)",
               backgroundColor:
-                sessionWatchEnabled || cookieThreatDetectionEnabled || caaEnforcementEnabled
+                sessionWatchEnabled || cookieThreatDetectionEnabled
                   ? "rgba(19, 115, 51, 0.04)"
                   : "var(--dtg-surface-subtle)",
             }}
@@ -646,7 +636,7 @@ export const AdminConfig: React.FC = () => {
               </span>
             </div>
 
-            {!sessionWatchEnabled && !cookieThreatDetectionEnabled && !caaEnforcementEnabled && (
+            {!sessionWatchEnabled && !cookieThreatDetectionEnabled && (
               <div
                 style={{
                   marginBottom: "14px",
@@ -695,23 +685,6 @@ export const AdminConfig: React.FC = () => {
                 }
                 label={t.toggleCookieThreatLabel}
                 description={t.toggleCookieThreatDesc}
-              />
-
-              {/* Toggle 3: CAA Access for Education Standard & Plus */}
-              <ToggleSwitch
-                testId="toggle-caa-enforcement"
-                checked={caaEnforcementEnabled}
-                disabled={saving}
-                activeColor="#137333"
-                onToggle={(nextVal) =>
-                  requestToggleWithConfirmation({
-                    title: `${nextVal ? "Enable" : "Disable"} Context-Aware Access Integration (Standard & Plus)?`,
-                    summary: `Context-Aware Access (CAA) Integration turned ${nextVal ? "ON" : "OFF"}`,
-                    overrides: { caaEnforcementEnabled: nextVal },
-                  })
-                }
-                label={t.toggleCaaLabel}
-                description={t.toggleCaaDesc}
               />
             </div>
 

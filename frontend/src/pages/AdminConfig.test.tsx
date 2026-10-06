@@ -105,14 +105,15 @@ describe("AdminConfig Page", () => {
     });
 
     const sessionToggle = screen.getByTestId("toggle-session-watch");
-    const caaToggle = screen.getByTestId("toggle-caa-enforcement");
+    const cookieToggle = screen.getByTestId("toggle-cookie-threat-detection");
     const dryRunToggle = screen.getByTestId("toggle-dry-run");
     const exemptAdminsToggle = screen.getByTestId("toggle-exempt-admins");
 
     expect(sessionToggle).toHaveAttribute("role", "switch");
     expect(sessionToggle).toHaveAttribute("aria-checked", "false");
-    expect(caaToggle).toHaveAttribute("role", "switch");
-    expect(caaToggle).toHaveAttribute("aria-checked", "false");
+    expect(cookieToggle).toHaveAttribute("role", "switch");
+    expect(cookieToggle).toHaveAttribute("aria-checked", "false");
+    expect(screen.queryByTestId("toggle-caa-enforcement")).not.toBeInTheDocument();
     expect(dryRunToggle).toHaveAttribute("role", "switch");
     expect(dryRunToggle).toHaveAttribute("aria-checked", "true");
     // Verify ON toggle is green (#137333)

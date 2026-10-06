@@ -305,16 +305,16 @@ describe("Dashboard Page", () => {
 
     mockGetPublicConfig.mockResolvedValue({
       default_locale: "en",
-      enforcement_mode: "BOTH",
+      enforcement_mode: "SESSION_WATCH",
       session_watch_enabled: true,
-      caa_enforcement_enabled: true,
+      caa_enforcement_enabled: false,
     });
 
     render(<Dashboard />);
 
     await waitFor(() => {
       expect(screen.getByTestId("enforcement-mode-badge")).toBeInTheDocument();
-      expect(screen.getByText(/CAA \+ SESSION MANAGEMENT ACTIVE/i)).toBeInTheDocument();
+      expect(screen.getByText(/SESSION MANAGEMENT ACTIVE/i)).toBeInTheDocument();
     });
   });
 });

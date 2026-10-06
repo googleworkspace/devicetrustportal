@@ -485,7 +485,7 @@ export const Dashboard: React.FC = () => {
             <div>
               <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
                 <h1 className="dtg-brand-title">{t.portalTitle}</h1>
-                {(sessionWatchEnabled || cookieThreatDetectionEnabled || caaEnforcementEnabled) ? (
+                {(sessionWatchEnabled || cookieThreatDetectionEnabled) ? (
                   <span
                     data-testid="enforcement-mode-badge"
                     style={{
@@ -502,12 +502,8 @@ export const Dashboard: React.FC = () => {
                       border: sessionWatchEnabled ? "1px solid #aecbfa" : "1px solid #ceead6",
                     }}
                   >
-                    {sessionWatchEnabled && caaEnforcementEnabled
-                      ? t.enforcementBadgeBoth
-                      : sessionWatchEnabled
+                    {sessionWatchEnabled
                       ? t.enforcementBadgeSessionWatch
-                      : caaEnforcementEnabled
-                      ? t.enforcementBadgeCaa
                       : t.enforcementBadgeCookieSentinel}
                   </span>
                 ) : isAdmin ? (
@@ -528,7 +524,7 @@ export const Dashboard: React.FC = () => {
                       border: "1px solid #dadce0",
                       textDecoration: "none",
                     }}
-                    title="New install default: Both Session Management and CAA are disabled until configured in Admin Configurations"
+                    title="New install default: Session Management and Stolen Cookie Threat Detection are disabled until configured in Admin Configurations"
                   >
                     {t.enforcementStandbyBadge}
                   </a>
