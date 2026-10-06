@@ -96,6 +96,7 @@ def get_public_config():
             getattr(config, "cookie_threat_detection_enabled", False)
         ),
         "caa_enforcement_enabled": bool(getattr(config, "caa_enforcement_enabled", False)),
+        "enable_trust_chaining": bool(getattr(config, "enable_trust_chaining", False)),
         "branch_variation": "poc/fundamentals-session-watch",
     }
 

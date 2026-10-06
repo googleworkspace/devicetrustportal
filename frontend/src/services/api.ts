@@ -134,6 +134,13 @@ export interface GenerateResponse {
 
 export interface VerifyResponse {
   status: string;
+  mode?: string;
+  user_email?: string;
+  device_user_name?: string;
+  device_model?: string;
+  onboarding_grace_minutes?: number;
+  remaining_seconds?: number;
+  message?: string;
   operation?: any;
 }
 
@@ -245,6 +252,7 @@ export const getPublicConfig = async (): Promise<{
   session_watch_enabled?: boolean;
   cookie_threat_detection_enabled?: boolean;
   caa_enforcement_enabled?: boolean;
+  enable_trust_chaining?: boolean;
   branch_variation?: string;
 }> => {
   const response = await fetch(`${API_BASE_URL}/api/config/public`);

@@ -19,7 +19,14 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import "@testing-library/jest-dom";
 import { vi, describe, test, expect, beforeEach } from "vitest";
 import { Dashboard } from "./Dashboard";
-import { getMyDevices, checkIsAdmin, getPublicConfig, startOnboardingLease } from "../services/api";
+import {
+  getMyDevices,
+  checkIsAdmin,
+  getPublicConfig,
+  startOnboardingLease,
+  generatePairingCode,
+  verifyPairingCode,
+} from "../services/api";
 
 // Mock the API service
 vi.mock("../services/api", () => ({
@@ -36,6 +43,8 @@ vi.mock("../services/api", () => ({
   startOnboardingLease: vi.fn(),
   verifySessionStatus: vi.fn(),
   runLiveLoginSweep: vi.fn(),
+  generatePairingCode: vi.fn(),
+  verifyPairingCode: vi.fn(),
 }));
 
 // Mock GoogleLoginButton to simplify authentication testing
@@ -315,6 +324,77 @@ describe("Dashboard Page", () => {
     await waitFor(() => {
       expect(screen.getByTestId("enforcement-mode-badge")).toBeInTheDocument();
       expect(screen.getByText(/SESSION MANAGEMENT ACTIVE/i)).toBeInTheDocument();
+    });
+  });
+
+  test("allows generating a 24-hour 6-digit pairing code and redeeming a code pre-login or post-signout", async () => {
+    const mockGeneratePairingCode = generatePairingCode as ReturnType<typeof vi.fn>;
+    const mockVerifyPairingCode = verifyPairingCode as ReturnType<typeof vi.fn>;
+
+    mockGetPublicConfig.mockResolvedValue({
+      default_locale: "en",
+      enforcement_mode: "SESSION_WATCH",
+      session_watch_enabled: true,
+      enable_trust_chaining: true,
+    });
+    mockVerifyPairingCode.mockResolvedValue({
+      status: "LEASE_ACTIVATED",
+      mode: "ONBOARDING_GRACE_STARTED",
+      user_email: "teacher@example.com",
+      onboarding_grace_minutes: 15,
+      message: "Pairing code verified for teacher@example.com! A 15-minute Onboarding Grace Pass is now active.",
+    });
+
+    // 1. Unauthenticated user on secondary device can redeem a 6-digit pairing code before signing in
+    const { unmount } = render(<Dashboard />);
+
+    expect(screen.getByTestId("redeem-pairing-code-box")).toBeInTheDocument();
+    const redeemInput = screen.getByTestId("redeem-pairing-code-input");
+    fireEvent.change(redeemInput, { target: { value: "482910" } });
+    fireEvent.click(screen.getByTestId("redeem-pairing-code-submit"));
+
+    await waitFor(() => {
+      expect(mockVerifyPairingCode).toHaveBeenCalledWith("482910");
+      expect(
+        screen.getByText(/Pairing code verified for teacher@example\.com! A 15-minute Onboarding Grace Pass is now active\./i)
+      ).toBeInTheDocument();
+    });
+
+    unmount();
+
+    // 2. Signed-in user on approved Chromebook can generate a 24-hour 6-digit pairing code
+    localStorage.setItem("userEmail", "teacher@example.com");
+    localStorage.setItem("googleIdToken", "mock-token");
+    mockCheckIsAdmin.mockResolvedValue(false);
+    mockGetMyDevices.mockResolvedValue([
+      {
+        device_user_name: "devices/2/deviceUsers/2",
+        device_type: "CHROME_OS",
+        model: "Lenovo 300e Chromebook",
+        os_version: "ChromeOS 120",
+        serial_number: "LR00ABCD",
+        approval_state: "APPROVED",
+        owner_type: "COMPANY",
+        last_sync_time: "2026-06-16T08:30:00Z",
+      },
+    ]);
+    mockGeneratePairingCode.mockResolvedValue({
+      pairing_code: "482910",
+      expires_in_seconds: 86400,
+    });
+
+    render(<Dashboard />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("generate-pairing-code-btn")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("generate-pairing-code-btn"));
+
+    await waitFor(() => {
+      expect(mockGeneratePairingCode).toHaveBeenCalledTimes(1);
+      expect(screen.getByTestId("generated-pairing-code-card")).toBeInTheDocument();
+      expect(screen.getByTestId("generated-pairing-code-value")).toHaveTextContent("482910");
     });
   });
 });

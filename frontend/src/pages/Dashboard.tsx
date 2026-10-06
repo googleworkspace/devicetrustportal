@@ -29,6 +29,8 @@ import {
   startOnboardingLease,
   verifySessionStatus,
   runLiveLoginSweep,
+  generatePairingCode,
+  verifyPairingCode,
   DeviceUserItem,
   SessionWatchMetricsResponse,
 } from "../services/api";
@@ -116,6 +118,11 @@ export const Dashboard: React.FC = () => {
   const [sessionWatchEnabled, setSessionWatchEnabled] = useState<boolean>(false);
   const [cookieThreatDetectionEnabled, setCookieThreatDetectionEnabled] = useState<boolean>(false);
   const [caaEnforcementEnabled, setCaaEnforcementEnabled] = useState<boolean>(false);
+  const [enableTrustChaining, setEnableTrustChaining] = useState<boolean>(false);
+  const [generatedPairingCode, setGeneratedPairingCode] = useState<string>("");
+  const [pairingCodeGenerating, setPairingCodeGenerating] = useState<boolean>(false);
+  const [redeemCodeInput, setRedeemCodeInput] = useState<string>("");
+  const [redeemCodeLoading, setRedeemCodeLoading] = useState<boolean>(false);
   const [sessionWatchData, setSessionWatchData] = useState<SessionWatchMetricsResponse | null>(null);
   const [sessionWatchLoading, setSessionWatchLoading] = useState(false);
   const autoAttestedForUserRef = useRef<string>("");
@@ -171,6 +178,9 @@ export const Dashboard: React.FC = () => {
             setCaaEnforcementEnabled(data.caa_enforcement_enabled);
           } else if (data?.enforcement_mode) {
             setCaaEnforcementEnabled(data.enforcement_mode === "CAA" || data.enforcement_mode === "BOTH");
+          }
+          if (typeof data?.enable_trust_chaining === "boolean") {
+            setEnableTrustChaining(data.enable_trust_chaining);
           }
           if (data?.default_locale) {
             const hasManualOverride = sessionStorage.getItem("userLocaleOverride") === "true";
@@ -376,6 +386,51 @@ export const Dashboard: React.FC = () => {
       setMessage(`Failed to start personal device onboarding pass: ${e.message}`);
     } finally {
       setSessionWatchLoading(false);
+    }
+  };
+
+  const handleGeneratePairingCode = async () => {
+    if (!userEmail || typeof generatePairingCode !== "function") return;
+    setPairingCodeGenerating(true);
+    setMessage("");
+    try {
+      const res = await generatePairingCode();
+      setGeneratedPairingCode(res.pairing_code);
+      setMessage(
+        `Generated 6-digit pairing code ${res.pairing_code} (valid for 24 hours). Redeem this code on your secondary device to start your 15-minute grace window and approve it.`
+      );
+    } catch (e: any) {
+      setMessage(`Failed to generate pairing code: ${e.message}`);
+    } finally {
+      setPairingCodeGenerating(false);
+    }
+  };
+
+  const handleRedeemPairingCode = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const cleaned = (redeemCodeInput || "").replace(/\s+/g, "").trim();
+    if (!cleaned || typeof verifyPairingCode !== "function") return;
+    setRedeemCodeLoading(true);
+    setMessage("");
+    try {
+      const res = await verifyPairingCode(cleaned);
+      setMessage(
+        res.message ||
+          (res.status === "LEASE_ACTIVATED"
+            ? "Pairing code verified! Your 15-minute Onboarding Grace Pass is now active—sign in with Google to complete approval."
+            : "Secondary device approved via 6-digit pairing code!")
+      );
+      if (res.status === "SUCCESS") {
+        setRedeemCodeInput("");
+        if (userEmail) {
+          loadDevices();
+        }
+      }
+      loadSessionWatchStatus();
+    } catch (err: any) {
+      setMessage(`Failed to redeem pairing code: ${err.message}`);
+    } finally {
+      setRedeemCodeLoading(false);
     }
   };
 
@@ -650,6 +705,7 @@ export const Dashboard: React.FC = () => {
                     setAuthToken("");
                     setDevices([]);
                     setIsAdmin(false);
+                    setGeneratedPairingCode("");
                     setMessage(t.signedOutSuccess);
                   }}
                   className="dtg-btn dtg-btn-neutral"
@@ -659,6 +715,64 @@ export const Dashboard: React.FC = () => {
               </div>
             </div>
           )}
+
+          {/* 6-Digit Pairing Code Redemption Bar (Works Pre-Login, Post-SignOut, or While Signed In) */}
+          <form
+            onSubmit={handleRedeemPairingCode}
+            data-testid="redeem-pairing-code-box"
+            style={{
+              marginTop: "16px",
+              paddingTop: "14px",
+              borderTop: "1px solid var(--dtg-border-subtle)",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              flexWrap: "wrap",
+              gap: "12px",
+            }}
+          >
+            <div style={{ flex: "1 1 320px" }}>
+              <div style={{ fontSize: "13px", fontWeight: 700, color: "var(--dtg-text)", marginBottom: "2px" }}>
+                🔑 Have a 6-Digit Pairing Code? (Valid 24 Hours)
+              </div>
+              <div style={{ fontSize: "12px", color: "var(--dtg-text-secondary)", lineHeight: 1.45 }}>
+                Generated a pairing code on your approved Chromebook? Enter it here{" "}
+                <b>before signing in</b> (to start your 15m grace window without getting signed out) or{" "}
+                <b>after signing in</b> to immediately authorize this secondary device.
+              </div>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+              <input
+                type="text"
+                inputMode="numeric"
+                maxLength={7}
+                placeholder="6-digit code"
+                aria-label="6-Digit Pairing Code"
+                data-testid="redeem-pairing-code-input"
+                value={redeemCodeInput}
+                onChange={(e) => setRedeemCodeInput(e.target.value)}
+                className="dtg-input"
+                style={{
+                  width: "140px",
+                  padding: "7px 10px",
+                  fontSize: "14px",
+                  fontFamily: "monospace",
+                  fontWeight: 700,
+                  letterSpacing: "0.1em",
+                  textAlign: "center",
+                }}
+              />
+              <button
+                type="submit"
+                data-testid="redeem-pairing-code-submit"
+                disabled={redeemCodeLoading || !redeemCodeInput.trim()}
+                className="dtg-btn dtg-btn-primary"
+                style={{ padding: "8px 14px", fontSize: "13px" }}
+              >
+                {redeemCodeLoading ? "Verifying..." : "Redeem & Authorize"}
+              </button>
+            </div>
+          </form>
         </div>
 
         {/* Summary Metric Cards when signed in and devices loaded */}
@@ -780,6 +894,49 @@ export const Dashboard: React.FC = () => {
           </div>
         )}
 
+        {generatedPairingCode && (
+          <div
+            data-testid="generated-pairing-code-card"
+            style={{
+              marginBottom: "16px",
+              padding: "14px 16px",
+              borderRadius: "8px",
+              backgroundColor: "#e8f0fe",
+              border: "1.5px solid #aecbfa",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              flexWrap: "wrap",
+              gap: "12px",
+            }}
+          >
+            <div>
+              <div style={{ fontSize: "13px", fontWeight: 700, color: "#1967d2", marginBottom: "4px" }}>
+                🔑 6-Digit Pairing Code (Valid for 24 Hours • Single-Use)
+              </div>
+              <div style={{ fontSize: "12px", color: "#3c4043", lineHeight: 1.5 }}>
+                Enter this code on your secondary device within 24 hours. Redeeming the code automatically activates your 15-minute Onboarding Grace Pass and authorizes the device without IT intervention.
+              </div>
+            </div>
+            <div
+              data-testid="generated-pairing-code-value"
+              style={{
+                fontFamily: "monospace",
+                fontSize: "22px",
+                fontWeight: 800,
+                letterSpacing: "0.18em",
+                padding: "8px 16px",
+                borderRadius: "8px",
+                backgroundColor: "#ffffff",
+                color: "#1967d2",
+                border: "1px solid #aecbfa",
+              }}
+            >
+              {generatedPairingCode}
+            </div>
+          </div>
+        )}
+
         {!userEmail ? (
           <div role="status" className="dtg-alert dtg-alert-warning">
             <span>{t.signInPrompt}</span>
@@ -847,6 +1004,18 @@ export const Dashboard: React.FC = () => {
                   <div className="dtg-section-subtitle">{t.personalDevicesSubtitle}</div>
                 </div>
                 <div style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap" }}>
+                  {enableTrustChaining && (
+                    <button
+                      type="button"
+                      data-testid="generate-pairing-code-btn"
+                      onClick={handleGeneratePairingCode}
+                      disabled={pairingCodeGenerating}
+                      className="dtg-btn dtg-btn-primary"
+                      title="Generate a 6-digit pairing code (valid for 24 hours) to authorize a secondary device"
+                    >
+                      🔑 {pairingCodeGenerating ? "Generating..." : "Generate 6-Digit Pairing Code (24h)"}
+                    </button>
+                  )}
                   {sessionWatchEnabled && (
                     <button
                       type="button"

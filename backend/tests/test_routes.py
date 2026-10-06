@@ -2421,3 +2421,85 @@ def test_independent_ou_and_group_scoping_and_directory_metadata():
         decisions = {a["user_email"]: a["decision"] for a in tok_data["flagged_actions"]}
         assert decisions["teacher@gwfe.org"] == "REVOKE_SIGN_OUT"
         assert "student@gwfe.org" not in decisions
+
+
+def test_chaining_24h_ttl_and_redemption_grace_and_auto_approve():
+    """Verifies that:
+    1. POST /api/chaining/generate creates a 24-hour (86,400s) pairing code WITHOUT prematurely starting an onboarding lease.
+    2. POST /api/chaining/verify (unauthenticated, no raw_device_id) starts the 15m onboarding grace lease on redemption
+       when no unapproved device is in Cloud Identity yet (Flow A: Pre-Login Redemption).
+    3. POST /api/chaining/verify (unauthenticated, no raw_device_id) automatically finds and approves a BLOCKED or
+       PENDING_APPROVAL BYOD device in Cloud Identity when the user's session was already nuked (Flow B: Post-SignOut Redemption).
+    """
+    from backend.services.config_service import TenantConfig
+    from backend.routes.devices import DeviceUserItem
+    from backend.routes.session_watch import session_guard
+
+    app.dependency_overrides[get_current_user_email] = lambda: "teacher@gwfe.org"
+    session_guard._onboarding_leases.pop("teacher@gwfe.org", None)
+
+    with patch("backend.services.config_service.ConfigService.get_tenant_config") as mock_cfg, \
+         patch("backend.routes.chaining.directory_service.get_user_chaining_policy", return_value=True), \
+         patch("backend.routes.chaining.crawl_devices_for_user") as mock_crawl, \
+         patch("backend.routes.chaining.cloud_identity_service.approve_device_user") as mock_approve:
+        mock_cfg.return_value = TenantConfig(
+            customer_id="customers/my_customer",
+            enable_trust_chaining=True,
+            session_watch_enabled=True,
+            session_watch_onboarding_grace_minutes=15,
+        )
+
+        # 1. Generate 6-digit pairing code -> valid for 24 hours (86,400s), no lease active yet
+        gen_resp = client.post("/api/chaining/generate")
+        assert gen_resp.status_code == 200
+        gen_data = gen_resp.json()
+        code = gen_data["pairing_code"]
+        assert gen_data["expires_in_seconds"] == 86400
+        has_lease_at_gen, _ = session_guard.has_active_onboarding_lease("teacher@gwfe.org")
+        assert has_lease_at_gen is False
+
+        # 2. Flow A (Pre-Login Redemption): No unapproved device in Cloud Identity yet -> activates 15m lease, keeps code valid
+        mock_crawl.return_value = ([], 0)
+        pre_resp = client.post("/api/chaining/verify", json={"pairing_code": code})
+        assert pre_resp.status_code == 200
+        pre_data = pre_resp.json()
+        assert pre_data["status"] == "LEASE_ACTIVATED"
+        assert pre_data["mode"] == "ONBOARDING_GRACE_STARTED"
+        has_lease_after_redeem, rem_sec = session_guard.has_active_onboarding_lease("teacher@gwfe.org")
+        assert has_lease_after_redeem is True
+        assert rem_sec > 800
+        assert code in PAIRING_CODE_CACHE
+
+        # 3. Flow B (Post-SignOut / Registered Device Redemption): Device is in Cloud Identity as BLOCKED/PENDING_APPROVAL -> auto-approves & consumes code
+        mock_crawl.return_value = (
+            [
+                DeviceUserItem(
+                    device_user_name="devices/mac-home/deviceUsers/du-teacher",
+                    device_type="MAC_OS",
+                    model="MacBook Air",
+                    os_version="macOS 15.1",
+                    serial_number="C02HOME99",
+                    approval_state="BLOCKED",
+                    owner_type="BYOD",
+                    last_sync_time="2026-10-06T20:00:00Z",
+                )
+            ],
+            1,
+        )
+        mock_approve.return_value = {"name": "operations/approve-home-mac", "done": True}
+
+        post_resp = client.post(
+            "/api/chaining/verify",
+            headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"},
+            json={"pairing_code": code},
+        )
+        assert post_resp.status_code == 200
+        post_data = post_resp.json()
+        assert post_data["status"] == "SUCCESS"
+        assert post_data["mode"] == "DEVICE_APPROVED"
+        assert post_data["device_user_name"] == "devices/mac-home/deviceUsers/du-teacher"
+        assert code not in PAIRING_CODE_CACHE
+        mock_approve.assert_called_once_with(
+            device_user_name="devices/mac-home/deviceUsers/du-teacher",
+            customer_id="customers/my_customer",
+        )
