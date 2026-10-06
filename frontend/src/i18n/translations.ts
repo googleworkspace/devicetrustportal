@@ -88,6 +88,7 @@ export interface TranslationDictionary {
   // Extended Dashboard & Session Management Localization
   enforcementBadgeBoth: string;
   enforcementBadgeSessionWatch: string;
+  enforcementBadgeCookieSentinel: string;
   enforcementBadgeCaa: string;
   enforcementStandbyBadge: string;
   step1Title: string;
@@ -148,6 +149,8 @@ export interface TranslationDictionary {
   newInstallStandbyBanner: string;
   toggleSessionWatchLabel: string;
   toggleSessionWatchDesc: string;
+  toggleCookieThreatLabel: string;
+  toggleCookieThreatDesc: string;
   toggleCaaLabel: string;
   toggleCaaDesc: string;
   pipelineBoxTitle: string;
@@ -247,6 +250,7 @@ const en: TranslationDictionary = {
   refreshDevices: "Refresh Devices",
   enforcementBadgeBoth: "🛡️ CAA + SESSION MANAGEMENT ACTIVE",
   enforcementBadgeSessionWatch: "⚡ SESSION MANAGEMENT ACTIVE (FUNDAMENTALS)",
+  enforcementBadgeCookieSentinel: "🍪 STOLEN COOKIE & TOKEN SENTINEL ACTIVE",
   enforcementBadgeCaa: "🛡️ CONTEXT-AWARE ACCESS (STANDARD & PLUS)",
   enforcementStandbyBadge: "⚙️ ENFORCEMENT STANDBY — CONFIGURE IN ADMIN",
   step1Title: "Sign In with Workspace",
@@ -303,9 +307,11 @@ const en: TranslationDictionary = {
   cloudLoggingHelperDesc: "Every AUDIT_WOULD_SIGN_OUT and REVOKE_SIGN_OUT event is also streamed as structured JSON to Cloud Run stdout. Query in GCP Console > Logs Explorer with:",
   domainEnforcementTitle: "Domain Enforcement Controls (Disabled by Default on New Installs)",
   effectiveModeLabel: "Effective Mode:",
-  newInstallStandbyBanner: "New Installation Standby: Both Session Management and Context-Aware Access monitoring are disabled by default so you can verify your device inventory first. Flip either toggle switch below to confirm and auto-save enforcement.",
+  newInstallStandbyBanner: "New Installation Standby: Session Management, Stolen Cookie Threat Detection, and Context-Aware Access monitoring are disabled by default so you can verify your device inventory first. Flip any toggle switch below to confirm and auto-save enforcement.",
   toggleSessionWatchLabel: "⚡ Enable Session Management & users.signOut Circuit Breaker (Education Fundamentals)",
   toggleSessionWatchDesc: "Disabled by default on new installs. When toggled ON, enforces device trust without requiring Context-Aware Access licenses—or supplements CAA by terminating Google account sessions (admin.directory.users.signOut + OAuth token grant revocation) and auto-blocking unapproved personal devices within seconds.",
+  toggleCookieThreatLabel: "🍪 Enable Stolen Cookie & Token Threat Detection (Cloud Hosting ASN & Foreign IP Sentinel)",
+  toggleCookieThreatDesc: "Can be enabled independently even when Session Management (unapproved device check) is OFF. Continuously inspects Admin SDK OAuth token events and immediately executes users.signOut when session cookies or tokens are replayed from datacenter/cloud hosting ASNs (Cloudflare, Latitude.sh, AWS, DigitalOcean, Hetzner, Linode, Azure, Vultr, OVH) or foreign IPs diverging from active attested sessions.",
   toggleCaaLabel: "🛡️ Enable Context-Aware Access (CAA) Integration (Education Standard & Plus)",
   toggleCaaDesc: "Disabled by default on new installs. Designed for Google Workspace for Education Standard, Education Plus, and Enterprise tiers. Pairs self-service Cloud Identity device approval with Google Admin Console Context-Aware Access CEL rules (device.is_corp_owned_device == true || device.is_admin_approved_device == true) to block Gmail, Drive, Docs, and Classroom on unapproved devices at the application edge.",
   pipelineBoxTitle: "ℹ️ How the 3-Layer Enforcement Pipeline & CAA Work Together",

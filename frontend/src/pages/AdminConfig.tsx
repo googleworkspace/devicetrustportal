@@ -23,10 +23,15 @@ import {
 } from "../services/api";
 import { getTranslator } from "../i18n/translations";
 
-function deriveEnforcementMode(sessionWatch: boolean, caa: boolean): string {
+function deriveEnforcementMode(
+  sessionWatch: boolean,
+  caa: boolean,
+  cookieThreat: boolean = false
+): string {
   if (sessionWatch && caa) return "BOTH";
   if (sessionWatch) return "SESSION_WATCH";
   if (caa) return "CAA";
+  if (cookieThreat) return "COOKIE_SENTINEL";
   return "DISABLED";
 }
 
@@ -132,6 +137,7 @@ interface PendingConfirmChange {
   summary: string;
   overrides: Partial<{
     sessionWatchEnabled: boolean;
+    cookieThreatDetectionEnabled: boolean;
     caaEnforcementEnabled: boolean;
     sessionWatchExemptAdmins: boolean;
     sessionWatchDryRun: boolean;
@@ -154,6 +160,7 @@ export const AdminConfig: React.FC = () => {
   const [defaultLocale, setDefaultLocale] = useState("en");
   const [uiLocale, setUiLocale] = useState(() => localStorage.getItem("userLocale") || "en");
   const [sessionWatchEnabled, setSessionWatchEnabled] = useState(false);
+  const [cookieThreatDetectionEnabled, setCookieThreatDetectionEnabled] = useState(false);
   const [caaEnforcementEnabled, setCaaEnforcementEnabled] = useState(false);
   const [sessionWatchTargetOusInput, setSessionWatchTargetOusInput] = useState("");
   const [sessionWatchTargetGroupsInput, setSessionWatchTargetGroupsInput] = useState("");
@@ -166,7 +173,11 @@ export const AdminConfig: React.FC = () => {
 
   const userEmail = localStorage.getItem("userEmail") || "";
   const t = getTranslator(uiLocale || defaultLocale || "en");
-  const enforcementMode = deriveEnforcementMode(sessionWatchEnabled, caaEnforcementEnabled);
+  const enforcementMode = deriveEnforcementMode(
+    sessionWatchEnabled,
+    caaEnforcementEnabled,
+    cookieThreatDetectionEnabled
+  );
 
   useEffect(() => {
     if (!userEmail) {
@@ -189,6 +200,7 @@ export const AdminConfig: React.FC = () => {
           localStorage.setItem("userLocale", resolvedDefaultLocale);
         }
         setSessionWatchEnabled(Boolean(data.session_watch_enabled));
+        setCookieThreatDetectionEnabled(Boolean(data.cookie_threat_detection_enabled));
         setCaaEnforcementEnabled(Boolean(data.caa_enforcement_enabled));
         setSessionWatchTargetOusInput((data.session_watch_target_ous || []).join(", "));
         setSessionWatchTargetGroupsInput((data.session_watch_target_groups || []).join(", "));
@@ -212,6 +224,7 @@ export const AdminConfig: React.FC = () => {
   const persistConfiguration = async (
     overrides: Partial<{
       sessionWatchEnabled: boolean;
+      cookieThreatDetectionEnabled: boolean;
       caaEnforcementEnabled: boolean;
       sessionWatchExemptAdmins: boolean;
       sessionWatchDryRun: boolean;
@@ -230,6 +243,7 @@ export const AdminConfig: React.FC = () => {
     setSaving(true);
 
     const nextSw = overrides.sessionWatchEnabled ?? sessionWatchEnabled;
+    const nextCookieThreat = overrides.cookieThreatDetectionEnabled ?? cookieThreatDetectionEnabled;
     const nextCaa = overrides.caaEnforcementEnabled ?? caaEnforcementEnabled;
     const nextExempt = overrides.sessionWatchExemptAdmins ?? sessionWatchExemptAdmins;
     const nextDryRun = overrides.sessionWatchDryRun ?? sessionWatchDryRun;
@@ -241,7 +255,7 @@ export const AdminConfig: React.FC = () => {
     const nextGroupsInput = overrides.sessionWatchTargetGroupsInput ?? sessionWatchTargetGroupsInput;
     const nextGraceMin = overrides.sessionWatchOnboardingGraceMinutes ?? sessionWatchOnboardingGraceMinutes;
 
-    const nextMode = deriveEnforcementMode(nextSw, nextCaa);
+    const nextMode = deriveEnforcementMode(nextSw, nextCaa, nextCookieThreat);
     const parsedTargetOus = nextOusInput
       .split(",")
       .map((s) => s.trim())
@@ -263,6 +277,7 @@ export const AdminConfig: React.FC = () => {
       chaining_allowed_ous: config?.chaining_allowed_ous || [],
       enforcement_mode: nextMode,
       session_watch_enabled: nextSw,
+      cookie_threat_detection_enabled: nextCookieThreat,
       caa_enforcement_enabled: nextCaa,
       session_watch_target_ous: parsedTargetOus,
       session_watch_target_groups: parsedTargetGroups,
@@ -275,6 +290,7 @@ export const AdminConfig: React.FC = () => {
       await updateAdminConfig(updatedConfig);
       setConfig(updatedConfig);
       setSessionWatchEnabled(nextSw);
+      setCookieThreatDetectionEnabled(nextCookieThreat);
       setCaaEnforcementEnabled(nextCaa);
       setSessionWatchExemptAdmins(nextExempt);
       setSessionWatchDryRun(nextDryRun);
@@ -293,6 +309,7 @@ export const AdminConfig: React.FC = () => {
         default_locale: updatedConfig.default_locale,
         enforcement_mode: updatedConfig.enforcement_mode,
         session_watch_enabled: updatedConfig.session_watch_enabled,
+        cookie_threat_detection_enabled: updatedConfig.cookie_threat_detection_enabled,
         caa_enforcement_enabled: updatedConfig.caa_enforcement_enabled,
         session_watch_target_ous: updatedConfig.session_watch_target_ous,
         session_watch_target_groups: updatedConfig.session_watch_target_groups,
@@ -529,11 +546,11 @@ export const AdminConfig: React.FC = () => {
               padding: "18px",
               borderRadius: "8px",
               border:
-                sessionWatchEnabled || caaEnforcementEnabled
+                sessionWatchEnabled || cookieThreatDetectionEnabled || caaEnforcementEnabled
                   ? "1.5px solid #137333"
                   : "1px solid var(--dtg-border)",
               backgroundColor:
-                sessionWatchEnabled || caaEnforcementEnabled
+                sessionWatchEnabled || cookieThreatDetectionEnabled || caaEnforcementEnabled
                   ? "rgba(19, 115, 51, 0.04)"
                   : "var(--dtg-surface-subtle)",
             }}
@@ -560,7 +577,7 @@ export const AdminConfig: React.FC = () => {
               </span>
             </div>
 
-            {!sessionWatchEnabled && !caaEnforcementEnabled && (
+            {!sessionWatchEnabled && !cookieThreatDetectionEnabled && !caaEnforcementEnabled && (
               <div
                 style={{
                   marginBottom: "14px",
@@ -594,7 +611,24 @@ export const AdminConfig: React.FC = () => {
                 description={t.toggleSessionWatchDesc}
               />
 
-              {/* Toggle 2: CAA Access for Education Standard & Plus */}
+              {/* Toggle 2: Stolen Cookie & Token Threat Detection (Cloud Hosting ASN & Foreign IP Sentinel) */}
+              <ToggleSwitch
+                testId="toggle-cookie-threat-detection"
+                checked={cookieThreatDetectionEnabled}
+                disabled={saving}
+                activeColor="#137333"
+                onToggle={(nextVal) =>
+                  requestToggleWithConfirmation({
+                    title: `${nextVal ? "Enable" : "Disable"} Stolen Cookie & Token Threat Detection?`,
+                    summary: `Stolen Cookie & Token Threat Detection turned ${nextVal ? "ON" : "OFF"}`,
+                    overrides: { cookieThreatDetectionEnabled: nextVal },
+                  })
+                }
+                label={t.toggleCookieThreatLabel}
+                description={t.toggleCookieThreatDesc}
+              />
+
+              {/* Toggle 3: CAA Access for Education Standard & Plus */}
               <ToggleSwitch
                 testId="toggle-caa-enforcement"
                 checked={caaEnforcementEnabled}

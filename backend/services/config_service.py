@@ -15,7 +15,7 @@
 import os
 import json
 from typing import List
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from dotenv import load_dotenv, set_key
 from backend.services.cloud_identity import resolve_dwd_key_path
 
@@ -33,15 +33,27 @@ class TenantConfig(BaseModel):
     chaining_allowed_ous: List[str] = Field(default=[], description="Organizational Units authorized to perform trust chaining")
     enforcement_mode: str = Field(
         default="DISABLED",
-        description="Enforcement architecture mode: 'DISABLED' (default), 'SESSION_WATCH' (Education Fundamentals), 'CAA' (Education Standard/Plus), or 'BOTH'",
+        description="Enforcement architecture mode: 'DISABLED' (default), 'SESSION_WATCH' (Education Fundamentals), 'CAA' (Education Standard/Plus), 'COOKIE_SENTINEL', or 'BOTH'",
     )
     session_watch_enabled: bool = Field(
         default=False,
-        description="Enable CAA-Free Session Management & users.signOut circuit breaker for Education Fundamentals domains (Disabled by default)",
+        description="Enable CAA-Free Session Management & unapproved-device users.signOut circuit breaker for Education Fundamentals domains (Disabled by default)",
+    )
+    cookie_threat_detection_enabled: bool = Field(
+        default=False,
+        description="Enable Stolen Cookie & Token Threat Detection (Admin SDK 'token' stream + Cloud Hosting ASN & Foreign IP Pivot Sentinel, independent of unapproved-device session check)",
+    )
+    session_guard_watch_token_stream: bool = Field(
+        default=False,
+        description="Monitor Admin SDK 'token' audit stream to detect mid-session OAuth pivots on foreign IPs",
+    )
+    session_guard_block_hosting_asns: bool = Field(
+        default=False,
+        description="Automatically trigger users.signOut when token/session activity originates from datacenter/cloud hosting ASNs (Cloudflare, Latitude.sh, AWS, etc.)",
     )
     enable_session_guard: bool = Field(
         default=False,
-        description="Enable automated session monitoring and token revocation for unattested/unapproved devices",
+        description="Enable automated session monitoring and token revocation",
     )
     caa_enforcement_enabled: bool = Field(
         default=False,
@@ -68,14 +80,48 @@ class TenantConfig(BaseModel):
         description="Minutes of onboarding grace lease granted when a user opens the portal to enroll or approve a personal device",
     )
 
+    @model_validator(mode="after")
+    def _sync_session_guard_aliases(self) -> "TenantConfig":
+        if self.session_watch_enabled != self.enable_session_guard:
+            merged_sw = bool(self.session_watch_enabled or self.enable_session_guard)
+            self.session_watch_enabled = merged_sw
+            self.enable_session_guard = merged_sw
 
-def _derive_enforcement_mode(session_watch_enabled: bool, caa_enforcement_enabled: bool) -> str:
+        if (
+            self.cookie_threat_detection_enabled
+            or self.session_guard_watch_token_stream
+            or self.session_guard_block_hosting_asns
+        ):
+            self.cookie_threat_detection_enabled = True
+            self.session_guard_watch_token_stream = True
+            self.session_guard_block_hosting_asns = True
+
+        if self.enforcement_mode == "DISABLED" and (
+            self.session_watch_enabled
+            or self.caa_enforcement_enabled
+            or self.cookie_threat_detection_enabled
+        ):
+            self.enforcement_mode = _derive_enforcement_mode(
+                self.session_watch_enabled,
+                self.caa_enforcement_enabled,
+                self.cookie_threat_detection_enabled,
+            )
+        return self
+
+
+def _derive_enforcement_mode(
+    session_watch_enabled: bool,
+    caa_enforcement_enabled: bool,
+    cookie_threat_detection_enabled: bool = False,
+) -> str:
     if session_watch_enabled and caa_enforcement_enabled:
         return "BOTH"
     if session_watch_enabled:
         return "SESSION_WATCH"
     if caa_enforcement_enabled:
         return "CAA"
+    if cookie_threat_detection_enabled:
+        return "COOKIE_SENTINEL"
     return "DISABLED"
 
 class ConfigService:
@@ -105,12 +151,20 @@ class ConfigService:
                 response = self.sm_client.access_secret_version(request={"name": name})
                 payload = response.payload.data.decode("UTF-8")
                 data = json.loads(payload)
-                sw_enabled = bool(data.get("session_watch_enabled", False) or data.get("enable_session_guard", False))
+                sw_enabled = bool(data.get("session_watch_enabled", False))
+                cookie_enabled = bool(
+                    data.get("cookie_threat_detection_enabled", False)
+                    or data.get("session_guard_watch_token_stream", False)
+                    or data.get("session_guard_block_hosting_asns", False)
+                )
                 caa_enabled = bool(data.get("caa_enforcement_enabled", False))
                 data["session_watch_enabled"] = sw_enabled
-                data["enable_session_guard"] = sw_enabled
+                data["cookie_threat_detection_enabled"] = cookie_enabled
+                data["session_guard_watch_token_stream"] = cookie_enabled
+                data["session_guard_block_hosting_asns"] = cookie_enabled
+                data["enable_session_guard"] = bool(sw_enabled or cookie_enabled or data.get("enable_session_guard", False))
                 data["caa_enforcement_enabled"] = caa_enabled
-                data["enforcement_mode"] = _derive_enforcement_mode(sw_enabled, caa_enabled)
+                data["enforcement_mode"] = _derive_enforcement_mode(sw_enabled, caa_enabled, cookie_enabled)
                 config = TenantConfig(**data)
                 if env_admin and env_admin not in [a.lower().strip() for a in config.portal_admins]:
                     config.portal_admins.append(env_admin)
@@ -124,12 +178,19 @@ class ConfigService:
         if env_admin and env_admin not in [a.lower().strip() for a in local_admins]:
             local_admins.append(env_admin)
 
-        sw_enabled_env = (
-            os.getenv("TENANT_SESSION_WATCH_ENABLED", "false").lower() == "true"
+        sw_enabled_env = os.getenv("TENANT_SESSION_WATCH_ENABLED", "false").lower() == "true"
+        cookie_enabled_env = (
+            os.getenv("TENANT_COOKIE_THREAT_DETECTION_ENABLED", "false").lower() == "true"
+            or os.getenv("TENANT_SESSION_GUARD_WATCH_TOKEN_STREAM", "false").lower() == "true"
+            or os.getenv("TENANT_SESSION_GUARD_BLOCK_HOSTING_ASNS", "false").lower() == "true"
+        )
+        enable_guard_env = (
+            sw_enabled_env
+            or cookie_enabled_env
             or os.getenv("TENANT_ENABLE_SESSION_GUARD", "false").lower() == "true"
         )
         caa_enabled_env = os.getenv("TENANT_CAA_ENFORCEMENT_ENABLED", "false").lower() == "true"
-        derived_mode = _derive_enforcement_mode(sw_enabled_env, caa_enabled_env)
+        derived_mode = _derive_enforcement_mode(sw_enabled_env, caa_enabled_env, cookie_enabled_env)
         exempt_admins_env = os.getenv("TENANT_SESSION_WATCH_EXEMPT_ADMINS", "false").lower() == "true"
         dry_run_env = os.getenv("TENANT_SESSION_WATCH_DRY_RUN", "false").lower() == "true"
 
@@ -145,7 +206,10 @@ class ConfigService:
             chaining_allowed_ous=json.loads(os.getenv("TENANT_CHAINING_OUS", '[]')),
             enforcement_mode=derived_mode,
             session_watch_enabled=sw_enabled_env,
-            enable_session_guard=sw_enabled_env,
+            cookie_threat_detection_enabled=cookie_enabled_env,
+            session_guard_watch_token_stream=cookie_enabled_env,
+            session_guard_block_hosting_asns=cookie_enabled_env,
+            enable_session_guard=enable_guard_env,
             caa_enforcement_enabled=caa_enabled_env,
             session_watch_target_ous=json.loads(os.getenv("TENANT_SESSION_WATCH_TARGET_OUS", '[]')),
             session_watch_target_groups=json.loads(os.getenv("TENANT_SESSION_WATCH_TARGET_GROUPS", '[]')),
@@ -155,11 +219,19 @@ class ConfigService:
         )
 
     def update_tenant_config(self, config: TenantConfig) -> bool:
-        sw_flag = bool(config.session_watch_enabled or config.enable_session_guard)
+        sw_flag = bool(config.session_watch_enabled)
+        cookie_flag = bool(
+            config.cookie_threat_detection_enabled
+            or config.session_guard_watch_token_stream
+            or config.session_guard_block_hosting_asns
+        )
         config.session_watch_enabled = sw_flag
-        config.enable_session_guard = sw_flag
+        config.cookie_threat_detection_enabled = cookie_flag
+        config.session_guard_watch_token_stream = cookie_flag
+        config.session_guard_block_hosting_asns = cookie_flag
+        config.enable_session_guard = bool(sw_flag or cookie_flag)
         config.enforcement_mode = _derive_enforcement_mode(
-            sw_flag, bool(config.caa_enforcement_enabled)
+            sw_flag, bool(config.caa_enforcement_enabled), cookie_flag
         )
         config_dict = config.model_dump()
         config_json = json.dumps(config_dict)
@@ -190,6 +262,9 @@ class ConfigService:
         set_key(dotenv_path, "TENANT_CHAINING_OUS", json.dumps(config.chaining_allowed_ous))
         set_key(dotenv_path, "TENANT_ENFORCEMENT_MODE", config.enforcement_mode)
         set_key(dotenv_path, "TENANT_SESSION_WATCH_ENABLED", "true" if config.session_watch_enabled else "false")
+        set_key(dotenv_path, "TENANT_COOKIE_THREAT_DETECTION_ENABLED", "true" if config.cookie_threat_detection_enabled else "false")
+        set_key(dotenv_path, "TENANT_SESSION_GUARD_WATCH_TOKEN_STREAM", "true" if config.session_guard_watch_token_stream else "false")
+        set_key(dotenv_path, "TENANT_SESSION_GUARD_BLOCK_HOSTING_ASNS", "true" if config.session_guard_block_hosting_asns else "false")
         set_key(dotenv_path, "TENANT_ENABLE_SESSION_GUARD", "true" if config.enable_session_guard else "false")
         set_key(dotenv_path, "TENANT_CAA_ENFORCEMENT_ENABLED", "true" if config.caa_enforcement_enabled else "false")
         set_key(dotenv_path, "TENANT_SESSION_WATCH_TARGET_OUS", json.dumps(config.session_watch_target_ous))

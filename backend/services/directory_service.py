@@ -427,6 +427,102 @@ class DirectoryService:
             )
         return events
 
+    def list_recent_token_events(
+        self, lookback_minutes: int = 15, max_results: int = 250
+    ) -> List[Dict[str, Any]]:
+        """Queries Admin SDK Reports API (`admin.reports_v1.activities.list`) for domain OAuth token events.
+
+        Used by Stolen Cookie & Token Threat Detection (Cloud Hosting ASN & Foreign IP Pivot Sentinel)
+        even when Unapproved Device Session Management (`session_watch_enabled`) is disabled.
+
+        Requires Domain-Wide Delegation scope:
+        `https://www.googleapis.com/auth/admin.reports.audit.readonly`
+        """
+        if not self.key_path or not self.admin_email:
+            raise RuntimeError(
+                self.init_error or "DWD service account key or WORKSPACE_ADMIN_EMAIL is not configured."
+            )
+
+        import datetime
+
+        with self._lock:
+            if not getattr(self, "_reports_service", None):
+                creds = service_account.Credentials.from_service_account_file(
+                    self.key_path,
+                    scopes=["https://www.googleapis.com/auth/admin.reports.audit.readonly"],
+                    subject=self.admin_email,
+                )
+                self._reports_service = build("admin", "reports_v1", credentials=creds)
+            start_dt = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(
+                minutes=max(1, lookback_minutes)
+            )
+            start_time_iso = start_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+            resp = (
+                self._reports_service.activities()
+                .list(
+                    userKey="all",
+                    applicationName="token",
+                    startTime=start_time_iso,
+                    maxResults=min(1000, max(1, max_results)),
+                )
+                .execute()
+            )
+        items = resp.get("items", [])
+        events: List[Dict[str, Any]] = []
+        for item in items:
+            actor_email = (item.get("actor", {}) or {}).get("email", "").strip().lower()
+            if not actor_email:
+                continue
+            ip_address = (item.get("ipAddress") or "0.0.0.0").strip()
+            id_block = item.get("id", {}) or {}
+            time_str = id_block.get("time") or ""
+            unique_qual = str(id_block.get("uniqueQualifier") or time_str or len(events))
+            try:
+                ts_epoch = datetime.datetime.fromisoformat(
+                    time_str.replace("Z", "+00:00")
+                ).timestamp()
+            except Exception:
+                ts_epoch = datetime.datetime.now(datetime.timezone.utc).timestamp()
+
+            raw_events = item.get("events", []) or [{}]
+            first_ev = raw_events[0]
+            ev_name = first_ev.get("name") or first_ev.get("type") or "activity"
+            if "revoke" in ev_name.lower():
+                continue
+
+            net_info = item.get("networkInfo", {}) or {}
+            raw_asn = net_info.get("ipAsn")
+            asn_str: Optional[str] = None
+            if raw_asn is not None:
+                if isinstance(raw_asn, list) and raw_asn:
+                    asn_str = f"AS{raw_asn[0]}" if not str(raw_asn[0]).upper().startswith("AS") else str(raw_asn[0]).upper()
+                else:
+                    asn_str = f"AS{raw_asn}" if not str(raw_asn).upper().startswith("AS") else str(raw_asn).upper()
+
+            app_name = "Google Workspace Web/OAuth"
+            for param in first_ev.get("parameters", []) or []:
+                p_name = param.get("name", "")
+                p_val = param.get("value") or (param.get("multiValue") or [None])[0]
+                if p_name in ("app_name", "client_id", "api_name") and p_val:
+                    app_name = str(p_val)
+                elif p_name in ("asn", "ip_asn") and p_val and not asn_str:
+                    val_s = str(p_val).strip().upper()
+                    asn_str = val_s if val_s.startswith("AS") else f"AS{val_s}"
+
+            events.append(
+                {
+                    "event_id": f"token:{actor_email}:{unique_qual}",
+                    "user_email": actor_email,
+                    "ip_address": ip_address,
+                    "timestamp_epoch": ts_epoch,
+                    "timestamp_iso": time_str,
+                    "asn": asn_str,
+                    "app_name": app_name,
+                }
+            )
+        return events
+
     def sign_out_user(self, user_email: str) -> bool:
         """Executes `admin.directory_v1.users.signOut` circuit breaker to revoke active Workspace cookies/tokens.
 

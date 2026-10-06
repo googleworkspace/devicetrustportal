@@ -30,6 +30,7 @@ export interface TenantConfig {
   chaining_allowed_ous?: string[];
   enforcement_mode?: string;
   session_watch_enabled?: boolean;
+  cookie_threat_detection_enabled?: boolean;
   caa_enforcement_enabled?: boolean;
   session_watch_target_ous?: string[];
   session_watch_target_groups?: string[];
@@ -41,6 +42,7 @@ export interface TenantConfig {
 export interface SessionWatchMetricsResponse {
   enforcement_mode: string;
   session_watch_enabled?: boolean;
+  cookie_threat_detection_enabled?: boolean;
   caa_enforcement_enabled?: boolean;
   branch_variation: string;
   session_watch_target_ous?: string[];
@@ -207,6 +209,7 @@ export const getPublicConfig = async (): Promise<{
   default_locale?: string;
   enforcement_mode?: string;
   session_watch_enabled?: boolean;
+  cookie_threat_detection_enabled?: boolean;
   caa_enforcement_enabled?: boolean;
   branch_variation?: string;
 }> => {

@@ -2248,3 +2248,93 @@ def test_get_my_devices_retains_byod_chromebook_alongside_company_chromebooks_an
         assert data[0]["approval_state"] == "APPROVED"
         assert data[1]["serial_number"] == "C1L14000LH"
         assert data[1]["owner_type"] == "COMPANY"
+
+
+def test_cookie_threat_detection_active_while_session_watch_disabled():
+    """Verifies that Session Management (unapproved device check) can be OFF (`session_watch_enabled=False`)
+    while Stolen Cookie & Token Threat Detection is ON (`cookie_threat_detection_enabled=True`) at the same time."""
+    import time
+    from backend.services.config_service import TenantConfig
+
+    app.dependency_overrides[get_current_user_email] = lambda: "student@gwfe.org"
+
+    with patch("backend.services.config_service.ConfigService.get_tenant_config") as mock_cfg, \
+         patch("backend.routes.session_watch.directory_service.list_recent_login_events") as mock_list_logins, \
+         patch("backend.routes.session_watch.directory_service.list_recent_token_events") as mock_list_tokens, \
+         patch("backend.routes.session_watch.directory_service.is_user_in_session_watch_scope", return_value=(True, "IN_SCOPE")), \
+         patch("backend.routes.session_watch.directory_service.sign_out_user", return_value=True) as mock_sign_out:
+        mock_cfg.return_value = TenantConfig(
+            customer_id="customers/my_customer",
+            session_watch_enabled=False,
+            cookie_threat_detection_enabled=True,
+            caa_enforcement_enabled=False,
+            session_watch_dry_run=False,
+        )
+
+        # 1. Public config & health reflect session_watch_enabled=False, cookie_threat_detection_enabled=True, enforcement_mode=COOKIE_SENTINEL
+        pub_resp = client.get("/api/config/public")
+        assert pub_resp.status_code == 200
+        pub_data = pub_resp.json()
+        assert pub_data["session_watch_enabled"] is False
+        assert pub_data["cookie_threat_detection_enabled"] is True
+        assert pub_data["enforcement_mode"] == "COOKIE_SENTINEL"
+
+        # 2. Inline session-status check is skipped because session_watch_enabled is False
+        status_resp = client.get("/api/session-watch/session-status")
+        assert status_resp.status_code == 200
+        assert status_resp.json()["status"] == "OK"
+        assert status_resp.json()["session_watch_enabled"] is False
+        mock_sign_out.assert_not_called()
+
+        # 3. Direct /api/session-watch/sweep-tokens actively revokes Cloudflare ASN token replay even when session_watch_enabled=False
+        tok_resp = client.post(
+            "/api/session-watch/sweep-tokens",
+            json={
+                "events": [
+                    {
+                        "event_id": "tok-cf-standalone-1",
+                        "user_email": "student@gwfe.org",
+                        "ip_address": "104.16.12.34",
+                        "asn": "AS13335",
+                        "app_name": "Google Drive Web",
+                    }
+                ]
+            },
+        )
+        assert tok_resp.status_code == 200
+        tok_data = tok_resp.json()
+        assert tok_data["session_watch_enabled"] is False
+        assert tok_data["cookie_threat_detection_enabled"] is True
+        assert tok_data["dry_run"] is False
+        assert tok_data["revoked_count"] == 1
+        assert tok_data["flagged_actions"][0]["decision"] == "REVOKE_SIGN_OUT"
+
+        # 4. Scheduled /api/session-watch/live-sweep skips login/Cloud Identity device sweep (`list_recent_login_events` not called)
+        #    but DOES run token threat detection (`list_recent_token_events` called) and revokes Latitude.sh ASN token replay!
+        mock_list_tokens.return_value = [
+            {
+                "event_id": "token:student@gwfe.org:lat-999",
+                "user_email": "student@gwfe.org",
+                "ip_address": "198.51.100.77",
+                "timestamp_epoch": time.time() - 5.0,
+                "timestamp_iso": "2026-10-06T14:55:00Z",
+                "asn": "AS396356",
+                "app_name": "Gmail Web",
+            }
+        ]
+        sweep_resp = client.post(
+            "/api/session-watch/live-sweep",
+            json={"lookback_minutes": 15, "force": False},
+        )
+        assert sweep_resp.status_code == 200
+        sweep_data = sweep_resp.json()
+        assert sweep_data["status"] == "LIVE_SWEEP_COMPLETE"
+        assert sweep_data["session_watch_enabled"] is False
+        assert sweep_data["cookie_threat_detection_enabled"] is True
+        assert sweep_data["fetched_login_events"] == 0
+        assert sweep_data["fetched_token_events"] == 1
+        assert sweep_data["revoked_count"] == 1
+        assert sweep_data["revoked_users"] == ["student@gwfe.org"]
+        mock_list_logins.assert_not_called()
+        mock_list_tokens.assert_called_once()
+

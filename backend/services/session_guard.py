@@ -791,6 +791,7 @@ class SessionGuardService:
         now_epoch: Optional[float] = None,
         dry_run: Optional[bool] = None,
         persist_all_allowed: bool = False,
+        scope_checker: Optional[Callable[[str], Tuple[bool, str]]] = None,
     ) -> List[EnforcementAction]:
         """Evaluates Admin SDK Reports `token` events for hosting ASN or foreign IP pivots."""
         now = now_epoch if now_epoch is not None else time.time()
@@ -805,15 +806,38 @@ class SessionGuardService:
         pending_signouts: List[EnforcementAction] = []
 
         for ev in events:
+            if ev.event_id and ev.event_id in self._enforced_event_ids:
+                continue
+
             self.metrics["token_events_evaluated"] += 1
             email_key = ev.user_email.strip().lower()
             age_sec = max(0.0, now - ev.timestamp_epoch)
             asn_norm = (ev.asn or "").strip().upper()
 
+            if scope_checker is not None:
+                in_scope, scope_reason = scope_checker(email_key)
+                if not in_scope:
+                    if persist_all_allowed:
+                        actions.append(
+                            EnforcementAction(
+                                event_id=ev.event_id,
+                                user_email=email_key,
+                                ip_address=ev.ip_address,
+                                decision="SKIP_OUT_OF_SCOPE",
+                                reason=scope_reason,
+                                matched_serial=None,
+                                detection_latency_sec=age_sec,
+                                timestamp_iso=now_iso,
+                            )
+                        )
+                    continue
+
             # Pathway 3 Check A: Datacenter / Cloud Hosting ASN Sentinel
             if asn_norm in KNOWN_HOSTING_ASNS:
                 self.metrics["tokens_flagged_hosting_asn"] += 1
                 decision = "WOULD_REVOKE_HOSTING_ASN" if is_dry_run else "REVOKE_SIGN_OUT"
+                if ev.event_id:
+                    self._enforced_event_ids.add(ev.event_id)
                 action = EnforcementAction(
                     event_id=ev.event_id,
                     user_email=email_key,
@@ -828,6 +852,7 @@ class SessionGuardService:
                 if is_dry_run:
                     self.metrics["signouts_simulated"] += 1
                 else:
+                    self._recent_signouts[email_key] = now
                     pending_signouts.append(action)
                 continue
 
@@ -842,6 +867,8 @@ class SessionGuardService:
                 if ev.ip_address not in known_ips:
                     self.metrics["tokens_flagged_ip_mismatch"] += 1
                     decision = "WOULD_REVOKE_TOKEN_IP_MISMATCH" if is_dry_run else "REVOKE_SIGN_OUT"
+                    if ev.event_id:
+                        self._enforced_event_ids.add(ev.event_id)
                     action = EnforcementAction(
                         event_id=ev.event_id,
                         user_email=email_key,
@@ -859,6 +886,7 @@ class SessionGuardService:
                     if is_dry_run:
                         self.metrics["signouts_simulated"] += 1
                     else:
+                        self._recent_signouts[email_key] = now
                         pending_signouts.append(action)
                     continue
 
@@ -925,7 +953,17 @@ class SessionGuardService:
     def format_cloud_logging_entry(self, action: EnforcementAction) -> str:
         """Formats an enforcement decision as a single-line Cloud Logging JSON payload."""
         payload = {
-            "severity": "WARNING" if action.decision in ("REVOKE_SIGN_OUT", "AUDIT_WOULD_SIGN_OUT") else "INFO",
+            "severity": (
+                "WARNING"
+                if action.decision
+                in (
+                    "REVOKE_SIGN_OUT",
+                    "AUDIT_WOULD_SIGN_OUT",
+                    "WOULD_REVOKE_HOSTING_ASN",
+                    "WOULD_REVOKE_TOKEN_IP_MISMATCH",
+                )
+                else "INFO"
+            ),
             "component": "devicetrustportal.session_guard",
             "event_id": action.event_id,
             "user_email": action.user_email,

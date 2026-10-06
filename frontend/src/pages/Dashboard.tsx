@@ -114,6 +114,7 @@ export const Dashboard: React.FC = () => {
   const [locale, setLocale] = useState(() => localStorage.getItem("userLocale") || "en");
   const [enforcementMode, setEnforcementMode] = useState<string>("DISABLED");
   const [sessionWatchEnabled, setSessionWatchEnabled] = useState<boolean>(false);
+  const [cookieThreatDetectionEnabled, setCookieThreatDetectionEnabled] = useState<boolean>(false);
   const [caaEnforcementEnabled, setCaaEnforcementEnabled] = useState<boolean>(false);
   const [sessionWatchData, setSessionWatchData] = useState<SessionWatchMetricsResponse | null>(null);
   const [sessionWatchLoading, setSessionWatchLoading] = useState(false);
@@ -133,6 +134,11 @@ export const Dashboard: React.FC = () => {
           setSessionWatchEnabled(res.session_watch_enabled);
         } else if (res?.enforcement_mode) {
           setSessionWatchEnabled(res.enforcement_mode === "SESSION_WATCH" || res.enforcement_mode === "BOTH");
+        }
+        if (typeof res?.cookie_threat_detection_enabled === "boolean") {
+          setCookieThreatDetectionEnabled(res.cookie_threat_detection_enabled);
+        } else if (res?.enforcement_mode) {
+          setCookieThreatDetectionEnabled(res.enforcement_mode === "COOKIE_SENTINEL");
         }
         if (typeof res?.caa_enforcement_enabled === "boolean") {
           setCaaEnforcementEnabled(res.caa_enforcement_enabled);
@@ -155,6 +161,11 @@ export const Dashboard: React.FC = () => {
             setSessionWatchEnabled(data.session_watch_enabled);
           } else if (data?.enforcement_mode) {
             setSessionWatchEnabled(data.enforcement_mode === "SESSION_WATCH" || data.enforcement_mode === "BOTH");
+          }
+          if (typeof data?.cookie_threat_detection_enabled === "boolean") {
+            setCookieThreatDetectionEnabled(data.cookie_threat_detection_enabled);
+          } else if (data?.enforcement_mode) {
+            setCookieThreatDetectionEnabled(data.enforcement_mode === "COOKIE_SENTINEL");
           }
           if (typeof data?.caa_enforcement_enabled === "boolean") {
             setCaaEnforcementEnabled(data.caa_enforcement_enabled);
@@ -474,7 +485,7 @@ export const Dashboard: React.FC = () => {
             <div>
               <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
                 <h1 className="dtg-brand-title">{t.portalTitle}</h1>
-                {(sessionWatchEnabled || caaEnforcementEnabled) ? (
+                {(sessionWatchEnabled || cookieThreatDetectionEnabled || caaEnforcementEnabled) ? (
                   <span
                     data-testid="enforcement-mode-badge"
                     style={{
@@ -495,7 +506,9 @@ export const Dashboard: React.FC = () => {
                       ? t.enforcementBadgeBoth
                       : sessionWatchEnabled
                       ? t.enforcementBadgeSessionWatch
-                      : t.enforcementBadgeCaa}
+                      : caaEnforcementEnabled
+                      ? t.enforcementBadgeCaa
+                      : t.enforcementBadgeCookieSentinel}
                   </span>
                 ) : isAdmin ? (
                   <a

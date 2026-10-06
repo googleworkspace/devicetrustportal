@@ -61,6 +61,9 @@ def health_check():
         "status": "OK",
         "enforcement_mode": getattr(config, "enforcement_mode", "DISABLED"),
         "session_watch_enabled": bool(getattr(config, "session_watch_enabled", False)),
+        "cookie_threat_detection_enabled": bool(
+            getattr(config, "cookie_threat_detection_enabled", False)
+        ),
         "caa_enforcement_enabled": bool(getattr(config, "caa_enforcement_enabled", False)),
         "branch_variation": "poc/fundamentals-session-watch",
     }
@@ -89,6 +92,9 @@ def get_public_config():
         "default_locale": getattr(config, "default_locale", "en"),
         "enforcement_mode": getattr(config, "enforcement_mode", "DISABLED"),
         "session_watch_enabled": bool(getattr(config, "session_watch_enabled", False)),
+        "cookie_threat_detection_enabled": bool(
+            getattr(config, "cookie_threat_detection_enabled", False)
+        ),
         "caa_enforcement_enabled": bool(getattr(config, "caa_enforcement_enabled", False)),
         "branch_variation": "poc/fundamentals-session-watch",
     }

@@ -214,4 +214,44 @@ describe("AdminConfig Page", () => {
     );
     expect(localStorage.getItem("userLocale")).toBe("es");
   });
+
+  test("allows enabling Stolen Cookie & Token Threat Detection while keeping Session Management OFF", async () => {
+    render(<AdminConfig />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("toggle-cookie-threat-detection")).toBeInTheDocument();
+    });
+
+    const sessionToggle = screen.getByTestId("toggle-session-watch");
+    const cookieToggle = screen.getByTestId("toggle-cookie-threat-detection");
+
+    expect(sessionToggle).toHaveAttribute("aria-checked", "false");
+    expect(cookieToggle).toHaveAttribute("aria-checked", "false");
+
+    // Toggle Stolen Cookie & Token Threat Detection ON while Session Management stays OFF
+    fireEvent.click(cookieToggle);
+
+    expect(screen.getByTestId("confirm-toggle-modal")).toBeInTheDocument();
+    expect(
+      screen.getByText(/Enable Stolen Cookie & Token Threat Detection\?/i)
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("confirm-autosave-btn"));
+
+    await waitFor(() => {
+      expect(mockUpdateAdminConfig).toHaveBeenCalledWith(
+        expect.objectContaining({
+          session_watch_enabled: false,
+          cookie_threat_detection_enabled: true,
+          enforcement_mode: "COOKIE_SENTINEL",
+        })
+      );
+    });
+
+    expect(screen.getByTestId("toggle-session-watch")).toHaveAttribute("aria-checked", "false");
+    expect(screen.getByTestId("toggle-cookie-threat-detection")).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByTestId("toggle-cookie-threat-detection")).toHaveStyle({ backgroundColor: "#137333" });
+    expect(screen.getByTestId("active-enforcement-mode-pill")).toHaveTextContent(/COOKIE_SENTINEL/i);
+  });
 });
+
