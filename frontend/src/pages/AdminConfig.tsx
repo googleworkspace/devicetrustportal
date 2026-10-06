@@ -32,6 +32,29 @@ export const AdminConfig: React.FC = () => {
   const [newAdminEmail, setNewAdminEmail] = useState("");
   const [showAddAdminModal, setShowAddAdminModal] = useState(false);
 
+  // Switch 1: Network-Gated Campus Approval
+  const [enableNetworkApproval, setEnableNetworkApproval] = useState(false);
+  const [trustedIps, setTrustedIps] = useState("");
+  const [networkOus, setNetworkOus] = useState("");
+  const [networkGroups, setNetworkGroups] = useState("");
+
+  // Switch 2: Trust Chaining
+  const [enableTrustChaining, setEnableTrustChaining] = useState(false);
+  const [chainingOus, setChainingOus] = useState("");
+  const [chainingGroups, setChainingGroups] = useState("");
+  const [chainingDeniedOus, setChainingDeniedOus] = useState("");
+  const [chainingDeniedGroups, setChainingDeniedGroups] = useState("");
+
+  // Switch 3: Session Guard (Education Fundamentals Zero-Trust)
+  const [enableSessionGuard, setEnableSessionGuard] = useState(false);
+  const [sessionGuardMode, setSessionGuardMode] = useState("DISABLED");
+  const [sessionGuardExemptOus, setSessionGuardExemptOus] = useState("");
+  const [sessionGuardExemptGroups, setSessionGuardExemptGroups] = useState("");
+
+  const splitList = (str: string): string[] => {
+    return str.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
+  };
+
   const userEmail = localStorage.getItem("userEmail") || "";
   const userLocale = localStorage.getItem("userLocale") || defaultLocale || "en";
   const t = getTranslator(userLocale);
@@ -51,6 +74,26 @@ export const AdminConfig: React.FC = () => {
         setPortalAdmins(data.portal_admins || []);
         setGoogleClientId(data.google_client_id || "");
         setDefaultLocale(data.default_locale || "en");
+
+        // Load Switch 1
+        setEnableNetworkApproval(data.enable_network_approval || false);
+        setTrustedIps((data.trusted_ip_ranges || []).join(", "));
+        setNetworkOus((data.network_approval_allowed_ous || []).join(", "));
+        setNetworkGroups((data.network_approval_allowed_groups || []).join(", "));
+
+        // Load Switch 2
+        setEnableTrustChaining(data.enable_trust_chaining || false);
+        setChainingOus((data.chaining_allowed_ous || []).join(", "));
+        setChainingGroups((data.chaining_allowed_groups || []).join(", "));
+        setChainingDeniedOus((data.chaining_denied_ous || []).join(", "));
+        setChainingDeniedGroups((data.chaining_denied_groups || []).join(", "));
+
+        // Load Switch 3
+        setEnableSessionGuard(data.enable_session_guard || false);
+        setSessionGuardMode(data.session_guard_mode || (data.enable_session_guard ? "ENFORCE_ACTIVE" : "DISABLED"));
+        setSessionGuardExemptOus((data.session_guard_exempt_ous || []).join(", "));
+        setSessionGuardExemptGroups((data.session_guard_exempt_groups || []).join(", "));
+
         setLoading(false);
         sendClientLog("INFO", "ADMIN_CONFIG_LOADED", `Admin config loaded for ${userEmail}`);
       } catch (e: any) {
@@ -93,9 +136,19 @@ export const AdminConfig: React.FC = () => {
       revocation_action: config?.revocation_action || "BLOCK",
       google_client_id: googleClientId.trim(),
       default_locale: defaultLocale,
-      trusted_ip_ranges: config?.trusted_ip_ranges || [],
-      chaining_allowed_groups: config?.chaining_allowed_groups || [],
-      chaining_allowed_ous: config?.chaining_allowed_ous || [],
+      trusted_ip_ranges: splitList(trustedIps),
+      enable_network_approval: enableNetworkApproval,
+      network_approval_allowed_ous: splitList(networkOus),
+      network_approval_allowed_groups: splitList(networkGroups),
+      enable_trust_chaining: enableTrustChaining,
+      chaining_allowed_ous: splitList(chainingOus),
+      chaining_allowed_groups: splitList(chainingGroups),
+      chaining_denied_ous: splitList(chainingDeniedOus),
+      chaining_denied_groups: splitList(chainingDeniedGroups),
+      enable_session_guard: enableSessionGuard || sessionGuardMode !== "DISABLED",
+      session_guard_mode: sessionGuardMode,
+      session_guard_exempt_ous: splitList(sessionGuardExemptOus),
+      session_guard_exempt_groups: splitList(sessionGuardExemptGroups),
     };
 
     try {
@@ -298,6 +351,251 @@ export const AdminConfig: React.FC = () => {
               {t.defaultLocaleHint}
             </span>
           </div>
+
+          <hr style={{ border: "none", borderTop: "1px solid var(--dtg-border-subtle)", margin: "28px 0" }} />
+
+          {/* Switch 1: Network-Gated Campus Approval */}
+          <h2 style={{ margin: "0 0 6px 0", fontSize: "18px", fontWeight: 600, color: "var(--dtg-text)" }}>
+            Network-Gated Campus Self-Approval
+          </h2>
+          <p style={{ fontSize: "13px", color: "var(--dtg-text-secondary)", margin: "0 0 18px 0", lineHeight: 1.5 }}>
+            Allows users connecting from authorized campus Wi-Fi / IP ranges to self-approve their personal or BYOD devices.
+            <b> Security Notice:</b> To prevent unauthorized students or guests from registering rogue devices, scope this feature to specific Staff OUs or Groups.
+          </p>
+
+          <div style={{ marginBottom: "20px", display: "flex", alignItems: "center", gap: "10px" }}>
+            <input
+              id="enable-network-approval-checkbox"
+              type="checkbox"
+              checked={enableNetworkApproval}
+              onChange={(e) => setEnableNetworkApproval(e.target.checked)}
+              style={{ width: "18px", height: "18px", cursor: "pointer" }}
+            />
+            <label htmlFor="enable-network-approval-checkbox" style={{ fontWeight: 600, fontSize: "14px", color: "var(--dtg-text)", cursor: "pointer" }}>
+              Enable Network-Gated Device Approval (Campus Wi-Fi)
+            </label>
+          </div>
+
+          {enableNetworkApproval && (
+            <div style={{ backgroundColor: "var(--dtg-surface-subtle)", padding: "16px", borderRadius: "8px", border: "1px solid var(--dtg-border-subtle)", marginBottom: "28px" }}>
+              <div style={{ marginBottom: "16px" }}>
+                <label style={{ display: "block", fontWeight: 600, marginBottom: "6px", color: "var(--dtg-text)", fontSize: "13px" }}>
+                  Trusted Campus IP / CIDR Ranges:
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. 192.168.1.0/24, 10.0.0.0/16"
+                  value={trustedIps}
+                  onChange={(e) => setTrustedIps(e.target.value)}
+                  className="dtg-input"
+                />
+                <span style={{ fontSize: "12px", color: "var(--dtg-text-secondary)", display: "block", marginTop: "4px" }}>
+                  Comma-separated CIDR subnets representing internal campus Wi-Fi or wired egress.
+                </span>
+              </div>
+
+              <div style={{ marginBottom: "16px" }}>
+                <label style={{ display: "block", fontWeight: 600, marginBottom: "6px", color: "var(--dtg-text)", fontSize: "13px" }}>
+                  Authorized Organizational Units (OUs):
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. /Staff, /Staff/HighSchool (Leave blank for all OUs)"
+                  value={networkOus}
+                  onChange={(e) => setNetworkOus(e.target.value)}
+                  className="dtg-input"
+                />
+                <span style={{ fontSize: "12px", color: "var(--dtg-text-secondary)", display: "block", marginTop: "4px" }}>
+                  Hierarchical OU matching: e.g. <code>/Staff</code> matches all sub-OUs under Staff.
+                </span>
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontWeight: 600, marginBottom: "6px", color: "var(--dtg-text)", fontSize: "13px" }}>
+                  Authorized Google Groups:
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. teachers@domain.org, tech-team@domain.org"
+                  value={networkGroups}
+                  onChange={(e) => setNetworkGroups(e.target.value)}
+                  className="dtg-input"
+                />
+              </div>
+            </div>
+          )}
+
+          <hr style={{ border: "none", borderTop: "1px solid var(--dtg-border-subtle)", margin: "28px 0" }} />
+
+          {/* Switch 2: Device Trust Chaining */}
+          <h2 style={{ margin: "0 0 6px 0", fontSize: "18px", fontWeight: 600, color: "var(--dtg-text)" }}>
+            Device Trust Chaining
+          </h2>
+          <p style={{ fontSize: "13px", color: "var(--dtg-text-secondary)", margin: "0 0 18px 0", lineHeight: 1.5 }}>
+            Allows a user on an already-approved device (e.g. their managed Chromebook) to generate a secure 6-digit pairing code to authorize a secondary device without IT intervention.
+          </p>
+
+          <div style={{ marginBottom: "20px", display: "flex", alignItems: "center", gap: "10px" }}>
+            <input
+              id="enable-trust-chaining-checkbox"
+              type="checkbox"
+              checked={enableTrustChaining}
+              onChange={(e) => setEnableTrustChaining(e.target.checked)}
+              style={{ width: "18px", height: "18px", cursor: "pointer" }}
+            />
+            <label htmlFor="enable-trust-chaining-checkbox" style={{ fontWeight: 600, fontSize: "14px", color: "var(--dtg-text)", cursor: "pointer" }}>
+              Enable Trust Chaining (Pairing Codes)
+            </label>
+          </div>
+
+          {enableTrustChaining && (
+            <div style={{ backgroundColor: "var(--dtg-surface-subtle)", padding: "16px", borderRadius: "8px", border: "1px solid var(--dtg-border-subtle)", marginBottom: "28px" }}>
+              <div style={{ marginBottom: "16px" }}>
+                <label style={{ display: "block", fontWeight: 600, marginBottom: "6px", color: "var(--dtg-text)", fontSize: "13px" }}>
+                  Authorized OUs:
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. /Staff, /Faculty"
+                  value={chainingOus}
+                  onChange={(e) => setChainingOus(e.target.value)}
+                  className="dtg-input"
+                />
+              </div>
+
+              <div style={{ marginBottom: "16px" }}>
+                <label style={{ display: "block", fontWeight: 600, marginBottom: "6px", color: "var(--dtg-text)", fontSize: "13px" }}>
+                  Authorized Google Groups:
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. staff@domain.org"
+                  value={chainingGroups}
+                  onChange={(e) => setChainingGroups(e.target.value)}
+                  className="dtg-input"
+                />
+              </div>
+
+              <div style={{ marginBottom: "16px" }}>
+                <label style={{ display: "block", fontWeight: 600, marginBottom: "6px", color: "var(--dtg-danger)", fontSize: "13px" }}>
+                  Denied OUs (Overrides Allowed):
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. /Students, /Contractors"
+                  value={chainingDeniedOus}
+                  onChange={(e) => setChainingDeniedOus(e.target.value)}
+                  className="dtg-input"
+                />
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontWeight: 600, marginBottom: "6px", color: "var(--dtg-danger)", fontSize: "13px" }}>
+                  Denied Google Groups (Overrides Allowed):
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. student-assistants@domain.org"
+                  value={chainingDeniedGroups}
+                  onChange={(e) => setChainingDeniedGroups(e.target.value)}
+                  className="dtg-input"
+                />
+              </div>
+            </div>
+          )}
+
+          <hr style={{ border: "none", borderTop: "1px solid var(--dtg-border-subtle)", margin: "28px 0" }} />
+
+          {/* Switch 3: Session Guard */}
+          <h2 style={{ margin: "0 0 6px 0", fontSize: "18px", fontWeight: 600, color: "var(--dtg-text)" }}>
+            Session Guard (Education Fundamentals Zero-Trust)
+          </h2>
+          <p style={{ fontSize: "13px", color: "var(--dtg-text-secondary)", margin: "0 0 18px 0", lineHeight: 1.5 }}>
+            Autonomous session watch & circuit breaker for Education Fundamentals domains without Context-Aware Access (CAA).
+            Monitors login audits and token refreshes, revoking sessions via <code>users.signOut</code> when unapproved or unattested devices connect.
+          </p>
+
+          <div style={{ marginBottom: "20px" }}>
+            <label style={{ display: "block", fontWeight: 600, marginBottom: "8px", color: "var(--dtg-text)", fontSize: "14px" }}>
+              Enforcement Mode:
+            </label>
+            <div style={{ display: "flex", gap: "14px", flexWrap: "wrap" }}>
+              <label style={{ display: "flex", alignItems: "center", gap: "6px", cursor: "pointer", fontSize: "13px" }}>
+                <input
+                  type="radio"
+                  name="session_guard_mode"
+                  value="DISABLED"
+                  checked={sessionGuardMode === "DISABLED"}
+                  onChange={() => {
+                    setSessionGuardMode("DISABLED");
+                    setEnableSessionGuard(false);
+                  }}
+                />
+                <span>Disabled (Off)</span>
+              </label>
+
+              <label style={{ display: "flex", alignItems: "center", gap: "6px", cursor: "pointer", fontSize: "13px" }}>
+                <input
+                  type="radio"
+                  name="session_guard_mode"
+                  value="AUDIT_SIMULATION"
+                  checked={sessionGuardMode === "AUDIT_SIMULATION"}
+                  onChange={() => {
+                    setSessionGuardMode("AUDIT_SIMULATION");
+                    setEnableSessionGuard(true);
+                  }}
+                />
+                <span style={{ color: "var(--dtg-primary)", fontWeight: 600 }}>Audit / Simulation (Dry-Run Logs Only)</span>
+              </label>
+
+              <label style={{ display: "flex", alignItems: "center", gap: "6px", cursor: "pointer", fontSize: "13px" }}>
+                <input
+                  type="radio"
+                  name="session_guard_mode"
+                  value="ENFORCE_ACTIVE"
+                  checked={sessionGuardMode === "ENFORCE_ACTIVE"}
+                  onChange={() => {
+                    setSessionGuardMode("ENFORCE_ACTIVE");
+                    setEnableSessionGuard(true);
+                  }}
+                />
+                <span style={{ color: "var(--dtg-danger)", fontWeight: 600 }}>Active Enforcement (Revoke via users.signOut)</span>
+              </label>
+            </div>
+          </div>
+
+          {sessionGuardMode !== "DISABLED" && (
+            <div style={{ backgroundColor: "var(--dtg-surface-subtle)", padding: "16px", borderRadius: "8px", border: "1px solid var(--dtg-border-subtle)", marginBottom: "28px" }}>
+              <div style={{ marginBottom: "16px" }}>
+                <label style={{ display: "block", fontWeight: 600, marginBottom: "6px", color: "var(--dtg-text)", fontSize: "13px" }}>
+                  Exempt Organizational Units (OUs):
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. /Admins, /Staff"
+                  value={sessionGuardExemptOus}
+                  onChange={(e) => setSessionGuardExemptOus(e.target.value)}
+                  className="dtg-input"
+                />
+                <span style={{ fontSize: "12px", color: "var(--dtg-text-secondary)", display: "block", marginTop: "4px" }}>
+                  Users in exempt OUs will never be automatically signed out, even if logging in from personal devices.
+                </span>
+              </div>
+
+              <div>
+                <label style={{ display: "block", fontWeight: 600, marginBottom: "6px", color: "var(--dtg-text)", fontSize: "13px" }}>
+                  Exempt Google Groups:
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. emergency-responders@domain.org, super-admins@domain.org"
+                  value={sessionGuardExemptGroups}
+                  onChange={(e) => setSessionGuardExemptGroups(e.target.value)}
+                  className="dtg-input"
+                />
+              </div>
+            </div>
+          )}
 
           <hr style={{ border: "none", borderTop: "1px solid var(--dtg-border-subtle)", margin: "28px 0" }} />
 

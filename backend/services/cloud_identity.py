@@ -15,10 +15,17 @@
 import os
 import datetime
 from typing import List, Dict, Any, Optional
-from google.oauth2 import service_account
-from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
-from googleapiclient.http import BatchHttpRequest
+try:
+    from google.oauth2 import service_account
+    from googleapiclient.discovery import build
+    from googleapiclient.errors import HttpError
+    from googleapiclient.http import BatchHttpRequest
+except ImportError:
+    service_account = None
+    build = None
+    class HttpError(Exception):
+        pass
+    BatchHttpRequest = None
 
 def resolve_dwd_key_path() -> Optional[str]:
     """Resolves the DWD service account key file path, recovering from MSYS2/Windows path mangling."""

@@ -13,10 +13,18 @@
 # limitations under the License.
 
 import os
-from typing import List, Dict, Any, Optional
-from google.oauth2 import service_account
-from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
+import time
+from typing import List, Dict, Any, Optional, Tuple
+try:
+    from google.oauth2 import service_account
+    from googleapiclient.discovery import build
+    from googleapiclient.errors import HttpError
+except ImportError:
+    service_account = None
+    build = None
+    class HttpError(Exception):
+        pass
+
 from backend.services.cloud_identity import resolve_dwd_key_path
 
 class DirectoryService:
@@ -77,57 +85,155 @@ class DirectoryService:
             print(f"ERROR [directory_service.py]: Directory API service is not initialized; cannot verify admin status for '{target_email}'.")
             return False
 
-        try:
-            request = self.service.users().get(userKey=target_email, projection="full")
-            response = request.execute()
-            is_admin = response.get("isAdmin", False)
-            if is_admin:
-                print(f"SUCCESS [directory_service.py]: User '{target_email}' verified as Workspace Super Administrator.")
-            return is_admin
-        except HttpError as e:
-            print(f"Directory API error checking admin status for {target_email}: {e}")
-            return False
+        self._user_cache: Dict[str, Dict[str, Any]] = {}
+        self._group_cache: Dict[str, Dict[str, Any]] = {}
 
-    def get_user_chaining_policy(self, user_email: str, allowed_groups: List[str], allowed_ous: List[str]) -> bool:
-        """Verifies if user is allowed to chain trust based on groups and OUs."""
+    def get_user_details(self, user_email: str) -> Dict[str, Any]:
+        """Fetches basic user metadata (orgUnitPath, isAdmin) with a 300s RAM cache to protect Directory API quota."""
         target_email = user_email.lower().strip()
-        
-        if not allowed_groups and not allowed_ous:
-            return False
+        now = time.time()
+        cached = self._user_cache.get(target_email)
+        if cached and (now - cached.get("_cached_at", 0)) < 300:
+            return cached
+
+        default_info = {"orgUnitPath": "/", "isAdmin": False, "_cached_at": now}
+        if not self.service:
+            return default_info
+
+        try:
+            req = self.service.users().get(userKey=target_email, projection="full")
+            res = req.execute()
+            info = {
+                "orgUnitPath": res.get("orgUnitPath", "/"),
+                "isAdmin": res.get("isAdmin", False),
+                "_cached_at": now,
+            }
+            self._user_cache[target_email] = info
+            return info
+        except HttpError as e:
+            print(f"Directory API error fetching user details for '{target_email}': {e}")
+            return default_info
+
+    def is_user_in_group(self, user_email: str, group_email: str) -> bool:
+        """Verifies group membership with a 300s RAM cache."""
+        target_email = user_email.lower().strip()
+        target_group = group_email.lower().strip()
+        cache_key = f"{target_email}::{target_group}"
+        now = time.time()
+        cached = self._group_cache.get(cache_key)
+        if cached and (now - cached.get("_cached_at", 0)) < 300:
+            return cached.get("is_member", False)
 
         if not self.service:
-            print(f"ERROR [directory_service.py]: Directory API service is not initialized; cannot verify chaining policy for '{target_email}'.")
             return False
 
         try:
-            # 1. Check Org Unit (OU)
-            request = self.service.users().get(userKey=target_email, projection="basic")
-            user_res = request.execute()
-            user_ou = user_res.get("orgUnitPath", "")
-            
-            if user_ou and any(user_ou.lower().strip() == ou.lower().strip() for ou in allowed_ous):
-                print(f"SUCCESS [directory_service.py]: User '{target_email}' authorized via OU '{user_ou}'.")
-                return True
-
-            # 2. Check Groups
-            for group in allowed_groups:
-                try:
-                    member_check = self.service.members().hasMember(
-                        groupKey=group.strip(),
-                        memberKey=target_email
-                    ).execute()
-                    
-                    if member_check.get("isMember", False):
-                        print(f"SUCCESS [directory_service.py]: User '{target_email}' authorized via Group '{group}'.")
-                        return True
-                except HttpError as e:
-                    print(f"Warning: Failed to check membership in group '{group}': {e}")
-                    continue
-
-            return False
+            member_check = self.service.members().hasMember(
+                groupKey=target_group,
+                memberKey=target_email
+            ).execute()
+            is_member = member_check.get("isMember", False)
+            self._group_cache[cache_key] = {"is_member": is_member, "_cached_at": now}
+            return is_member
         except HttpError as e:
-            print(f"Directory API error checking chaining policy for {target_email}: {e}")
+            print(f"Warning: Failed to check membership in group '{target_group}' for '{target_email}': {e}")
             return False
+
+    def is_ou_matching(self, user_ou: str, target_ou: str) -> bool:
+        """Hierarchical OU matching with boundary awareness.
+        
+        e.g., '/Staff' matches '/Staff' and '/Staff/HighSchool', but not '/Staff-Temp' or '/Students'.
+        Root '/' matches everything.
+        """
+        if not user_ou or not target_ou:
+            return False
+        u = "/" + user_ou.strip().strip("/")
+        t = "/" + target_ou.strip().strip("/")
+        if t == "/":
+            return True
+        u_lower = u.lower()
+        t_lower = t.lower()
+        return u_lower == t_lower or u_lower.startswith(t_lower + "/")
+
+    def evaluate_feature_authorization(
+        self,
+        user_email: str,
+        feature_name: str,
+        feature_enabled: bool,
+        allowed_ous: List[str],
+        allowed_groups: List[str],
+        denied_ous: Optional[List[str]] = None,
+        denied_groups: Optional[List[str]] = None,
+        require_explicit_allowlist: bool = False,
+    ) -> Tuple[bool, str]:
+        """Evaluates whether a user is authorized for a feature under an admin switch and OU/Group scopes.
+        
+        Returns (is_authorized, reason).
+        """
+        if not feature_enabled:
+            return False, f"Feature '{feature_name}' is disabled by domain policy."
+
+        target_email = user_email.lower().strip()
+        denied_ous = denied_ous or []
+        denied_groups = denied_groups or []
+        allowed_ous = allowed_ous or []
+        allowed_groups = allowed_groups or []
+
+        user_info = self.get_user_details(target_email)
+        user_ou = user_info.get("orgUnitPath", "/")
+
+        # 1. Deny-list OU checks (Precedence: explicit deny overrides any allow)
+        for dou in denied_ous:
+            if self.is_ou_matching(user_ou, dou):
+                return False, f"Access denied: User OU '{user_ou}' is explicitly denied by policy."
+
+        # 2. Deny-list Group checks
+        for dgroup in denied_groups:
+            if self.is_user_in_group(target_email, dgroup):
+                return False, f"Access denied: User is a member of explicitly denied Group '{dgroup}'."
+
+        # 3. Allow-list OU checks (Hierarchical prefix match)
+        for aou in allowed_ous:
+            if self.is_ou_matching(user_ou, aou):
+                return True, f"Authorized for '{feature_name}' via OU '{user_ou}' (matched rule '{aou}')."
+
+        # 4. Allow-list Group checks
+        for agroup in allowed_groups:
+            if self.is_user_in_group(target_email, agroup):
+                return True, f"Authorized for '{feature_name}' via Group '{agroup}'."
+
+        # 5. If allowlists were configured but user matched neither
+        if allowed_ous or allowed_groups:
+            return False, f"Access denied: User '{target_email}' (OU: '{user_ou}') is not in authorized OUs or Groups."
+
+        # 6. If no allowlists were configured
+        if require_explicit_allowlist:
+            return False, f"Access denied: Feature '{feature_name}' requires an explicit OU or Group allowlist."
+
+        return True, f"Authorized for '{feature_name}' (domain-wide policy)."
+
+    def get_user_chaining_policy(
+        self,
+        user_email: str,
+        allowed_groups: List[str],
+        allowed_ous: List[str],
+        denied_groups: Optional[List[str]] = None,
+        denied_ous: Optional[List[str]] = None,
+        feature_enabled: bool = True,
+    ) -> bool:
+        """Verifies if user is allowed to chain trust based on admin switch, groups, and hierarchical OUs."""
+        is_allowed, reason = self.evaluate_feature_authorization(
+            user_email=user_email,
+            feature_name="Trust Chaining",
+            feature_enabled=feature_enabled,
+            allowed_ous=allowed_ous,
+            allowed_groups=allowed_groups,
+            denied_ous=denied_ous,
+            denied_groups=denied_groups,
+            require_explicit_allowlist=True,
+        )
+        print(f"INFO [directory_service.py]: Chaining check for '{user_email}': {reason}")
+        return is_allowed
 
     def get_user_chromeos_devices(self, user_email: str, customer_id: str = "my_customer", is_admin: bool = False) -> List[Dict[str, Any]]:
         """Queries Admin SDK Directory API for enterprise-enrolled ChromeOS devices associated with the user."""

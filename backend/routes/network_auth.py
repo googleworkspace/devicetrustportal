@@ -18,6 +18,7 @@ from pydantic import BaseModel
 from fastapi import APIRouter, HTTPException, Depends, Request
 from backend.services.config_service import config_service
 from backend.services.cloud_identity import cloud_identity_service
+from backend.services.directory_service import directory_service
 from backend.routes.admin import get_current_user_email
 
 router = APIRouter(prefix="/api/network", tags=["Network Approval"])
@@ -71,10 +72,29 @@ def network_gated_approval(
     user_email: str = Depends(get_current_user_email)
 ):
     """Executes self-service device approval if caller is connected to a trusted network."""
-    # Validate IP
+    config = config_service.get_tenant_config()
+
+    # 1. Master Admin Switch check
+    if not config.enable_network_approval:
+        raise HTTPException(
+            status_code=403, 
+            detail="Network-gated device approval is disabled by domain policy."
+        )
+
+    # 2. Validate IP
     verify_client_ip_is_trusted(request)
     
-    config = config_service.get_tenant_config()
+    # 3. Validate OU & Group scoping
+    is_authorized, reason = directory_service.evaluate_feature_authorization(
+        user_email=user_email,
+        feature_name="Network-Gated Approval",
+        feature_enabled=config.enable_network_approval,
+        allowed_ous=config.network_approval_allowed_ous,
+        allowed_groups=config.network_approval_allowed_groups,
+        require_explicit_allowlist=False,
+    )
+    if not is_authorized:
+        raise HTTPException(status_code=403, detail=reason)
     
     # Resolve device user resource name
     device_user_name = None

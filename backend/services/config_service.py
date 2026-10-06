@@ -29,9 +29,18 @@ class TenantConfig(BaseModel):
     google_client_id: str = Field(default="", description="Google OAuth 2.0 Client ID for frontend Google Sign-In")
     default_locale: str = Field(default="en", description="Default UI language code fallback for end users (e.g., 'en', 'es', 'fr', 'ja')")
     trusted_ip_ranges: List[str] = Field(default=[], description="Trusted campus CIDR ranges for network-gated approvals")
+    enable_network_approval: bool = Field(default=False, description="Master admin switch: Enable self-service device approval when connected to campus trusted Wi-Fi / IP ranges")
+    network_approval_allowed_ous: List[str] = Field(default=[], description="Organizational Units authorized for network-gated device approval")
+    network_approval_allowed_groups: List[str] = Field(default=[], description="Google Groups authorized for network-gated device approval")
+    enable_trust_chaining: bool = Field(default=False, description="Master admin switch: Enable trust chaining pairing codes from approved devices")
     chaining_allowed_groups: List[str] = Field(default=[], description="Google Groups authorized to perform trust chaining")
     chaining_allowed_ous: List[str] = Field(default=[], description="Organizational Units authorized to perform trust chaining")
-    enable_session_guard: bool = Field(default=False, description="Enable automated session monitoring and token revocation for unattested/unapproved devices")
+    chaining_denied_groups: List[str] = Field(default=[], description="Google Groups explicitly denied from trust chaining (overrides allow)")
+    chaining_denied_ous: List[str] = Field(default=[], description="Organizational Units explicitly denied from trust chaining (overrides allow)")
+    enable_session_guard: bool = Field(default=False, description="Master admin switch: Enable automated session monitoring and token revocation")
+    session_guard_mode: str = Field(default="DISABLED", description="Session Guard enforcement mode: 'DISABLED', 'AUDIT_SIMULATION', or 'ENFORCE_ACTIVE'")
+    session_guard_exempt_ous: List[str] = Field(default=[], description="Organizational Units exempt from automated session revocation")
+    session_guard_exempt_groups: List[str] = Field(default=[], description="Google Groups exempt from automated session revocation")
 
 class ConfigService:
     def __init__(self):
@@ -81,9 +90,18 @@ class ConfigService:
             google_client_id=os.getenv("TENANT_GOOGLE_CLIENT_ID", "") or env_client_id,
             default_locale=os.getenv("TENANT_DEFAULT_LOCALE", "en"),
             trusted_ip_ranges=json.loads(os.getenv("TENANT_TRUSTED_IPS", '[]')),
+            enable_network_approval=os.getenv("TENANT_ENABLE_NETWORK_APPROVAL", "false").lower() == "true",
+            network_approval_allowed_ous=json.loads(os.getenv("TENANT_NETWORK_APPROVAL_OUS", '[]')),
+            network_approval_allowed_groups=json.loads(os.getenv("TENANT_NETWORK_APPROVAL_GROUPS", '[]')),
+            enable_trust_chaining=os.getenv("TENANT_ENABLE_TRUST_CHAINING", "false").lower() == "true",
             chaining_allowed_groups=json.loads(os.getenv("TENANT_CHAINING_GROUPS", '[]')),
             chaining_allowed_ous=json.loads(os.getenv("TENANT_CHAINING_OUS", '[]')),
+            chaining_denied_groups=json.loads(os.getenv("TENANT_CHAINING_DENIED_GROUPS", '[]')),
+            chaining_denied_ous=json.loads(os.getenv("TENANT_CHAINING_DENIED_OUS", '[]')),
             enable_session_guard=os.getenv("TENANT_ENABLE_SESSION_GUARD", "false").lower() == "true",
+            session_guard_mode=os.getenv("TENANT_SESSION_GUARD_MODE", "DISABLED").upper(),
+            session_guard_exempt_ous=json.loads(os.getenv("TENANT_SESSION_GUARD_EXEMPT_OUS", '[]')),
+            session_guard_exempt_groups=json.loads(os.getenv("TENANT_SESSION_GUARD_EXEMPT_GROUPS", '[]')),
         )
 
     def update_tenant_config(self, config: TenantConfig) -> bool:
@@ -112,9 +130,18 @@ class ConfigService:
         set_key(dotenv_path, "TENANT_GOOGLE_CLIENT_ID", config.google_client_id)
         set_key(dotenv_path, "TENANT_DEFAULT_LOCALE", config.default_locale)
         set_key(dotenv_path, "TENANT_TRUSTED_IPS", json.dumps(config.trusted_ip_ranges))
+        set_key(dotenv_path, "TENANT_ENABLE_NETWORK_APPROVAL", str(config.enable_network_approval).lower())
+        set_key(dotenv_path, "TENANT_NETWORK_APPROVAL_OUS", json.dumps(config.network_approval_allowed_ous))
+        set_key(dotenv_path, "TENANT_NETWORK_APPROVAL_GROUPS", json.dumps(config.network_approval_allowed_groups))
+        set_key(dotenv_path, "TENANT_ENABLE_TRUST_CHAINING", str(config.enable_trust_chaining).lower())
         set_key(dotenv_path, "TENANT_CHAINING_GROUPS", json.dumps(config.chaining_allowed_groups))
         set_key(dotenv_path, "TENANT_CHAINING_OUS", json.dumps(config.chaining_allowed_ous))
+        set_key(dotenv_path, "TENANT_CHAINING_DENIED_GROUPS", json.dumps(config.chaining_denied_groups))
+        set_key(dotenv_path, "TENANT_CHAINING_DENIED_OUS", json.dumps(config.chaining_denied_ous))
         set_key(dotenv_path, "TENANT_ENABLE_SESSION_GUARD", str(config.enable_session_guard).lower())
+        set_key(dotenv_path, "TENANT_SESSION_GUARD_MODE", config.session_guard_mode)
+        set_key(dotenv_path, "TENANT_SESSION_GUARD_EXEMPT_OUS", json.dumps(config.session_guard_exempt_ous))
+        set_key(dotenv_path, "TENANT_SESSION_GUARD_EXEMPT_GROUPS", json.dumps(config.session_guard_exempt_groups))
         
         load_dotenv(dotenv_path, override=True)
         return True
