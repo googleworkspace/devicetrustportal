@@ -85,6 +85,14 @@ class TenantConfig(BaseModel):
         default=[],
         description="Google Groups scoped for CAA-Free Session Watch enforcement (e.g. ['session-watch-pilot@gwfe.org'])",
     )
+    cookie_threat_target_ous: List[str] = Field(
+        default=[],
+        description="Organizational Units scoped for Stolen Cookie & Token Threat Detection (e.g. ['/Staff', '/Students']). If empty and cookie_threat_target_groups is empty, all non-exempt users are evaluated.",
+    )
+    cookie_threat_target_groups: List[str] = Field(
+        default=[],
+        description="Google Groups scoped for Stolen Cookie & Token Threat Detection (e.g. ['cookie-sentinel-pilot@gwfe.org'])",
+    )
     session_watch_exempt_admins: bool = Field(
         default=False,
         description="Optional Admin Safe-Harbor: exempt Workspace Super Admins and Portal Admins from users.signOut circuit breaker",
@@ -254,6 +262,8 @@ class ConfigService:
             caa_enforcement_enabled=caa_enabled_env,
             session_watch_target_ous=json.loads(os.getenv("TENANT_SESSION_WATCH_TARGET_OUS", '[]')),
             session_watch_target_groups=json.loads(os.getenv("TENANT_SESSION_WATCH_TARGET_GROUPS", '[]')),
+            cookie_threat_target_ous=json.loads(os.getenv("TENANT_COOKIE_THREAT_TARGET_OUS", '[]')),
+            cookie_threat_target_groups=json.loads(os.getenv("TENANT_COOKIE_THREAT_TARGET_GROUPS", '[]')),
             session_watch_exempt_admins=exempt_admins_env,
             session_watch_dry_run=dry_run_env,
             session_watch_onboarding_grace_minutes=int(os.getenv("TENANT_SESSION_WATCH_GRACE_MINUTES", 15)),
@@ -325,6 +335,8 @@ class ConfigService:
         set_key(dotenv_path, "TENANT_CAA_ENFORCEMENT_ENABLED", "true" if config.caa_enforcement_enabled else "false")
         set_key(dotenv_path, "TENANT_SESSION_WATCH_TARGET_OUS", json.dumps(config.session_watch_target_ous))
         set_key(dotenv_path, "TENANT_SESSION_WATCH_TARGET_GROUPS", json.dumps(config.session_watch_target_groups))
+        set_key(dotenv_path, "TENANT_COOKIE_THREAT_TARGET_OUS", json.dumps(config.cookie_threat_target_ous))
+        set_key(dotenv_path, "TENANT_COOKIE_THREAT_TARGET_GROUPS", json.dumps(config.cookie_threat_target_groups))
         set_key(dotenv_path, "TENANT_SESSION_WATCH_EXEMPT_ADMINS", "true" if config.session_watch_exempt_admins else "false")
         set_key(dotenv_path, "TENANT_SESSION_WATCH_DRY_RUN", "true" if config.session_watch_dry_run else "false")
         set_key(dotenv_path, "TENANT_SESSION_WATCH_GRACE_MINUTES", str(config.session_watch_onboarding_grace_minutes))

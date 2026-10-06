@@ -23,12 +23,14 @@ import {
   getAdminConfig,
   updateAdminConfig,
   getSessionWatchMetrics,
+  getDirectoryMetadata,
 } from "../services/api";
 
 vi.mock("../services/api", () => ({
   getAdminConfig: vi.fn(),
   updateAdminConfig: vi.fn(),
   getSessionWatchMetrics: vi.fn(),
+  getDirectoryMetadata: vi.fn(),
   syncSessionWatchInventory: vi.fn(),
   attestBrowserSession: vi.fn(),
   runLiveLoginSweep: vi.fn(),
@@ -38,6 +40,7 @@ vi.mock("../services/api", () => ({
 const mockGetAdminConfig = getAdminConfig as ReturnType<typeof vi.fn>;
 const mockUpdateAdminConfig = updateAdminConfig as ReturnType<typeof vi.fn>;
 const mockGetSessionWatchMetrics = getSessionWatchMetrics as ReturnType<typeof vi.fn>;
+const mockGetDirectoryMetadata = getDirectoryMetadata as ReturnType<typeof vi.fn>;
 
 describe("AdminConfig Page", () => {
   const defaultConfig = {
@@ -94,6 +97,19 @@ describe("AdminConfig Page", () => {
     vi.clearAllMocks();
     mockGetAdminConfig.mockResolvedValue({ ...defaultConfig });
     mockGetSessionWatchMetrics.mockResolvedValue(defaultMetrics);
+    mockGetDirectoryMetadata.mockResolvedValue({
+      status: "ok",
+      organizational_units: [
+        { org_unit_path: "/", name: "Root Domain (/)", parent_path: "", depth: 0 },
+        { org_unit_path: "/Students", name: "Students", parent_path: "/", depth: 1 },
+        { org_unit_path: "/Students/MiddleSchool", name: "MiddleSchool", parent_path: "/Students", depth: 2 },
+        { org_unit_path: "/Staff", name: "Staff", parent_path: "/", depth: 1 },
+      ],
+      groups: [
+        { email: "students-byod@school.edu", name: "Students BYOD", description: "BYOD group" },
+        { email: "cookie-sentinel-pilot@school.edu", name: "Cookie Sentinel Pilot", description: "Pilot group" },
+      ],
+    });
     mockUpdateAdminConfig.mockImplementation(async (newCfg) => ({ ...newCfg }));
   });
 
@@ -253,6 +269,60 @@ describe("AdminConfig Page", () => {
     expect(screen.getByTestId("toggle-cookie-threat-detection")).toHaveAttribute("aria-checked", "true");
     expect(screen.getByTestId("toggle-cookie-threat-detection")).toHaveStyle({ backgroundColor: "#137333" });
     expect(screen.getByTestId("active-enforcement-mode-pill")).toHaveTextContent(/COOKIE_SENTINEL/i);
+  });
+
+  test("clarifies that Context-Aware Access (CAA) is ON by default and renders independent OU Tree & Google Group checkbox selectors", async () => {
+    render(<AdminConfig />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("caa-default-active-banner")).toBeInTheDocument();
+    });
+
+    const caaBanner = screen.getByTestId("caa-default-active-banner");
+    expect(caaBanner).toHaveTextContent(/Context-Aware Access \(CAA\) Integration \(Education Standard & Plus\) — ON by Default/i);
+    expect(caaBanner).toHaveTextContent(/ALWAYS ON BY DEFAULT/i);
+    expect(caaBanner).toHaveTextContent(/device\.is_admin_approved_device/i);
+
+    // Check /Students in Session Management OU Tree
+    const sessionStudentsCheckbox = screen.getByTestId("ou-tree-session-watch-checkbox-/Students");
+    fireEvent.click(sessionStudentsCheckbox);
+
+    await waitFor(() => {
+      expect(mockUpdateAdminConfig).toHaveBeenCalledWith(
+        expect.objectContaining({
+          session_watch_target_ous: ["/Students"],
+          cookie_threat_target_ous: [],
+        })
+      );
+    });
+
+    // Check /Staff in Cookie & Token Threat Detection OU Tree and cookie-sentinel-pilot@school.edu in Group selector
+    const cookieStaffCheckbox = screen.getByTestId("ou-tree-cookie-threat-checkbox-/Staff");
+    fireEvent.click(cookieStaffCheckbox);
+
+    await waitFor(() => {
+      expect(mockUpdateAdminConfig).toHaveBeenCalledWith(
+        expect.objectContaining({
+          session_watch_target_ous: ["/Students"],
+          cookie_threat_target_ous: ["/Staff"],
+        })
+      );
+    });
+
+    const cookieGroupCheckbox = screen.getByTestId(
+      "group-selector-cookie-threat-checkbox-cookie-sentinel-pilot@school.edu"
+    );
+    fireEvent.click(cookieGroupCheckbox);
+
+    await waitFor(() => {
+      expect(mockUpdateAdminConfig).toHaveBeenCalledWith(
+        expect.objectContaining({
+          session_watch_target_ous: ["/Students"],
+          cookie_threat_target_ous: ["/Staff"],
+          cookie_threat_target_groups: ["cookie-sentinel-pilot@school.edu"],
+        })
+      );
+    });
   });
 });
 

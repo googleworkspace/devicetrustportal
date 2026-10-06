@@ -729,4 +729,201 @@ class DirectoryService:
         )
         return True
 
+    def list_domain_ous_and_groups(
+        self,
+        customer_id: str = "my_customer",
+        configured_ous: Optional[List[str]] = None,
+        configured_groups: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """Discovers hierarchical Organizational Units (OUs) and Google Groups in the Workspace tenant.
+
+        Combines:
+        1. `admin.directory_v1.orgunits.list(type='all')` (if `admin.directory.orgunit.readonly` is authorized)
+        2. Active `orgUnitPath` values from `users.list` and `chromeosdevices.list` (using existing DWD scopes)
+        3. Configured OUs and Groups from `TenantConfig`, synthesizing full parent-child tree hierarchy.
+        """
+        cust_key = customer_id.replace("customers/", "").strip() if customer_id else "my_customer"
+        if not cust_key:
+            cust_key = "my_customer"
+
+        ou_descriptions: Dict[str, str] = {"/": "Root Organization (All OUs)"}
+        raw_ou_paths: set[str] = {"/"}
+        for raw_ou in configured_ous or []:
+            cleaned = "/" + raw_ou.strip().strip("/") if raw_ou and raw_ou.strip() else "/"
+            raw_ou_paths.add(cleaned)
+
+        groups_map: Dict[str, Dict[str, str]] = {}
+        for raw_grp in configured_groups or []:
+            g_clean = (raw_grp or "").strip().lower()
+            if g_clean:
+                groups_map[g_clean] = {
+                    "email": g_clean,
+                    "name": g_clean.split("@")[0],
+                    "description": "Configured Policy Group",
+                }
+
+        now = time.time()
+        cached_meta = getattr(self, "_metadata_cache", None)
+        if (
+            cached_meta
+            and (now - cached_meta.get("_cached_at", 0.0)) < 120.0
+            and cached_meta.get("_service_id") == id(self.service)
+        ):
+            for p in cached_meta.get("discovered_ou_paths", []):
+                raw_ou_paths.add(p)
+            ou_descriptions.update(cached_meta.get("ou_descriptions", {}))
+            for g in cached_meta.get("discovered_groups", []):
+                groups_map[g["email"]] = g
+        else:
+            discovered_ou_paths: set[str] = set()
+            discovered_groups: List[Dict[str, str]] = []
+
+            # 1. Try orgunits().list if service or DWD credentials are available
+            if self.key_path and self.admin_email and service_account and build:
+                try:
+                    with self._lock:
+                        if not getattr(self, "_orgunit_service", None):
+                            ou_creds = service_account.Credentials.from_service_account_file(
+                                self.key_path,
+                                scopes=["https://www.googleapis.com/auth/admin.directory.orgunit.readonly"],
+                                subject=self.admin_email,
+                            )
+                            self._orgunit_service = build("admin", "directory_v1", credentials=ou_creds)
+                        ou_resp = (
+                            self._orgunit_service.orgunits()
+                            .list(customerId=cust_key, type="all")
+                            .execute()
+                            or {}
+                        )
+                    for item in ou_resp.get("organizationUnits", []) or []:
+                        p = item.get("orgUnitPath")
+                        if p:
+                            norm_p = "/" + p.strip().strip("/")
+                            discovered_ou_paths.add(norm_p)
+                            if item.get("description") or item.get("name"):
+                                ou_descriptions[norm_p] = item.get("description") or item.get("name")
+                except Exception:
+                    pass
+
+            # 2. Harvest orgUnitPath from users().list and chromeosdevices().list (uses existing DWD scopes)
+            if self.service:
+                try:
+                    with self._lock:
+                        u_resp = (
+                            self.service.users()
+                            .list(customer=cust_key, maxResults=200, projection="basic")
+                            .execute()
+                            or {}
+                        )
+                    for u in u_resp.get("users", []) or []:
+                        upath = u.get("orgUnitPath")
+                        if upath:
+                            discovered_ou_paths.add("/" + upath.strip().strip("/"))
+                except Exception:
+                    pass
+
+                try:
+                    with self._lock:
+                        c_resp = (
+                            self.service.chromeosdevices()
+                            .list(customerId=cust_key, maxResults=200, projection="BASIC")
+                            .execute()
+                            or {}
+                        )
+                    for d in c_resp.get("chromeosdevices", []) or []:
+                        dpath = d.get("orgUnitPath")
+                        if dpath:
+                            discovered_ou_paths.add("/" + dpath.strip().strip("/"))
+                except Exception:
+                    pass
+
+            # 3. Try groups().list if group.readonly is authorized
+            if self.key_path and self.admin_email and service_account and build:
+                try:
+                    with self._lock:
+                        if not getattr(self, "_groups_list_service", None):
+                            grp_creds = service_account.Credentials.from_service_account_file(
+                                self.key_path,
+                                scopes=["https://www.googleapis.com/auth/admin.directory.group.readonly"],
+                                subject=self.admin_email,
+                            )
+                            self._groups_list_service = build("admin", "directory_v1", credentials=grp_creds)
+                        g_resp = (
+                            self._groups_list_service.groups()
+                            .list(customer=cust_key, maxResults=200)
+                            .execute()
+                            or {}
+                        )
+                    for g in g_resp.get("groups", []) or []:
+                        g_email = (g.get("email") or "").strip().lower()
+                        if g_email:
+                            g_entry = {
+                                "email": g_email,
+                                "name": g.get("name") or g_email.split("@")[0],
+                                "description": g.get("description") or "",
+                            }
+                            discovered_groups.append(g_entry)
+                            groups_map[g_email] = g_entry
+                except Exception:
+                    pass
+
+            for p in discovered_ou_paths:
+                raw_ou_paths.add(p)
+
+            self._metadata_cache = {
+                "_cached_at": now,
+                "_service_id": id(self.service),
+                "discovered_ou_paths": list(discovered_ou_paths),
+                "ou_descriptions": dict(ou_descriptions),
+                "discovered_groups": discovered_groups,
+            }
+
+        # Synthesize all intermediate parent OU paths so the tree is always complete
+        all_paths: set[str] = {"/"}
+        for path in raw_ou_paths:
+            if not path or path == "/":
+                continue
+            parts = [seg for seg in path.strip("/").split("/") if seg]
+            curr = ""
+            for seg in parts:
+                curr = f"{curr}/{seg}"
+                all_paths.add(curr)
+
+        # If only "/" exists (e.g., fresh/empty tenant), provide common Workspace starter OUs
+        if len(all_paths) == 1:
+            for starter in ("/Students", "/Staff", "/Admins"):
+                all_paths.add(starter)
+
+        sorted_paths = sorted(all_paths, key=lambda x: (0 if x == "/" else 1, x.lower()))
+        ou_nodes: List[Dict[str, Any]] = []
+        for p in sorted_paths:
+            if p == "/":
+                ou_nodes.append(
+                    {
+                        "org_unit_path": "/",
+                        "name": "Root Organization (/)",
+                        "parent_path": "",
+                        "depth": 0,
+                        "description": ou_descriptions.get("/", "All Organizational Units"),
+                    }
+                )
+            else:
+                segs = [s for s in p.strip("/").split("/") if s]
+                parent = "/" if len(segs) == 1 else "/" + "/".join(segs[:-1])
+                ou_nodes.append(
+                    {
+                        "org_unit_path": p,
+                        "name": segs[-1],
+                        "parent_path": parent,
+                        "depth": len(segs),
+                        "description": ou_descriptions.get(p, ""),
+                    }
+                )
+
+        return {
+            "org_units": ou_nodes,
+            "groups": sorted(groups_map.values(), key=lambda g: g["email"]),
+        }
+
+
 directory_service = DirectoryService()

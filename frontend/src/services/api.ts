@@ -44,9 +44,30 @@ export interface TenantConfig {
   caa_enforcement_enabled?: boolean;
   session_watch_target_ous?: string[];
   session_watch_target_groups?: string[];
+  cookie_threat_target_ous?: string[];
+  cookie_threat_target_groups?: string[];
   session_watch_exempt_admins?: boolean;
   session_watch_dry_run?: boolean;
   session_watch_onboarding_grace_minutes?: number;
+}
+
+export interface DirectoryOuNode {
+  org_unit_path: string;
+  name: string;
+  parent_path: string;
+  depth: number;
+  description?: string;
+}
+
+export interface DirectoryGroupNode {
+  email: string;
+  name: string;
+  description?: string;
+}
+
+export interface DirectoryMetadataResponse {
+  org_units: DirectoryOuNode[];
+  groups: DirectoryGroupNode[];
 }
 
 export interface SessionWatchMetricsResponse {
@@ -57,6 +78,8 @@ export interface SessionWatchMetricsResponse {
   branch_variation: string;
   session_watch_target_ous?: string[];
   session_watch_target_groups?: string[];
+  cookie_threat_target_ous?: string[];
+  cookie_threat_target_groups?: string[];
   session_watch_exempt_admins?: boolean;
   session_watch_dry_run?: boolean;
   session_watch_onboarding_grace_minutes?: number;
@@ -240,6 +263,13 @@ export const updateAdminConfig = async (config: TenantConfig): Promise<{ status:
     method: "POST",
     headers: getHeaders(),
     body: JSON.stringify(config),
+  });
+  return response.json();
+};
+
+export const getDirectoryMetadata = async (): Promise<DirectoryMetadataResponse> => {
+  const response = await fetchWithAuth(`${API_BASE_URL}/api/admin/directory-metadata`, {
+    headers: getHeaders(),
   });
   return response.json();
 };

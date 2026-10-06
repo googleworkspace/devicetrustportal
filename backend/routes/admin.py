@@ -93,3 +93,37 @@ def update_config(config: TenantConfig, user_email: str = Depends(get_current_us
     if not success:
         raise HTTPException(status_code=500, detail="Failed to update configuration")
     return {"status": "SUCCESS", "message": "Configuration updated successfully"}
+
+
+@router.get("/directory-metadata")
+def get_directory_metadata(user_email: str = Depends(get_current_user_email)):
+    """Returns the hierarchical Organizational Unit (OU) tree and Google Groups for the Admin Console OU Tree selector."""
+    config = config_service.get_tenant_config()
+    if not directory_service.verify_user_is_admin(user_email, portal_admins=config.portal_admins):
+        raise HTTPException(status_code=403, detail=f"Access denied: Workspace Admin privileges required for {user_email}")
+
+    configured_ous = list(
+        {
+            *(config.session_watch_target_ous or []),
+            *(getattr(config, "cookie_threat_target_ous", []) or []),
+            *(config.network_approval_allowed_ous or []),
+            *(config.chaining_allowed_ous or []),
+            *(config.chaining_denied_ous or []),
+            *(config.session_guard_exempt_ous or []),
+        }
+    )
+    configured_groups = list(
+        {
+            *(config.session_watch_target_groups or []),
+            *(getattr(config, "cookie_threat_target_groups", []) or []),
+            *(config.network_approval_allowed_groups or []),
+            *(config.chaining_allowed_groups or []),
+            *(config.chaining_denied_groups or []),
+            *(config.session_guard_exempt_groups or []),
+        }
+    )
+    return directory_service.list_domain_ous_and_groups(
+        customer_id=config.customer_id or "customers/my_customer",
+        configured_ous=configured_ous,
+        configured_groups=configured_groups,
+    )

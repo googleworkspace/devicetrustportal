@@ -18,8 +18,11 @@ import React, { useState, useEffect } from "react";
 import {
   getAdminConfig,
   updateAdminConfig,
+  getDirectoryMetadata,
   sendClientLog,
   TenantConfig,
+  DirectoryOuNode,
+  DirectoryGroupNode,
 } from "../services/api";
 import { getTranslator } from "../i18n/translations";
 
@@ -31,6 +34,613 @@ function deriveEnforcementMode(
   if (cookieThreat) return "COOKIE_SENTINEL";
   return "DISABLED";
 }
+
+function buildMergedOuTree(
+  baseNodes: DirectoryOuNode[],
+  extraPaths: string[]
+): DirectoryOuNode[] {
+  const map = new Map<string, DirectoryOuNode>();
+  map.set("/", {
+    org_unit_path: "/",
+    name: "Root Organization (/)",
+    parent_path: "",
+    depth: 0,
+    description: "All Organizational Units (Global)",
+  });
+  for (const n of baseNodes) {
+    if (n && n.org_unit_path) {
+      map.set(n.org_unit_path, n);
+    }
+  }
+  const allPaths = new Set<string>(Array.from(map.keys()));
+  for (const raw of extraPaths) {
+    if (!raw) continue;
+    const norm = "/" + raw.trim().replace(/^\/+|\/+$/g, "");
+    if (!norm || norm === "/") continue;
+    const segs = norm.slice(1).split("/").filter(Boolean);
+    let curr = "";
+    for (const seg of segs) {
+      curr = `${curr}/${seg}`;
+      allPaths.add(curr);
+    }
+  }
+  if (allPaths.size === 1) {
+    allPaths.add("/Students");
+    allPaths.add("/Staff");
+    allPaths.add("/Admins");
+  }
+  const sorted = Array.from(allPaths).sort((a, b) => {
+    if (a === "/") return -1;
+    if (b === "/") return 1;
+    return a.toLowerCase().localeCompare(b.toLowerCase());
+  });
+  return sorted.map((p) => {
+    const existing = map.get(p);
+    if (existing) return existing;
+    const segs = p.slice(1).split("/").filter(Boolean);
+    const parent = segs.length === 1 ? "/" : "/" + segs.slice(0, -1).join("/");
+    return {
+      org_unit_path: p,
+      name: segs[segs.length - 1] || p,
+      parent_path: parent,
+      depth: segs.length,
+      description: "",
+    };
+  });
+}
+
+interface OuAndGroupScopeSelectorProps {
+  featureTitle: string;
+  ouTreeTestId: string;
+  groupSelectorTestId: string;
+  ouInputId: string;
+  groupInputId: string;
+  ouLabel: string;
+  ouPlaceholder: string;
+  ouHint: string;
+  groupLabel: string;
+  groupPlaceholder: string;
+  groupHint: string;
+  ousInputValue: string;
+  groupsInputValue: string;
+  onChangeOusInput: (val: string) => void;
+  onCommitOusInput: (val: string) => void;
+  onChangeGroupsInput: (val: string) => void;
+  onCommitGroupsInput: (val: string) => void;
+  directoryOus: DirectoryOuNode[];
+  directoryGroups: DirectoryGroupNode[];
+  disabled?: boolean;
+}
+
+const OuAndGroupScopeSelector: React.FC<OuAndGroupScopeSelectorProps> = ({
+  featureTitle,
+  ouTreeTestId,
+  groupSelectorTestId,
+  ouInputId,
+  groupInputId,
+  ouLabel,
+  ouPlaceholder,
+  ouHint,
+  groupLabel,
+  groupPlaceholder,
+  groupHint,
+  ousInputValue,
+  groupsInputValue,
+  onChangeOusInput,
+  onCommitOusInput,
+  onChangeGroupsInput,
+  onCommitGroupsInput,
+  directoryOus,
+  directoryGroups,
+  disabled = false,
+}) => {
+  const [collapsedParents, setCollapsedParents] = useState<Record<string, boolean>>({});
+  const [customOuInput, setCustomOuInput] = useState("");
+  const [customGroupInput, setCustomGroupInput] = useState("");
+  const [extraCustomOus, setExtraCustomOus] = useState<string[]>([]);
+
+  const selectedOus = ousInputValue
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((s) => (s === "/" ? "/" : "/" + s.replace(/^\/+|\/+$/g, "")));
+
+  const selectedGroups = groupsInputValue
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+
+  const isGlobalOus = selectedOus.length === 0 || selectedOus.includes("/");
+  const isGlobalScope = isGlobalOus && selectedGroups.length === 0;
+
+  const treeNodes = buildMergedOuTree(directoryOus, [...selectedOus, ...extraCustomOus]);
+  const parentPathsWithChildren = new Set<string>();
+  for (const n of treeNodes) {
+    if (n.parent_path) {
+      parentPathsWithChildren.add(n.parent_path);
+    }
+  }
+
+  const isAncestorCollapsed = (node: DirectoryOuNode): boolean => {
+    if (!node.parent_path) return false;
+    let currParent = node.parent_path;
+    while (currParent) {
+      if (collapsedParents[currParent]) return true;
+      const parentNode = treeNodes.find((n) => n.org_unit_path === currParent);
+      currParent = parentNode ? parentNode.parent_path : "";
+    }
+    return false;
+  };
+
+  const getInheritingAncestor = (ouPath: string): string | null => {
+    if (ouPath === "/") return null;
+    for (const sel of selectedOus) {
+      if (sel === "/") return "/";
+      if (
+        sel.toLowerCase() !== ouPath.toLowerCase() &&
+        ouPath.toLowerCase().startsWith(sel.toLowerCase() + "/")
+      ) {
+        return sel;
+      }
+    }
+    return null;
+  };
+
+  const handleToggleOuCheckbox = (ouPath: string) => {
+    if (disabled) return;
+    if (ouPath === "/") {
+      // Selecting Root Organization (/) resets OU filter to Global (All OUs)
+      onChangeOusInput("");
+      onCommitOusInput("");
+      return;
+    }
+    const normTarget = "/" + ouPath.replace(/^\/+|\/+$/g, "");
+    const currentWithoutRoot = selectedOus.filter((o) => o !== "/");
+    const exists = currentWithoutRoot.some((o) => o.toLowerCase() === normTarget.toLowerCase());
+    const nextList = exists
+      ? currentWithoutRoot.filter((o) => o.toLowerCase() !== normTarget.toLowerCase())
+      : [...currentWithoutRoot, normTarget];
+    const nextStr = nextList.join(", ");
+    onChangeOusInput(nextStr);
+    onCommitOusInput(nextStr);
+  };
+
+  const handleAddCustomOu = () => {
+    if (!customOuInput.trim() || disabled) return;
+    const norm = "/" + customOuInput.trim().replace(/^\/+|\/+$/g, "");
+    if (!norm || norm === "/") {
+      setCustomOuInput("");
+      return;
+    }
+    setExtraCustomOus((prev) => (prev.includes(norm) ? prev : [...prev, norm]));
+    const currentWithoutRoot = selectedOus.filter((o) => o !== "/");
+    if (!currentWithoutRoot.some((o) => o.toLowerCase() === norm.toLowerCase())) {
+      const nextStr = [...currentWithoutRoot, norm].join(", ");
+      onChangeOusInput(nextStr);
+      onCommitOusInput(nextStr);
+    }
+    setCustomOuInput("");
+  };
+
+  const allGroupsMap = new Map<string, DirectoryGroupNode>();
+  for (const g of directoryGroups) {
+    if (g && g.email) {
+      allGroupsMap.set(g.email.toLowerCase(), g);
+    }
+  }
+  for (const sg of selectedGroups) {
+    if (!allGroupsMap.has(sg)) {
+      allGroupsMap.set(sg, {
+        email: sg,
+        name: sg.split("@")[0],
+        description: "Scoped Google Group",
+      });
+    }
+  }
+  const mergedGroups = Array.from(allGroupsMap.values());
+
+  const handleToggleGroup = (groupEmail: string) => {
+    if (disabled) return;
+    const norm = groupEmail.trim().toLowerCase();
+    const exists = selectedGroups.includes(norm);
+    const nextList = exists
+      ? selectedGroups.filter((g) => g !== norm)
+      : [...selectedGroups, norm];
+    const nextStr = nextList.join(", ");
+    onChangeGroupsInput(nextStr);
+    onCommitGroupsInput(nextStr);
+  };
+
+  const handleAddCustomGroup = () => {
+    if (!customGroupInput.trim() || disabled) return;
+    const norm = customGroupInput.trim().toLowerCase();
+    if (!selectedGroups.includes(norm)) {
+      const nextStr = [...selectedGroups, norm].join(", ");
+      onChangeGroupsInput(nextStr);
+      onCommitGroupsInput(nextStr);
+    }
+    setCustomGroupInput("");
+  };
+
+  return (
+    <div
+      data-testid={`scope-container-${ouTreeTestId}`}
+      style={{
+        marginTop: "-6px",
+        marginBottom: "6px",
+        padding: "14px 16px",
+        borderRadius: "8px",
+        backgroundColor: "var(--dtg-surface)",
+        border: "1px solid var(--dtg-border)",
+        display: "grid",
+        gap: "14px",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          flexWrap: "wrap",
+          gap: "8px",
+          paddingBottom: "8px",
+          borderBottom: "1px solid var(--dtg-border-subtle)",
+        }}
+      >
+        <div style={{ fontSize: "12.5px", fontWeight: 700, color: "var(--dtg-text)" }}>
+          🎯 Granular OU Tree &amp; Google Group Scope — {featureTitle}
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+          <span
+            data-testid={`${ouTreeTestId}-scope-badge`}
+            style={{
+              fontSize: "11px",
+              fontWeight: 700,
+              padding: "3px 9px",
+              borderRadius: "999px",
+              backgroundColor: isGlobalScope ? "#e8f0fe" : "#e6f4ea",
+              color: isGlobalScope ? "#1967d2" : "#137333",
+              border: isGlobalScope ? "1px solid #aecbfa" : "1px solid #ceead6",
+            }}
+          >
+            {isGlobalScope
+              ? "🌐 Global Scope (All OUs & Groups)"
+              : `🎯 Scoped: ${isGlobalOus ? "All OUs" : `${selectedOus.length} OU(s)`} • ${
+                  selectedGroups.length > 0 ? `${selectedGroups.length} Group(s)` : "No Group Filter"
+                }`}
+          </span>
+          {!isGlobalScope && (
+            <button
+              type="button"
+              disabled={disabled}
+              onClick={() => {
+                onChangeOusInput("");
+                onChangeGroupsInput("");
+                onCommitOusInput("");
+                onCommitGroupsInput("");
+              }}
+              className="dtg-btn dtg-btn-neutral"
+              style={{ padding: "3px 8px", fontSize: "11px" }}
+            >
+              Reset to Global (All OUs &amp; Groups)
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Google Admin Console-style OU Tree with Checkboxes */}
+      <div data-testid={ouTreeTestId}>
+        <label
+          htmlFor={ouInputId}
+          style={{
+            display: "block",
+            fontWeight: 600,
+            marginBottom: "6px",
+            fontSize: "12.5px",
+            color: "var(--dtg-text)",
+          }}
+        >
+          {ouLabel}
+        </label>
+        <div
+          style={{
+            border: "1px solid var(--dtg-border)",
+            borderRadius: "6px",
+            backgroundColor: "var(--dtg-surface-subtle)",
+            maxHeight: "230px",
+            overflowY: "auto",
+            padding: "6px 0",
+            marginBottom: "8px",
+          }}
+        >
+          {treeNodes.map((node) => {
+            if (isAncestorCollapsed(node)) return null;
+            const isRoot = node.org_unit_path === "/";
+            const explicitlyChecked = isRoot
+              ? isGlobalOus
+              : selectedOus.some((o) => o.toLowerCase() === node.org_unit_path.toLowerCase());
+            const inheritedFrom = !isRoot ? getInheritingAncestor(node.org_unit_path) : null;
+            const isChecked = explicitlyChecked || Boolean(inheritedFrom);
+            const hasChildren = parentPathsWithChildren.has(node.org_unit_path);
+            const isCollapsed = Boolean(collapsedParents[node.org_unit_path]);
+
+            return (
+              <div
+                key={node.org_unit_path}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: "8px",
+                  padding: `5px 12px 5px ${node.depth * 20 + 10}px`,
+                  backgroundColor: explicitlyChecked ? "rgba(19, 115, 51, 0.07)" : "transparent",
+                  borderBottom: "1px solid var(--dtg-border-subtle)",
+                  fontSize: "12.5px",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: "6px", flex: 1 }}>
+                  {hasChildren ? (
+                    <button
+                      type="button"
+                      aria-label={`Toggle ${node.org_unit_path} sub-tree`}
+                      onClick={() =>
+                        setCollapsedParents((prev) => ({
+                          ...prev,
+                          [node.org_unit_path]: !prev[node.org_unit_path],
+                        }))
+                      }
+                      style={{
+                        border: "none",
+                        background: "transparent",
+                        cursor: "pointer",
+                        padding: "0 4px",
+                        fontSize: "11px",
+                        color: "var(--dtg-text-secondary)",
+                      }}
+                    >
+                      {isCollapsed ? "▶" : "▼"}
+                    </button>
+                  ) : (
+                    <span style={{ width: "18px", display: "inline-block" }} />
+                  )}
+                  <label
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "8px",
+                      cursor: disabled ? "not-allowed" : "pointer",
+                      fontWeight: explicitlyChecked ? 700 : 500,
+                      color: "var(--dtg-text)",
+                      flex: 1,
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      data-testid={`${ouTreeTestId}-checkbox-${node.org_unit_path}`}
+                      checked={isChecked}
+                      disabled={disabled}
+                      onChange={() => handleToggleOuCheckbox(node.org_unit_path)}
+                      style={{
+                        width: "15px",
+                        height: "15px",
+                        accentColor: "#137333",
+                        cursor: disabled ? "not-allowed" : "pointer",
+                      }}
+                    />
+                    <span>{isRoot ? "🏢" : "📁"}</span>
+                    <span>{isRoot ? "Root Organization (/)" : node.name}</span>
+                    {!isRoot && (
+                      <code
+                        style={{
+                          fontSize: "11px",
+                          color: "var(--dtg-text-secondary)",
+                          backgroundColor: "var(--dtg-surface)",
+                          padding: "1px 5px",
+                          borderRadius: "4px",
+                        }}
+                      >
+                        {node.org_unit_path}
+                      </code>
+                    )}
+                  </label>
+                </div>
+
+                <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                  {isRoot && isGlobalOus && (
+                    <span
+                      style={{
+                        fontSize: "10.5px",
+                        fontWeight: 700,
+                        color: "#1967d2",
+                        backgroundColor: "#e8f0fe",
+                        padding: "1px 7px",
+                        borderRadius: "999px",
+                      }}
+                    >
+                      All OUs (Global)
+                    </span>
+                  )}
+                  {!isRoot && explicitlyChecked && (
+                    <span
+                      style={{
+                        fontSize: "10.5px",
+                        fontWeight: 700,
+                        color: "#137333",
+                        backgroundColor: "#e6f4ea",
+                        padding: "1px 7px",
+                        borderRadius: "999px",
+                      }}
+                    >
+                      ✓ Selected (Includes sub-OUs)
+                    </span>
+                  )}
+                  {!isRoot && !explicitlyChecked && inheritedFrom && (
+                    <span
+                      style={{
+                        fontSize: "10.5px",
+                        color: "var(--dtg-text-secondary)",
+                        fontStyle: "italic",
+                      }}
+                    >
+                      Inherited from {inheritedFrom}
+                    </span>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "6px" }}>
+          <input
+            type="text"
+            data-testid={`${ouTreeTestId}-add-ou-input`}
+            placeholder="Add OU path to tree (e.g. /Students/HighSchool)"
+            value={customOuInput}
+            onChange={(e) => setCustomOuInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                handleAddCustomOu();
+              }
+            }}
+            className="dtg-input"
+            style={{ flex: 1, minWidth: "210px", padding: "6px 10px", fontSize: "12px" }}
+          />
+          <button
+            type="button"
+            data-testid={`${ouTreeTestId}-add-ou-btn`}
+            disabled={disabled || !customOuInput.trim()}
+            onClick={handleAddCustomOu}
+            className="dtg-btn dtg-btn-outline"
+            style={{ padding: "6px 12px", fontSize: "12px" }}
+          >
+            + Add &amp; Check OU
+          </button>
+        </div>
+
+        <input
+          id={ouInputId}
+          type="text"
+          placeholder={ouPlaceholder}
+          value={ousInputValue}
+          onChange={(e) => onChangeOusInput(e.target.value)}
+          onBlur={() => onCommitOusInput(ousInputValue)}
+          className="dtg-input"
+          style={{ fontSize: "12px", padding: "7px 10px" }}
+        />
+        <span style={{ fontSize: "11px", color: "var(--dtg-text-secondary)", display: "block", marginTop: "3px" }}>
+          {ouHint}
+        </span>
+      </div>
+
+      {/* Granular Google Group Selector */}
+      <div data-testid={groupSelectorTestId}>
+        <label
+          htmlFor={groupInputId}
+          style={{
+            display: "block",
+            fontWeight: 600,
+            marginBottom: "6px",
+            fontSize: "12.5px",
+            color: "var(--dtg-text)",
+          }}
+        >
+          {groupLabel}
+        </label>
+
+        {mergedGroups.length > 0 && (
+          <div
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              gap: "8px",
+              padding: "8px 10px",
+              marginBottom: "8px",
+              borderRadius: "6px",
+              border: "1px solid var(--dtg-border)",
+              backgroundColor: "var(--dtg-surface-subtle)",
+            }}
+          >
+            {mergedGroups.map((grp) => {
+              const checked = selectedGroups.includes(grp.email.toLowerCase());
+              return (
+                <label
+                  key={grp.email}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "6px",
+                    padding: "4px 10px",
+                    borderRadius: "999px",
+                    fontSize: "12px",
+                    fontWeight: checked ? 700 : 500,
+                    cursor: disabled ? "not-allowed" : "pointer",
+                    backgroundColor: checked ? "#e6f4ea" : "var(--dtg-surface)",
+                    color: checked ? "#137333" : "var(--dtg-text)",
+                    border: checked ? "1px solid #137333" : "1px solid var(--dtg-border)",
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    data-testid={`${groupSelectorTestId}-checkbox-${grp.email.toLowerCase()}`}
+                    checked={checked}
+                    disabled={disabled}
+                    onChange={() => handleToggleGroup(grp.email)}
+                    style={{ accentColor: "#137333", cursor: disabled ? "not-allowed" : "pointer" }}
+                  />
+                  <span>👥 {grp.email}</span>
+                </label>
+              );
+            })}
+          </div>
+        )}
+
+        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "6px" }}>
+          <input
+            type="text"
+            data-testid={`${groupSelectorTestId}-add-group-input`}
+            placeholder="Add Google Group email (e.g. session-watch-pilot@gwfe.org)"
+            value={customGroupInput}
+            onChange={(e) => setCustomGroupInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                handleAddCustomGroup();
+              }
+            }}
+            className="dtg-input"
+            style={{ flex: 1, minWidth: "210px", padding: "6px 10px", fontSize: "12px" }}
+          />
+          <button
+            type="button"
+            data-testid={`${groupSelectorTestId}-add-group-btn`}
+            disabled={disabled || !customGroupInput.trim()}
+            onClick={handleAddCustomGroup}
+            className="dtg-btn dtg-btn-outline"
+            style={{ padding: "6px 12px", fontSize: "12px" }}
+          >
+            + Add &amp; Check Group
+          </button>
+        </div>
+
+        <input
+          id={groupInputId}
+          type="text"
+          placeholder={groupPlaceholder}
+          value={groupsInputValue}
+          onChange={(e) => onChangeGroupsInput(e.target.value)}
+          onBlur={() => onCommitGroupsInput(groupsInputValue)}
+          className="dtg-input"
+          style={{ fontSize: "12px", padding: "7px 10px" }}
+        />
+        <span style={{ fontSize: "11px", color: "var(--dtg-text-secondary)", display: "block", marginTop: "3px" }}>
+          {groupHint}
+        </span>
+      </div>
+    </div>
+  );
+};
 
 interface ToggleSwitchProps {
   id?: string;
@@ -161,6 +771,10 @@ export const AdminConfig: React.FC = () => {
   const [cookieThreatDetectionEnabled, setCookieThreatDetectionEnabled] = useState(false);
   const [sessionWatchTargetOusInput, setSessionWatchTargetOusInput] = useState("");
   const [sessionWatchTargetGroupsInput, setSessionWatchTargetGroupsInput] = useState("");
+  const [cookieThreatTargetOusInput, setCookieThreatTargetOusInput] = useState("");
+  const [cookieThreatTargetGroupsInput, setCookieThreatTargetGroupsInput] = useState("");
+  const [directoryOus, setDirectoryOus] = useState<DirectoryOuNode[]>([]);
+  const [directoryGroups, setDirectoryGroups] = useState<DirectoryGroupNode[]>([]);
   const [sessionWatchExemptAdmins, setSessionWatchExemptAdmins] = useState(false);
   const [sessionWatchDryRun, setSessionWatchDryRun] = useState(false);
   const [sessionWatchOnboardingGraceMinutes, setSessionWatchOnboardingGraceMinutes] = useState(15);
@@ -222,6 +836,8 @@ export const AdminConfig: React.FC = () => {
         setCookieThreatDetectionEnabled(Boolean(data.cookie_threat_detection_enabled));
         setSessionWatchTargetOusInput((data.session_watch_target_ous || []).join(", "));
         setSessionWatchTargetGroupsInput((data.session_watch_target_groups || []).join(", "));
+        setCookieThreatTargetOusInput((data.cookie_threat_target_ous || []).join(", "));
+        setCookieThreatTargetGroupsInput((data.cookie_threat_target_groups || []).join(", "));
         setSessionWatchExemptAdmins(Boolean(data.session_watch_exempt_admins));
         setSessionWatchDryRun(Boolean(data.session_watch_dry_run));
         setSessionWatchOnboardingGraceMinutes(data.session_watch_onboarding_grace_minutes || 15);
@@ -244,6 +860,22 @@ export const AdminConfig: React.FC = () => {
         setSessionGuardMode(data.session_guard_mode || (data.enable_session_guard ? "ENFORCE_ACTIVE" : "DISABLED"));
         setSessionGuardExemptOus((data.session_guard_exempt_ous || []).join(", "));
         setSessionGuardExemptGroups((data.session_guard_exempt_groups || []).join(", "));
+
+        if (typeof getDirectoryMetadata === "function") {
+          try {
+            const metaPromise = getDirectoryMetadata();
+            if (metaPromise && typeof metaPromise.then === "function") {
+              metaPromise
+                .then((meta) => {
+                  if (meta?.org_units) setDirectoryOus(meta.org_units);
+                  if (meta?.groups) setDirectoryGroups(meta.groups);
+                })
+                .catch(() => {});
+            }
+          } catch (_) {
+            // Optional directory metadata fallback
+          }
+        }
 
         setLoading(false);
         sendClientLog("INFO", "ADMIN_CONFIG_LOADED", `Admin config loaded for ${userEmail}`);
@@ -273,6 +905,8 @@ export const AdminConfig: React.FC = () => {
       defaultLocale: string;
       sessionWatchTargetOusInput: string;
       sessionWatchTargetGroupsInput: string;
+      cookieThreatTargetOusInput: string;
+      cookieThreatTargetGroupsInput: string;
       sessionWatchOnboardingGraceMinutes: number;
     }> = {},
     changeSummary: string = "Configuration updated"
@@ -293,6 +927,8 @@ export const AdminConfig: React.FC = () => {
     const nextLocale = overrides.defaultLocale ?? defaultLocale;
     const nextOusInput = overrides.sessionWatchTargetOusInput ?? sessionWatchTargetOusInput;
     const nextGroupsInput = overrides.sessionWatchTargetGroupsInput ?? sessionWatchTargetGroupsInput;
+    const nextCookieOusInput = overrides.cookieThreatTargetOusInput ?? cookieThreatTargetOusInput;
+    const nextCookieGroupsInput = overrides.cookieThreatTargetGroupsInput ?? cookieThreatTargetGroupsInput;
     const nextGraceMin = overrides.sessionWatchOnboardingGraceMinutes ?? sessionWatchOnboardingGraceMinutes;
 
     const nextMode = deriveEnforcementMode(nextSw, nextCookieThreat);
@@ -301,6 +937,14 @@ export const AdminConfig: React.FC = () => {
       .map((s) => s.trim())
       .filter(Boolean);
     const parsedTargetGroups = nextGroupsInput
+      .split(",")
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean);
+    const parsedCookieTargetOus = nextCookieOusInput
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const parsedCookieTargetGroups = nextCookieGroupsInput
       .split(",")
       .map((s) => s.trim().toLowerCase())
       .filter(Boolean);
@@ -337,6 +981,8 @@ export const AdminConfig: React.FC = () => {
       caa_enforcement_enabled: false,
       session_watch_target_ous: parsedTargetOus,
       session_watch_target_groups: parsedTargetGroups,
+      cookie_threat_target_ous: parsedCookieTargetOus,
+      cookie_threat_target_groups: parsedCookieTargetGroups,
       session_watch_exempt_admins: nextExempt,
       session_watch_dry_run: nextDryRun,
       session_watch_onboarding_grace_minutes: Math.max(5, Math.min(120, Number(nextGraceMin) || 15)),
@@ -372,6 +1018,8 @@ export const AdminConfig: React.FC = () => {
         caa_enforcement_enabled: updatedConfig.caa_enforcement_enabled,
         session_watch_target_ous: updatedConfig.session_watch_target_ous,
         session_watch_target_groups: updatedConfig.session_watch_target_groups,
+        cookie_threat_target_ous: updatedConfig.cookie_threat_target_ous,
+        cookie_threat_target_groups: updatedConfig.cookie_threat_target_groups,
         session_watch_exempt_admins: updatedConfig.session_watch_exempt_admins,
         session_watch_dry_run: updatedConfig.session_watch_dry_run,
       });
@@ -636,6 +1284,47 @@ export const AdminConfig: React.FC = () => {
               </span>
             </div>
 
+            {/* Always-On Context-Aware Access (CAA) Status Banner */}
+            <div
+              data-testid="caa-default-active-banner"
+              style={{
+                marginBottom: "14px",
+                padding: "12px 14px",
+                borderRadius: "8px",
+                backgroundColor: "rgba(19, 115, 51, 0.08)",
+                border: "1.5px solid rgba(19, 115, 51, 0.35)",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "flex-start",
+                flexWrap: "wrap",
+                gap: "10px",
+              }}
+            >
+              <div style={{ flex: "1 1 420px" }}>
+                <div style={{ fontWeight: 700, fontSize: "13.5px", color: "#137333", marginBottom: "4px" }}>
+                  🛡️ Context-Aware Access (CAA) Integration (Education Standard &amp; Plus) — ON by Default
+                </div>
+                <div style={{ fontSize: "12px", color: "var(--dtg-text-secondary)", lineHeight: 1.5 }}>
+                  Context-Aware Access attribute synchronization is <b>always active by default</b> and requires no toggle switch. Every device approval or revocation in this portal immediately updates{" "}
+                  <code>device.is_admin_approved_device</code> and <code>device.is_corp_owned_device</code> in Google Cloud Identity so your Google Admin Console CAA access levels enforce posture in real time.
+                </div>
+              </div>
+              <span
+                style={{
+                  fontSize: "11px",
+                  fontWeight: 700,
+                  padding: "4px 10px",
+                  borderRadius: "999px",
+                  backgroundColor: "#137333",
+                  color: "#fff",
+                  whiteSpace: "nowrap",
+                  alignSelf: "center",
+                }}
+              >
+                ✓ ALWAYS ON BY DEFAULT
+              </span>
+            </div>
+
             {!sessionWatchEnabled && !cookieThreatDetectionEnabled && (
               <div
                 style={{
@@ -652,40 +1341,108 @@ export const AdminConfig: React.FC = () => {
               </div>
             )}
 
-            <div style={{ display: "grid", gap: "14px" }}>
-              {/* Toggle 1: Session Management for Education Fundamentals */}
-              <ToggleSwitch
-                testId="toggle-session-watch"
-                checked={sessionWatchEnabled}
-                disabled={saving}
-                activeColor="#137333"
-                onToggle={(nextVal) =>
-                  requestToggleWithConfirmation({
-                    title: `${nextVal ? "Enable" : "Disable"} Session Management (Education Fundamentals)?`,
-                    summary: `Session Management (Education Fundamentals) turned ${nextVal ? "ON" : "OFF"}`,
-                    overrides: { sessionWatchEnabled: nextVal },
-                  })
-                }
-                label={t.toggleSessionWatchLabel}
-                description={t.toggleSessionWatchDesc}
-              />
+            <div style={{ display: "grid", gap: "16px" }}>
+              {/* Toggle 1: Session Management for Education Fundamentals + Granular OU Tree & Group Scope */}
+              <div style={{ display: "grid", gap: "10px" }}>
+                <ToggleSwitch
+                  testId="toggle-session-watch"
+                  checked={sessionWatchEnabled}
+                  disabled={saving}
+                  activeColor="#137333"
+                  onToggle={(nextVal) =>
+                    requestToggleWithConfirmation({
+                      title: `${nextVal ? "Enable" : "Disable"} Session Management (Education Fundamentals)?`,
+                      summary: `Session Management (Education Fundamentals) turned ${nextVal ? "ON" : "OFF"}`,
+                      overrides: { sessionWatchEnabled: nextVal },
+                    })
+                  }
+                  label={t.toggleSessionWatchLabel}
+                  description={t.toggleSessionWatchDesc}
+                />
+                <OuAndGroupScopeSelector
+                  featureTitle="Session Management & users.signOut Circuit Breaker (Education Fundamentals)"
+                  ouTreeTestId="ou-tree-session-watch"
+                  groupSelectorTestId="group-selector-session-watch"
+                  ouInputId="session-watch-target-ous"
+                  groupInputId="session-watch-target-groups"
+                  ouLabel={t.targetOusLabel}
+                  ouPlaceholder={t.targetOusPlaceholder}
+                  ouHint={t.targetOusHint}
+                  groupLabel={t.targetGroupsLabel}
+                  groupPlaceholder={t.targetGroupsPlaceholder}
+                  groupHint={t.targetGroupsHint}
+                  ousInputValue={sessionWatchTargetOusInput}
+                  groupsInputValue={sessionWatchTargetGroupsInput}
+                  onChangeOusInput={setSessionWatchTargetOusInput}
+                  onCommitOusInput={(nextVal) =>
+                    persistConfiguration(
+                      { sessionWatchTargetOusInput: nextVal },
+                      `Updated Session Management Target OUs (${nextVal || "All OUs"})`
+                    )
+                  }
+                  onChangeGroupsInput={setSessionWatchTargetGroupsInput}
+                  onCommitGroupsInput={(nextVal) =>
+                    persistConfiguration(
+                      { sessionWatchTargetGroupsInput: nextVal },
+                      `Updated Session Management Target Groups (${nextVal || "All Groups"})`
+                    )
+                  }
+                  directoryOus={directoryOus}
+                  directoryGroups={directoryGroups}
+                  disabled={saving}
+                />
+              </div>
 
-              {/* Toggle 2: Stolen Cookie & Token Threat Detection (Cloud Hosting ASN & Foreign IP Sentinel) */}
-              <ToggleSwitch
-                testId="toggle-cookie-threat-detection"
-                checked={cookieThreatDetectionEnabled}
-                disabled={saving}
-                activeColor="#137333"
-                onToggle={(nextVal) =>
-                  requestToggleWithConfirmation({
-                    title: `${nextVal ? "Enable" : "Disable"} Stolen Cookie & Token Threat Detection?`,
-                    summary: `Stolen Cookie & Token Threat Detection turned ${nextVal ? "ON" : "OFF"}`,
-                    overrides: { cookieThreatDetectionEnabled: nextVal },
-                  })
-                }
-                label={t.toggleCookieThreatLabel}
-                description={t.toggleCookieThreatDesc}
-              />
+              {/* Toggle 2: Stolen Cookie & Token Threat Detection + Granular OU Tree & Group Scope */}
+              <div style={{ display: "grid", gap: "10px" }}>
+                <ToggleSwitch
+                  testId="toggle-cookie-threat-detection"
+                  checked={cookieThreatDetectionEnabled}
+                  disabled={saving}
+                  activeColor="#137333"
+                  onToggle={(nextVal) =>
+                    requestToggleWithConfirmation({
+                      title: `${nextVal ? "Enable" : "Disable"} Stolen Cookie & Token Threat Detection?`,
+                      summary: `Stolen Cookie & Token Threat Detection turned ${nextVal ? "ON" : "OFF"}`,
+                      overrides: { cookieThreatDetectionEnabled: nextVal },
+                    })
+                  }
+                  label={t.toggleCookieThreatLabel}
+                  description={t.toggleCookieThreatDesc}
+                />
+                <OuAndGroupScopeSelector
+                  featureTitle="Stolen Cookie & Token Threat Detection (Cloud Hosting ASN & Foreign IP Sentinel)"
+                  ouTreeTestId="ou-tree-cookie-threat"
+                  groupSelectorTestId="group-selector-cookie-threat"
+                  ouInputId="cookie-threat-target-ous"
+                  groupInputId="cookie-threat-target-groups"
+                  ouLabel="Cookie & Token Threat Target OUs (Optional Scoping)"
+                  ouPlaceholder="/Students, /Staff/HighSchool"
+                  ouHint="Comma-separated Organizational Unit paths (or check OUs in the tree above) for Stolen Cookie & Token Threat Detection. Leave blank or check Root (/) for all OUs."
+                  groupLabel="Cookie & Token Threat Target Google Groups (Optional Scoping)"
+                  groupPlaceholder="cookie-sentinel-pilot@school.edu, staff@school.edu"
+                  groupHint="Comma-separated Google Group emails for Stolen Cookie & Token Threat Detection. Leave blank when scoping by OU or whole domain."
+                  ousInputValue={cookieThreatTargetOusInput}
+                  groupsInputValue={cookieThreatTargetGroupsInput}
+                  onChangeOusInput={setCookieThreatTargetOusInput}
+                  onCommitOusInput={(nextVal) =>
+                    persistConfiguration(
+                      { cookieThreatTargetOusInput: nextVal },
+                      `Updated Cookie Threat Target OUs (${nextVal || "All OUs"})`
+                    )
+                  }
+                  onChangeGroupsInput={setCookieThreatTargetGroupsInput}
+                  onCommitGroupsInput={(nextVal) =>
+                    persistConfiguration(
+                      { cookieThreatTargetGroupsInput: nextVal },
+                      `Updated Cookie Threat Target Groups (${nextVal || "All Groups"})`
+                    )
+                  }
+                  directoryOus={directoryOus}
+                  directoryGroups={directoryGroups}
+                  disabled={saving}
+                />
+              </div>
             </div>
 
             {/* Clear Architectural Explanation Box */}
@@ -790,58 +1547,6 @@ export const AdminConfig: React.FC = () => {
                 label={t.toggleExemptAdminsLabel}
                 description={t.toggleExemptAdminsDesc}
               />
-
-              <div>
-                <label
-                  htmlFor="session-watch-target-ous"
-                  style={{ display: "block", fontWeight: 600, marginBottom: "4px", fontSize: "13px", color: "var(--dtg-text)" }}
-                >
-                  {t.targetOusLabel}
-                </label>
-                <input
-                  id="session-watch-target-ous"
-                  type="text"
-                  placeholder={t.targetOusPlaceholder}
-                  value={sessionWatchTargetOusInput}
-                  onChange={(e) => setSessionWatchTargetOusInput(e.target.value)}
-                  onBlur={() =>
-                    persistConfiguration(
-                      { sessionWatchTargetOusInput },
-                      `Updated Target OUs (${sessionWatchTargetOusInput || "All OUs"})`
-                    )
-                  }
-                  className="dtg-input"
-                />
-                <span style={{ fontSize: "11.5px", color: "var(--dtg-text-secondary)", display: "block", marginTop: "4px" }}>
-                  {t.targetOusHint}
-                </span>
-              </div>
-
-              <div>
-                <label
-                  htmlFor="session-watch-target-groups"
-                  style={{ display: "block", fontWeight: 600, marginBottom: "4px", fontSize: "13px", color: "var(--dtg-text)" }}
-                >
-                  {t.targetGroupsLabel}
-                </label>
-                <input
-                  id="session-watch-target-groups"
-                  type="text"
-                  placeholder={t.targetGroupsPlaceholder}
-                  value={sessionWatchTargetGroupsInput}
-                  onChange={(e) => setSessionWatchTargetGroupsInput(e.target.value)}
-                  onBlur={() =>
-                    persistConfiguration(
-                      { sessionWatchTargetGroupsInput },
-                      `Updated Target Groups (${sessionWatchTargetGroupsInput || "All Groups"})`
-                    )
-                  }
-                  className="dtg-input"
-                />
-                <span style={{ fontSize: "11.5px", color: "var(--dtg-text-secondary)", display: "block", marginTop: "4px" }}>
-                  {t.targetGroupsHint}
-                </span>
-              </div>
 
               <div>
                 <label

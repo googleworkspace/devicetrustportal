@@ -485,6 +485,17 @@ async def evaluate_login_sweep(body: SweepRequest) -> Dict[str, object]:
     )
     session_guard.enabled = sw_enabled
 
+    def _sw_scope_checker(email: str) -> tuple[bool, str]:
+        return directory_service.is_user_in_session_watch_scope(
+            user_email=email,
+            target_ous=getattr(config, "session_watch_target_ous", []),
+            target_groups=getattr(config, "session_watch_target_groups", []),
+            exempt_admins=getattr(config, "session_watch_exempt_admins", False),
+            portal_admins=getattr(config, "portal_admins", []),
+            exempt_ous=getattr(config, "session_guard_exempt_ous", []),
+            exempt_groups=getattr(config, "session_guard_exempt_groups", []),
+        )
+
     now = time.time()
     audit_events = [
         LoginAuditEvent(
@@ -498,7 +509,10 @@ async def evaluate_login_sweep(body: SweepRequest) -> Dict[str, object]:
         for e in body.events
     ]
     actions = session_guard.evaluate_login_batch(
-        audit_events, now_epoch=now, persist_all_allowed=True
+        audit_events,
+        now_epoch=now,
+        persist_all_allowed=True,
+        scope_checker=_sw_scope_checker,
     )
     for action in actions:
         print(session_guard.format_cloud_logging_entry(action), flush=True)
@@ -533,6 +547,17 @@ async def evaluate_token_sweep(body: TokenSweepRequest) -> Dict[str, object]:
     is_dry_run = bool(getattr(config, "session_watch_dry_run", False)) or (not cookie_sentinel_active)
     session_guard.enabled = not is_dry_run
 
+    def _cookie_scope_checker(email: str) -> tuple[bool, str]:
+        return directory_service.is_user_in_session_watch_scope(
+            user_email=email,
+            target_ous=getattr(config, "cookie_threat_target_ous", []),
+            target_groups=getattr(config, "cookie_threat_target_groups", []),
+            exempt_admins=getattr(config, "session_watch_exempt_admins", False),
+            portal_admins=getattr(config, "portal_admins", []),
+            exempt_ous=getattr(config, "session_guard_exempt_ous", []),
+            exempt_groups=getattr(config, "session_guard_exempt_groups", []),
+        )
+
     now = time.time()
     audit_events = [
         TokenAuditEvent(
@@ -551,6 +576,7 @@ async def evaluate_token_sweep(body: TokenSweepRequest) -> Dict[str, object]:
         audit_events,
         now_epoch=now,
         dry_run=is_dry_run,
+        scope_checker=_cookie_scope_checker,
     )
     revoked = [a for a in actions if a.decision == "REVOKE_SIGN_OUT"]
     simulated = [
@@ -600,13 +626,26 @@ def _execute_single_live_sweep_pass(
     cid = normalize_customer_id(config.customer_id or "customers/my_customer")
     is_dry_run = getattr(config, "session_watch_dry_run", False)
 
-    def _scope_checker(email: str) -> tuple[bool, str]:
+    def _session_watch_scope_checker(email: str) -> tuple[bool, str]:
         return directory_service.is_user_in_session_watch_scope(
             user_email=email,
             target_ous=getattr(config, "session_watch_target_ous", []),
             target_groups=getattr(config, "session_watch_target_groups", []),
             exempt_admins=getattr(config, "session_watch_exempt_admins", False),
             portal_admins=getattr(config, "portal_admins", []),
+            exempt_ous=getattr(config, "session_guard_exempt_ous", []),
+            exempt_groups=getattr(config, "session_guard_exempt_groups", []),
+        )
+
+    def _cookie_threat_scope_checker(email: str) -> tuple[bool, str]:
+        return directory_service.is_user_in_session_watch_scope(
+            user_email=email,
+            target_ous=getattr(config, "cookie_threat_target_ous", []),
+            target_groups=getattr(config, "cookie_threat_target_groups", []),
+            exempt_admins=getattr(config, "session_watch_exempt_admins", False),
+            portal_admins=getattr(config, "portal_admins", []),
+            exempt_ous=getattr(config, "session_guard_exempt_ous", []),
+            exempt_groups=getattr(config, "session_guard_exempt_groups", []),
         )
 
     raw_events: List[Dict[str, Any]] = []
@@ -902,7 +941,7 @@ def _execute_single_live_sweep_pass(
                 audit_events,
                 now_epoch=now,
                 persist_all_allowed=req_body.persist_all_allowed,
-                scope_checker=_scope_checker,
+                scope_checker=_session_watch_scope_checker,
                 unapproved_device_checker=_unapproved_device_checker,
                 dry_run=is_dry_run,
             )
@@ -939,7 +978,7 @@ def _execute_single_live_sweep_pass(
                     now_epoch=now,
                     dry_run=is_dry_run,
                     persist_all_allowed=req_body.persist_all_allowed,
-                    scope_checker=_scope_checker,
+                    scope_checker=_cookie_threat_scope_checker,
                 )
                 actions.extend(token_actions)
         except Exception as tok_err:
@@ -1118,6 +1157,8 @@ async def get_session_watch_metrics() -> Dict[str, object]:
         "session_watch_target_ous": getattr(config, "session_watch_target_ous", []),
         "target_groups": getattr(config, "session_watch_target_groups", []),
         "session_watch_target_groups": getattr(config, "session_watch_target_groups", []),
+        "cookie_threat_target_ous": getattr(config, "cookie_threat_target_ous", []),
+        "cookie_threat_target_groups": getattr(config, "cookie_threat_target_groups", []),
         "onboarding_grace_minutes": getattr(config, "session_watch_onboarding_grace_minutes", 15),
         "session_watch_onboarding_grace_minutes": getattr(config, "session_watch_onboarding_grace_minutes", 15),
         "metrics": session_guard.metrics,

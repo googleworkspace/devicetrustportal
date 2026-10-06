@@ -2340,3 +2340,84 @@ def test_cookie_threat_detection_active_while_session_watch_disabled():
         mock_list_logins.assert_not_called()
         mock_list_tokens.assert_called_once()
 
+
+def test_independent_ou_and_group_scoping_and_directory_metadata():
+    """Verifies that /api/admin/directory-metadata returns the OU tree & Groups and that
+    Session Management and Stolen Cookie & Token Threat Detection enforce independent OU/Group scopes."""
+    from backend.services.config_service import TenantConfig
+
+    app.dependency_overrides[get_current_user_email] = lambda: "admin@gwfe.org"
+
+    with patch("backend.services.config_service.ConfigService.get_tenant_config") as mock_cfg, \
+         patch("backend.routes.admin.directory_service.list_domain_ous_and_groups") as mock_meta, \
+         patch("backend.routes.session_watch.directory_service.is_user_in_session_watch_scope") as mock_scope, \
+         patch("backend.routes.session_watch.directory_service.sign_out_user", return_value=True):
+        mock_cfg.return_value = TenantConfig(
+            customer_id="customers/my_customer",
+            admin_emails=["admin@gwfe.org"],
+            session_watch_enabled=True,
+            cookie_threat_detection_enabled=True,
+            session_watch_dry_run=False,
+            session_watch_target_ous=["/Students"],
+            session_watch_target_groups=["students-byod@gwfe.org"],
+            cookie_threat_target_ous=["/Staff"],
+            cookie_threat_target_groups=["cookie-sentinel@gwfe.org"],
+        )
+        mock_meta.return_value = {
+            "status": "ok",
+            "organizational_units": [
+                {"org_unit_path": "/", "name": "Root Domain (/)", "parent_path": "", "depth": 0},
+                {"org_unit_path": "/Students", "name": "Students", "parent_path": "/", "depth": 1},
+                {"org_unit_path": "/Staff", "name": "Staff", "parent_path": "/", "depth": 1},
+            ],
+            "groups": [
+                {"email": "students-byod@gwfe.org", "name": "Students BYOD", "description": ""},
+                {"email": "cookie-sentinel@gwfe.org", "name": "Cookie Sentinel", "description": ""},
+            ],
+        }
+
+        # 1. Verify /api/admin/directory-metadata returns OU tree and groups
+        meta_resp = client.get("/api/admin/directory-metadata")
+        assert meta_resp.status_code == 200
+        meta_data = meta_resp.json()
+        assert meta_data["status"] == "ok"
+        assert [ou["org_unit_path"] for ou in meta_data["organizational_units"]] == ["/", "/Students", "/Staff"]
+        assert [g["email"] for g in meta_data["groups"]] == ["students-byod@gwfe.org", "cookie-sentinel@gwfe.org"]
+
+        # 2. Verify sweep-tokens passes cookie_threat_target_ous and cookie_threat_target_groups to scope checker
+        def fake_scope_checker(*, user_email, exempt_admins, target_ous, target_groups, **_kwargs):
+            if target_ous == ["/Staff"] and target_groups == ["cookie-sentinel@gwfe.org"]:
+                if user_email == "teacher@gwfe.org":
+                    return True, "IN_COOKIE_THREAT_SCOPE"
+                return False, "OUT_OF_COOKIE_THREAT_SCOPE"
+            return False, "UNEXPECTED_SCOPE_ARGS"
+
+        mock_scope.side_effect = fake_scope_checker
+
+        tok_resp = client.post(
+            "/api/session-watch/sweep-tokens",
+            json={
+                "events": [
+                    {
+                        "event_id": "tok-staff-in-scope",
+                        "user_email": "teacher@gwfe.org",
+                        "ip_address": "104.16.12.34",
+                        "asn": "AS13335",
+                        "app_name": "Gmail Web",
+                    },
+                    {
+                        "event_id": "tok-student-out-of-cookie-scope",
+                        "user_email": "student@gwfe.org",
+                        "ip_address": "104.16.12.35",
+                        "asn": "AS13335",
+                        "app_name": "Gmail Web",
+                    },
+                ]
+            },
+        )
+        assert tok_resp.status_code == 200
+        tok_data = tok_resp.json()
+        assert tok_data["revoked_count"] == 1
+        decisions = {a["user_email"]: a["decision"] for a in tok_data["flagged_actions"]}
+        assert decisions["teacher@gwfe.org"] == "REVOKE_SIGN_OUT"
+        assert "student@gwfe.org" not in decisions
