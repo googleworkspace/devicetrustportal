@@ -271,7 +271,7 @@ describe("AdminConfig Page", () => {
     expect(screen.getByTestId("active-enforcement-mode-pill")).toHaveTextContent(/COOKIE_SENTINEL/i);
   });
 
-  test("clarifies that Context-Aware Access (CAA) is ON by default and renders independent OU Tree & Google Group checkbox selectors", async () => {
+  test("clarifies that Context-Aware Access (CAA) is ON by default, enforces OU Tree checkbox inheritance (children checked & unclickable when parent is checked), and orders comma-separated Google Groups by first-in priority", async () => {
     render(<AdminConfig />);
 
     await waitFor(() => {
@@ -283,9 +283,43 @@ describe("AdminConfig Page", () => {
     expect(caaBanner).toHaveTextContent(/ALWAYS ON BY DEFAULT/i);
     expect(caaBanner).toHaveTextContent(/device\.is_admin_approved_device/i);
 
-    // Check /Students in Session Management OU Tree
-    const sessionStudentsCheckbox = screen.getByTestId("ou-tree-session-watch-checkbox-/Students");
+    // 1. Initially, Root Organization (/) is checked, and ALL child checkboxes in the tree are checked (enabled) and unclickable (disabled)
+    const sessionRootCheckbox = screen.getByTestId("ou-tree-session-watch-checkbox-/") as HTMLInputElement;
+    const sessionStudentsCheckbox = screen.getByTestId("ou-tree-session-watch-checkbox-/Students") as HTMLInputElement;
+    const sessionMiddleSchoolCheckbox = screen.getByTestId("ou-tree-session-watch-checkbox-/Students/MiddleSchool") as HTMLInputElement;
+    const sessionStaffCheckbox = screen.getByTestId("ou-tree-session-watch-checkbox-/Staff") as HTMLInputElement;
+
+    expect(sessionRootCheckbox.checked).toBe(true);
+    expect(sessionRootCheckbox.disabled).toBe(false);
+    expect(sessionStudentsCheckbox.checked).toBe(true);
+    expect(sessionStudentsCheckbox.disabled).toBe(true);
+    expect(sessionMiddleSchoolCheckbox.checked).toBe(true);
+    expect(sessionMiddleSchoolCheckbox.disabled).toBe(true);
+    expect(sessionStaffCheckbox.checked).toBe(true);
+    expect(sessionStaffCheckbox.disabled).toBe(true);
+
+    // 2. Uncheck Root Organization (/) -> child checkboxes become unchecked and clickable
+    fireEvent.click(sessionRootCheckbox);
+    expect(sessionRootCheckbox.checked).toBe(false);
+    expect(sessionStudentsCheckbox.checked).toBe(false);
+    expect(sessionStudentsCheckbox.disabled).toBe(false);
+    expect(sessionMiddleSchoolCheckbox.checked).toBe(false);
+    expect(sessionMiddleSchoolCheckbox.disabled).toBe(false);
+    expect(sessionStaffCheckbox.checked).toBe(false);
+    expect(sessionStaffCheckbox.disabled).toBe(false);
+
+    // 3. Check /Students -> /Students is checked & clickable, its child /Students/MiddleSchool becomes checked & unclickable (inherited), while /Staff stays unchecked & clickable
     fireEvent.click(sessionStudentsCheckbox);
+
+    expect(sessionStudentsCheckbox.checked).toBe(true);
+    expect(sessionStudentsCheckbox.disabled).toBe(false);
+    expect(sessionMiddleSchoolCheckbox.checked).toBe(true);
+    expect(sessionMiddleSchoolCheckbox.disabled).toBe(true);
+    expect(
+      screen.getByTestId("ou-tree-session-watch-inherited-badge-/Students/MiddleSchool")
+    ).toHaveTextContent(/Inherited from \/Students \(Locked\)/i);
+    expect(sessionStaffCheckbox.checked).toBe(false);
+    expect(sessionStaffCheckbox.disabled).toBe(false);
 
     await waitFor(() => {
       expect(mockUpdateAdminConfig).toHaveBeenCalledWith(
@@ -296,9 +330,9 @@ describe("AdminConfig Page", () => {
       );
     });
 
-    // Check /Staff in Cookie & Token Threat Detection OU Tree and cookie-sentinel-pilot@school.edu in Group selector
-    const cookieStaffCheckbox = screen.getByTestId("ou-tree-cookie-threat-checkbox-/Staff");
-    fireEvent.click(cookieStaffCheckbox);
+    // 4. Uncheck Root (/) and check /Staff in Cookie & Token Threat Detection OU Tree
+    fireEvent.click(screen.getByTestId("ou-tree-cookie-threat-checkbox-/"));
+    fireEvent.click(screen.getByTestId("ou-tree-cookie-threat-checkbox-/Staff"));
 
     await waitFor(() => {
       expect(mockUpdateAdminConfig).toHaveBeenCalledWith(
@@ -309,17 +343,32 @@ describe("AdminConfig Page", () => {
       );
     });
 
-    const cookieGroupCheckbox = screen.getByTestId(
-      "group-selector-cookie-threat-checkbox-cookie-sentinel-pilot@school.edu"
+    // 5. Enter comma-separated Google Groups (no imported group checkboxes) -> First in list is Priority #1 (Highest Hierarchy)
+    const cookieGroupInput = screen.getByTestId("group-selector-cookie-threat-input");
+    fireEvent.change(cookieGroupInput, {
+      target: { value: "cookie-sentinel-pilot@school.edu, staff-tier2@school.edu" },
+    });
+    fireEvent.blur(cookieGroupInput);
+
+    expect(screen.getByTestId("group-selector-cookie-threat-priority-item-1")).toHaveTextContent(
+      /Priority #1 \(Highest Hierarchy\)/i
     );
-    fireEvent.click(cookieGroupCheckbox);
+    expect(screen.getByTestId("group-selector-cookie-threat-priority-item-1")).toHaveTextContent(
+      /cookie-sentinel-pilot@school\.edu/i
+    );
+    expect(screen.getByTestId("group-selector-cookie-threat-priority-item-2")).toHaveTextContent(
+      /Priority #2/i
+    );
+    expect(screen.getByTestId("group-selector-cookie-threat-priority-item-2")).toHaveTextContent(
+      /staff-tier2@school\.edu/i
+    );
 
     await waitFor(() => {
       expect(mockUpdateAdminConfig).toHaveBeenCalledWith(
         expect.objectContaining({
           session_watch_target_ous: ["/Students"],
           cookie_threat_target_ous: ["/Staff"],
-          cookie_threat_target_groups: ["cookie-sentinel-pilot@school.edu"],
+          cookie_threat_target_groups: ["cookie-sentinel-pilot@school.edu", "staff-tier2@school.edu"],
         })
       );
     });

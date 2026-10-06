@@ -108,7 +108,7 @@ interface OuAndGroupScopeSelectorProps {
   onChangeGroupsInput: (val: string) => void;
   onCommitGroupsInput: (val: string) => void;
   directoryOus: DirectoryOuNode[];
-  directoryGroups: DirectoryGroupNode[];
+  directoryGroups?: DirectoryGroupNode[];
   disabled?: boolean;
 }
 
@@ -131,13 +131,12 @@ const OuAndGroupScopeSelector: React.FC<OuAndGroupScopeSelectorProps> = ({
   onChangeGroupsInput,
   onCommitGroupsInput,
   directoryOus,
-  directoryGroups,
   disabled = false,
 }) => {
   const [collapsedParents, setCollapsedParents] = useState<Record<string, boolean>>({});
   const [customOuInput, setCustomOuInput] = useState("");
-  const [customGroupInput, setCustomGroupInput] = useState("");
   const [extraCustomOus, setExtraCustomOus] = useState<string[]>([]);
+  const [rootUnchecked, setRootUnchecked] = useState(false);
 
   const selectedOus = ousInputValue
     .split(",")
@@ -145,12 +144,18 @@ const OuAndGroupScopeSelector: React.FC<OuAndGroupScopeSelectorProps> = ({
     .filter(Boolean)
     .map((s) => (s === "/" ? "/" : "/" + s.replace(/^\/+|\/+$/g, "")));
 
-  const selectedGroups = groupsInputValue
-    .split(",")
-    .map((s) => s.trim().toLowerCase())
-    .filter(Boolean);
+  // Preserve exact comma-separated group order (1st in = Priority #1 / Highest Hierarchy)
+  const selectedGroups: string[] = [];
+  for (const rawG of groupsInputValue.split(",")) {
+    const cleanG = rawG.trim().toLowerCase();
+    if (cleanG && !selectedGroups.includes(cleanG)) {
+      selectedGroups.push(cleanG);
+    }
+  }
 
-  const isGlobalOus = selectedOus.length === 0 || selectedOus.includes("/");
+  const hasSpecificChildOus = selectedOus.some((o) => o !== "/");
+  const isRootChecked = selectedOus.includes("/") || (!hasSpecificChildOus && !rootUnchecked);
+  const isGlobalOus = isRootChecked;
   const isGlobalScope = isGlobalOus && selectedGroups.length === 0;
 
   const treeNodes = buildMergedOuTree(directoryOus, [...selectedOus, ...extraCustomOus]);
@@ -174,6 +179,7 @@ const OuAndGroupScopeSelector: React.FC<OuAndGroupScopeSelectorProps> = ({
 
   const getInheritingAncestor = (ouPath: string): string | null => {
     if (ouPath === "/") return null;
+    if (isRootChecked) return "/";
     for (const sel of selectedOus) {
       if (sel === "/") return "/";
       if (
@@ -189,17 +195,41 @@ const OuAndGroupScopeSelector: React.FC<OuAndGroupScopeSelectorProps> = ({
   const handleToggleOuCheckbox = (ouPath: string) => {
     if (disabled) return;
     if (ouPath === "/") {
-      // Selecting Root Organization (/) resets OU filter to Global (All OUs)
-      onChangeOusInput("");
-      onCommitOusInput("");
+      if (isRootChecked) {
+        // Uncheck Root (/) so admin can select individual child OUs
+        setRootUnchecked(true);
+        if (ousInputValue.trim() !== "") {
+          onChangeOusInput("");
+          onCommitOusInput("");
+        }
+      } else {
+        // Check Root (/) -> Global All OUs (all children become checked & locked via inheritance)
+        setRootUnchecked(false);
+        if (ousInputValue.trim() !== "") {
+          onChangeOusInput("");
+          onCommitOusInput("");
+        }
+      }
       return;
     }
+    // Ignore clicks on child OUs that are currently inherited from a checked parent OU
+    if (getInheritingAncestor(ouPath)) {
+      return;
+    }
+    setRootUnchecked(true);
     const normTarget = "/" + ouPath.replace(/^\/+|\/+$/g, "");
     const currentWithoutRoot = selectedOus.filter((o) => o !== "/");
     const exists = currentWithoutRoot.some((o) => o.toLowerCase() === normTarget.toLowerCase());
-    const nextList = exists
-      ? currentWithoutRoot.filter((o) => o.toLowerCase() !== normTarget.toLowerCase())
-      : [...currentWithoutRoot, normTarget];
+    let nextList: string[];
+    if (exists) {
+      nextList = currentWithoutRoot.filter((o) => o.toLowerCase() !== normTarget.toLowerCase());
+    } else {
+      // Checking a parent OU subsumes any already-checked descendant OUs beneath it
+      const withoutDescendants = currentWithoutRoot.filter(
+        (o) => !o.toLowerCase().startsWith(normTarget.toLowerCase() + "/")
+      );
+      nextList = [...withoutDescendants, normTarget];
+    }
     const nextStr = nextList.join(", ");
     onChangeOusInput(nextStr);
     onCommitOusInput(nextStr);
@@ -212,54 +242,38 @@ const OuAndGroupScopeSelector: React.FC<OuAndGroupScopeSelectorProps> = ({
       setCustomOuInput("");
       return;
     }
+    setRootUnchecked(true);
     setExtraCustomOus((prev) => (prev.includes(norm) ? prev : [...prev, norm]));
     const currentWithoutRoot = selectedOus.filter((o) => o !== "/");
     if (!currentWithoutRoot.some((o) => o.toLowerCase() === norm.toLowerCase())) {
-      const nextStr = [...currentWithoutRoot, norm].join(", ");
+      const withoutDescendants = currentWithoutRoot.filter(
+        (o) => !o.toLowerCase().startsWith(norm.toLowerCase() + "/")
+      );
+      const nextStr = [...withoutDescendants, norm].join(", ");
       onChangeOusInput(nextStr);
       onCommitOusInput(nextStr);
     }
     setCustomOuInput("");
   };
 
-  const allGroupsMap = new Map<string, DirectoryGroupNode>();
-  for (const g of directoryGroups) {
-    if (g && g.email) {
-      allGroupsMap.set(g.email.toLowerCase(), g);
-    }
-  }
-  for (const sg of selectedGroups) {
-    if (!allGroupsMap.has(sg)) {
-      allGroupsMap.set(sg, {
-        email: sg,
-        name: sg.split("@")[0],
-        description: "Scoped Google Group",
-      });
-    }
-  }
-  const mergedGroups = Array.from(allGroupsMap.values());
-
-  const handleToggleGroup = (groupEmail: string) => {
+  const handleMoveGroupPriority = (index: number, direction: -1 | 1) => {
     if (disabled) return;
-    const norm = groupEmail.trim().toLowerCase();
-    const exists = selectedGroups.includes(norm);
-    const nextList = exists
-      ? selectedGroups.filter((g) => g !== norm)
-      : [...selectedGroups, norm];
-    const nextStr = nextList.join(", ");
+    const targetIdx = index + direction;
+    if (targetIdx < 0 || targetIdx >= selectedGroups.length) return;
+    const nextGroups = [...selectedGroups];
+    const [moved] = nextGroups.splice(index, 1);
+    nextGroups.splice(targetIdx, 0, moved);
+    const nextStr = nextGroups.join(", ");
     onChangeGroupsInput(nextStr);
     onCommitGroupsInput(nextStr);
   };
 
-  const handleAddCustomGroup = () => {
-    if (!customGroupInput.trim() || disabled) return;
-    const norm = customGroupInput.trim().toLowerCase();
-    if (!selectedGroups.includes(norm)) {
-      const nextStr = [...selectedGroups, norm].join(", ");
-      onChangeGroupsInput(nextStr);
-      onCommitGroupsInput(nextStr);
-    }
-    setCustomGroupInput("");
+  const handleRemoveGroup = (groupEmail: string) => {
+    if (disabled) return;
+    const nextGroups = selectedGroups.filter((g) => g !== groupEmail.toLowerCase());
+    const nextStr = nextGroups.join(", ");
+    onChangeGroupsInput(nextStr);
+    onCommitGroupsInput(nextStr);
   };
 
   return (
@@ -305,15 +319,22 @@ const OuAndGroupScopeSelector: React.FC<OuAndGroupScopeSelectorProps> = ({
           >
             {isGlobalScope
               ? "🌐 Global Scope (All OUs & Groups)"
-              : `🎯 Scoped: ${isGlobalOus ? "All OUs" : `${selectedOus.length} OU(s)`} • ${
-                  selectedGroups.length > 0 ? `${selectedGroups.length} Group(s)` : "No Group Filter"
+              : `🎯 Scoped: ${
+                  isRootChecked
+                    ? "All OUs (/)"
+                    : selectedOus.length > 0
+                    ? `${selectedOus.length} OU(s)`
+                    : "No OUs Selected"
+                } • ${
+                  selectedGroups.length > 0 ? `${selectedGroups.length} Priority Group(s)` : "No Group Filter"
                 }`}
           </span>
-          {!isGlobalScope && (
+          {(!isGlobalScope || rootUnchecked) && (
             <button
               type="button"
               disabled={disabled}
               onClick={() => {
+                setRootUnchecked(false);
                 onChangeOusInput("");
                 onChangeGroupsInput("");
                 onCommitOusInput("");
@@ -328,20 +349,34 @@ const OuAndGroupScopeSelector: React.FC<OuAndGroupScopeSelectorProps> = ({
         </div>
       </div>
 
-      {/* Google Admin Console-style OU Tree with Checkboxes */}
+      {/* Google Admin Console-style OU Tree with Inheritance Checkboxes */}
       <div data-testid={ouTreeTestId}>
-        <label
-          htmlFor={ouInputId}
+        <div
           style={{
-            display: "block",
-            fontWeight: 600,
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            flexWrap: "wrap",
+            gap: "6px",
             marginBottom: "6px",
-            fontSize: "12.5px",
-            color: "var(--dtg-text)",
           }}
         >
-          {ouLabel}
-        </label>
+          <label
+            htmlFor={ouInputId}
+            style={{
+              fontWeight: 600,
+              fontSize: "12.5px",
+              color: "var(--dtg-text)",
+            }}
+          >
+            {ouLabel}
+          </label>
+          <span style={{ fontSize: "11px", color: "var(--dtg-text-secondary)" }}>
+            {isRootChecked
+              ? "💡 Uncheck Root Organization (/) to select specific child OUs"
+              : "💡 Checking any parent OU automatically enables and locks all sub-OUs beneath it"}
+          </span>
+        </div>
         <div
           style={{
             border: "1px solid var(--dtg-border)",
@@ -357,10 +392,12 @@ const OuAndGroupScopeSelector: React.FC<OuAndGroupScopeSelectorProps> = ({
             if (isAncestorCollapsed(node)) return null;
             const isRoot = node.org_unit_path === "/";
             const explicitlyChecked = isRoot
-              ? isGlobalOus
+              ? isRootChecked
               : selectedOus.some((o) => o.toLowerCase() === node.org_unit_path.toLowerCase());
             const inheritedFrom = !isRoot ? getInheritingAncestor(node.org_unit_path) : null;
-            const isChecked = explicitlyChecked || Boolean(inheritedFrom);
+            const isInherited = Boolean(inheritedFrom);
+            const isChecked = explicitlyChecked || isInherited;
+            const isCheckboxDisabled = isInherited;
             const hasChildren = parentPathsWithChildren.has(node.org_unit_path);
             const isCollapsed = Boolean(collapsedParents[node.org_unit_path]);
 
@@ -373,7 +410,11 @@ const OuAndGroupScopeSelector: React.FC<OuAndGroupScopeSelectorProps> = ({
                   justifyContent: "space-between",
                   gap: "8px",
                   padding: `5px 12px 5px ${node.depth * 20 + 10}px`,
-                  backgroundColor: explicitlyChecked ? "rgba(19, 115, 51, 0.07)" : "transparent",
+                  backgroundColor: explicitlyChecked
+                    ? "rgba(19, 115, 51, 0.08)"
+                    : isInherited
+                    ? "rgba(19, 115, 51, 0.03)"
+                    : "transparent",
                   borderBottom: "1px solid var(--dtg-border-subtle)",
                   fontSize: "12.5px",
                 }}
@@ -408,9 +449,9 @@ const OuAndGroupScopeSelector: React.FC<OuAndGroupScopeSelectorProps> = ({
                       display: "flex",
                       alignItems: "center",
                       gap: "8px",
-                      cursor: disabled ? "not-allowed" : "pointer",
+                      cursor: isCheckboxDisabled ? "not-allowed" : "pointer",
                       fontWeight: explicitlyChecked ? 700 : 500,
-                      color: "var(--dtg-text)",
+                      color: isInherited ? "var(--dtg-text-secondary)" : "var(--dtg-text)",
                       flex: 1,
                     }}
                   >
@@ -418,13 +459,13 @@ const OuAndGroupScopeSelector: React.FC<OuAndGroupScopeSelectorProps> = ({
                       type="checkbox"
                       data-testid={`${ouTreeTestId}-checkbox-${node.org_unit_path}`}
                       checked={isChecked}
-                      disabled={disabled}
+                      disabled={isCheckboxDisabled}
                       onChange={() => handleToggleOuCheckbox(node.org_unit_path)}
                       style={{
                         width: "15px",
                         height: "15px",
                         accentColor: "#137333",
-                        cursor: disabled ? "not-allowed" : "pointer",
+                        cursor: isCheckboxDisabled ? "not-allowed" : "pointer",
                       }}
                     />
                     <span>{isRoot ? "🏢" : "📁"}</span>
@@ -446,7 +487,7 @@ const OuAndGroupScopeSelector: React.FC<OuAndGroupScopeSelectorProps> = ({
                 </div>
 
                 <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                  {isRoot && isGlobalOus && (
+                  {isRoot && isRootChecked && (
                     <span
                       style={{
                         fontSize: "10.5px",
@@ -457,7 +498,7 @@ const OuAndGroupScopeSelector: React.FC<OuAndGroupScopeSelectorProps> = ({
                         borderRadius: "999px",
                       }}
                     >
-                      All OUs (Global)
+                      All OUs (Children Inherit &amp; Locked)
                     </span>
                   )}
                   {!isRoot && explicitlyChecked && (
@@ -471,18 +512,22 @@ const OuAndGroupScopeSelector: React.FC<OuAndGroupScopeSelectorProps> = ({
                         borderRadius: "999px",
                       }}
                     >
-                      ✓ Selected (Includes sub-OUs)
+                      ✓ Selected (Sub-OUs Inherit)
                     </span>
                   )}
-                  {!isRoot && !explicitlyChecked && inheritedFrom && (
+                  {!isRoot && isInherited && inheritedFrom && (
                     <span
+                      data-testid={`${ouTreeTestId}-inherited-badge-${node.org_unit_path}`}
                       style={{
                         fontSize: "10.5px",
-                        color: "var(--dtg-text-secondary)",
+                        color: "#137333",
+                        backgroundColor: "rgba(19, 115, 51, 0.08)",
+                        padding: "1px 7px",
+                        borderRadius: "999px",
                         fontStyle: "italic",
                       }}
                     >
-                      Inherited from {inheritedFrom}
+                      ✓ Inherited from {inheritedFrom} (Locked)
                     </span>
                   )}
                 </div>
@@ -524,7 +569,11 @@ const OuAndGroupScopeSelector: React.FC<OuAndGroupScopeSelectorProps> = ({
           type="text"
           placeholder={ouPlaceholder}
           value={ousInputValue}
-          onChange={(e) => onChangeOusInput(e.target.value)}
+          onChange={(e) => {
+            const val = e.target.value;
+            if (val.trim()) setRootUnchecked(true);
+            onChangeOusInput(val);
+          }}
           onBlur={() => onCommitOusInput(ousInputValue)}
           className="dtg-input"
           style={{ fontSize: "12px", padding: "7px 10px" }}
@@ -534,98 +583,36 @@ const OuAndGroupScopeSelector: React.FC<OuAndGroupScopeSelectorProps> = ({
         </span>
       </div>
 
-      {/* Granular Google Group Selector */}
+      {/* Comma-Separated Google Groups with First-In Priority Hierarchy (No Bulk Domain Group Import) */}
       <div data-testid={groupSelectorTestId}>
-        <label
-          htmlFor={groupInputId}
+        <div
           style={{
-            display: "block",
-            fontWeight: 600,
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            flexWrap: "wrap",
+            gap: "6px",
             marginBottom: "6px",
-            fontSize: "12.5px",
-            color: "var(--dtg-text)",
           }}
         >
-          {groupLabel}
-        </label>
-
-        {mergedGroups.length > 0 && (
-          <div
+          <label
+            htmlFor={groupInputId}
             style={{
-              display: "flex",
-              flexWrap: "wrap",
-              gap: "8px",
-              padding: "8px 10px",
-              marginBottom: "8px",
-              borderRadius: "6px",
-              border: "1px solid var(--dtg-border)",
-              backgroundColor: "var(--dtg-surface-subtle)",
+              fontWeight: 600,
+              fontSize: "12.5px",
+              color: "var(--dtg-text)",
             }}
           >
-            {mergedGroups.map((grp) => {
-              const checked = selectedGroups.includes(grp.email.toLowerCase());
-              return (
-                <label
-                  key={grp.email}
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: "6px",
-                    padding: "4px 10px",
-                    borderRadius: "999px",
-                    fontSize: "12px",
-                    fontWeight: checked ? 700 : 500,
-                    cursor: disabled ? "not-allowed" : "pointer",
-                    backgroundColor: checked ? "#e6f4ea" : "var(--dtg-surface)",
-                    color: checked ? "#137333" : "var(--dtg-text)",
-                    border: checked ? "1px solid #137333" : "1px solid var(--dtg-border)",
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    data-testid={`${groupSelectorTestId}-checkbox-${grp.email.toLowerCase()}`}
-                    checked={checked}
-                    disabled={disabled}
-                    onChange={() => handleToggleGroup(grp.email)}
-                    style={{ accentColor: "#137333", cursor: disabled ? "not-allowed" : "pointer" }}
-                  />
-                  <span>👥 {grp.email}</span>
-                </label>
-              );
-            })}
-          </div>
-        )}
-
-        <div style={{ display: "flex", gap: "8px", flexWrap: "wrap", marginBottom: "6px" }}>
-          <input
-            type="text"
-            data-testid={`${groupSelectorTestId}-add-group-input`}
-            placeholder="Add Google Group email (e.g. session-watch-pilot@gwfe.org)"
-            value={customGroupInput}
-            onChange={(e) => setCustomGroupInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                handleAddCustomGroup();
-              }
-            }}
-            className="dtg-input"
-            style={{ flex: 1, minWidth: "210px", padding: "6px 10px", fontSize: "12px" }}
-          />
-          <button
-            type="button"
-            data-testid={`${groupSelectorTestId}-add-group-btn`}
-            disabled={disabled || !customGroupInput.trim()}
-            onClick={handleAddCustomGroup}
-            className="dtg-btn dtg-btn-outline"
-            style={{ padding: "6px 12px", fontSize: "12px" }}
-          >
-            + Add &amp; Check Group
-          </button>
+            {groupLabel}
+          </label>
+          <span style={{ fontSize: "11px", color: "#137333", fontWeight: 600 }}>
+            ⚡ First Group in List = Priority #1 (Highest Hierarchy)
+          </span>
         </div>
 
         <input
           id={groupInputId}
+          data-testid={`${groupSelectorTestId}-input`}
           type="text"
           placeholder={groupPlaceholder}
           value={groupsInputValue}
@@ -635,8 +622,94 @@ const OuAndGroupScopeSelector: React.FC<OuAndGroupScopeSelectorProps> = ({
           style={{ fontSize: "12px", padding: "7px 10px" }}
         />
         <span style={{ fontSize: "11px", color: "var(--dtg-text-secondary)", display: "block", marginTop: "3px" }}>
-          {groupHint}
+          {groupHint} Earlier comma-separated groups take higher priority in evaluation order (1st in = Priority #1).
         </span>
+
+        {selectedGroups.length > 0 && (
+          <div
+            data-testid={`${groupSelectorTestId}-priority-list`}
+            style={{
+              marginTop: "8px",
+              display: "grid",
+              gap: "6px",
+              padding: "8px 10px",
+              borderRadius: "6px",
+              border: "1px solid var(--dtg-border)",
+              backgroundColor: "var(--dtg-surface-subtle)",
+            }}
+          >
+            <div style={{ fontSize: "11px", fontWeight: 700, color: "var(--dtg-text-secondary)" }}>
+              Ordered Group Hierarchy (Evaluated Top-to-Bottom):
+            </div>
+            {selectedGroups.map((grpEmail, idx) => (
+              <div
+                key={grpEmail}
+                data-testid={`${groupSelectorTestId}-priority-item-${idx + 1}`}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: "8px",
+                  padding: "5px 10px",
+                  borderRadius: "6px",
+                  backgroundColor: idx === 0 ? "#e6f4ea" : "var(--dtg-surface)",
+                  border: idx === 0 ? "1px solid #137333" : "1px solid var(--dtg-border-subtle)",
+                  fontSize: "12px",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                  <span
+                    style={{
+                      fontSize: "10.5px",
+                      fontWeight: 700,
+                      padding: "2px 7px",
+                      borderRadius: "999px",
+                      backgroundColor: idx === 0 ? "#137333" : "#e8f0fe",
+                      color: idx === 0 ? "#ffffff" : "#1967d2",
+                    }}
+                  >
+                    {idx === 0 ? "Priority #1 (Highest Hierarchy)" : `Priority #${idx + 1}`}
+                  </span>
+                  <span style={{ fontFamily: "monospace", fontWeight: idx === 0 ? 700 : 500, color: "var(--dtg-text)" }}>
+                    👥 {grpEmail}
+                  </span>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+                  <button
+                    type="button"
+                    aria-label={`Move ${grpEmail} up in priority`}
+                    disabled={disabled || idx === 0}
+                    onClick={() => handleMoveGroupPriority(idx, -1)}
+                    className="dtg-btn dtg-btn-neutral"
+                    style={{ padding: "2px 6px", fontSize: "11px" }}
+                  >
+                    ↑
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`Move ${grpEmail} down in priority`}
+                    disabled={disabled || idx === selectedGroups.length - 1}
+                    onClick={() => handleMoveGroupPriority(idx, 1)}
+                    className="dtg-btn dtg-btn-neutral"
+                    style={{ padding: "2px 6px", fontSize: "11px" }}
+                  >
+                    ↓
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`Remove ${grpEmail}`}
+                    disabled={disabled}
+                    onClick={() => handleRemoveGroup(grpEmail)}
+                    className="dtg-btn dtg-btn-neutral"
+                    style={{ padding: "2px 6px", fontSize: "11px" }}
+                  >
+                    ×
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -866,8 +939,9 @@ export const AdminConfig: React.FC = () => {
             const metaPromise = getDirectoryMetadata();
             if (metaPromise && typeof metaPromise.then === "function") {
               metaPromise
-                .then((meta) => {
-                  if (meta?.org_units) setDirectoryOus(meta.org_units);
+                .then((meta: any) => {
+                  const ous = meta?.org_units || meta?.organizational_units;
+                  if (ous) setDirectoryOus(ous);
                   if (meta?.groups) setDirectoryGroups(meta.groups);
                 })
                 .catch(() => {});

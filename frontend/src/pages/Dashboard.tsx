@@ -716,63 +716,65 @@ export const Dashboard: React.FC = () => {
             </div>
           )}
 
-          {/* 6-Digit Pairing Code Redemption Bar (Works Pre-Login, Post-SignOut, or While Signed In) */}
-          <form
-            onSubmit={handleRedeemPairingCode}
-            data-testid="redeem-pairing-code-box"
-            style={{
-              marginTop: "16px",
-              paddingTop: "14px",
-              borderTop: "1px solid var(--dtg-border-subtle)",
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              flexWrap: "wrap",
-              gap: "12px",
-            }}
-          >
-            <div style={{ flex: "1 1 320px" }}>
-              <div style={{ fontSize: "13px", fontWeight: 700, color: "var(--dtg-text)", marginBottom: "2px" }}>
-                🔑 Have a 6-Digit Pairing Code? (Valid 24 Hours)
+          {/* 6-Digit Pairing Code Redemption Bar (Only rendered when Enable Trust Chaining is ON) */}
+          {enableTrustChaining && (
+            <form
+              onSubmit={handleRedeemPairingCode}
+              data-testid="redeem-pairing-code-box"
+              style={{
+                marginTop: "16px",
+                paddingTop: "14px",
+                borderTop: "1px solid var(--dtg-border-subtle)",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                flexWrap: "wrap",
+                gap: "12px",
+              }}
+            >
+              <div style={{ flex: "1 1 320px" }}>
+                <div style={{ fontSize: "13px", fontWeight: 700, color: "var(--dtg-text)", marginBottom: "2px" }}>
+                  🔑 Have a 6-Digit Pairing Code? (Valid 24 Hours)
+                </div>
+                <div style={{ fontSize: "12px", color: "var(--dtg-text-secondary)", lineHeight: 1.45 }}>
+                  Generated a pairing code on your approved Chromebook? Enter it here{" "}
+                  <b>before signing in</b> (to start your 15m grace window without getting signed out) or{" "}
+                  <b>after signing in</b> to immediately authorize this secondary device.
+                </div>
               </div>
-              <div style={{ fontSize: "12px", color: "var(--dtg-text-secondary)", lineHeight: 1.45 }}>
-                Generated a pairing code on your approved Chromebook? Enter it here{" "}
-                <b>before signing in</b> (to start your 15m grace window without getting signed out) or{" "}
-                <b>after signing in</b> to immediately authorize this secondary device.
+              <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={7}
+                  placeholder="6-digit code"
+                  aria-label="6-Digit Pairing Code"
+                  data-testid="redeem-pairing-code-input"
+                  value={redeemCodeInput}
+                  onChange={(e) => setRedeemCodeInput(e.target.value)}
+                  className="dtg-input"
+                  style={{
+                    width: "140px",
+                    padding: "7px 10px",
+                    fontSize: "14px",
+                    fontFamily: "monospace",
+                    fontWeight: 700,
+                    letterSpacing: "0.1em",
+                    textAlign: "center",
+                  }}
+                />
+                <button
+                  type="submit"
+                  data-testid="redeem-pairing-code-submit"
+                  disabled={redeemCodeLoading || !redeemCodeInput.trim()}
+                  className="dtg-btn dtg-btn-primary"
+                  style={{ padding: "8px 14px", fontSize: "13px" }}
+                >
+                  {redeemCodeLoading ? "Verifying..." : "Redeem & Authorize"}
+                </button>
               </div>
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
-              <input
-                type="text"
-                inputMode="numeric"
-                maxLength={7}
-                placeholder="6-digit code"
-                aria-label="6-Digit Pairing Code"
-                data-testid="redeem-pairing-code-input"
-                value={redeemCodeInput}
-                onChange={(e) => setRedeemCodeInput(e.target.value)}
-                className="dtg-input"
-                style={{
-                  width: "140px",
-                  padding: "7px 10px",
-                  fontSize: "14px",
-                  fontFamily: "monospace",
-                  fontWeight: 700,
-                  letterSpacing: "0.1em",
-                  textAlign: "center",
-                }}
-              />
-              <button
-                type="submit"
-                data-testid="redeem-pairing-code-submit"
-                disabled={redeemCodeLoading || !redeemCodeInput.trim()}
-                className="dtg-btn dtg-btn-primary"
-                style={{ padding: "8px 14px", fontSize: "13px" }}
-              >
-                {redeemCodeLoading ? "Verifying..." : "Redeem & Authorize"}
-              </button>
-            </div>
-          </form>
+            </form>
+          )}
         </div>
 
         {/* Summary Metric Cards when signed in and devices loaded */}

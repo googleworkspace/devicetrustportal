@@ -327,9 +327,20 @@ describe("Dashboard Page", () => {
     });
   });
 
-  test("allows generating a 24-hour 6-digit pairing code and redeeming a code pre-login or post-signout", async () => {
+  test("allows generating a 24-hour 6-digit pairing code and redeeming a code pre-login or post-signout only when Enable Trust Chaining is ON", async () => {
     const mockGeneratePairingCode = generatePairingCode as ReturnType<typeof vi.fn>;
     const mockVerifyPairingCode = verifyPairingCode as ReturnType<typeof vi.fn>;
+
+    // 0. When enable_trust_chaining is false, the pairing code redemption box is hidden on the unauthenticated portal
+    mockGetPublicConfig.mockResolvedValueOnce({
+      default_locale: "en",
+      enforcement_mode: "SESSION_WATCH",
+      session_watch_enabled: true,
+      enable_trust_chaining: false,
+    });
+    const { unmount: unmountDisabled } = render(<Dashboard />);
+    expect(screen.queryByTestId("redeem-pairing-code-box")).not.toBeInTheDocument();
+    unmountDisabled();
 
     mockGetPublicConfig.mockResolvedValue({
       default_locale: "en",
@@ -345,10 +356,12 @@ describe("Dashboard Page", () => {
       message: "Pairing code verified for teacher@example.com! A 15-minute Onboarding Grace Pass is now active.",
     });
 
-    // 1. Unauthenticated user on secondary device can redeem a 6-digit pairing code before signing in
+    // 1. Unauthenticated user on secondary device can redeem a 6-digit pairing code before signing in when Enable Trust Chaining is ON
     const { unmount } = render(<Dashboard />);
 
-    expect(screen.getByTestId("redeem-pairing-code-box")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByTestId("redeem-pairing-code-box")).toBeInTheDocument();
+    });
     const redeemInput = screen.getByTestId("redeem-pairing-code-input");
     fireEvent.change(redeemInput, { target: { value: "482910" } });
     fireEvent.click(screen.getByTestId("redeem-pairing-code-submit"));

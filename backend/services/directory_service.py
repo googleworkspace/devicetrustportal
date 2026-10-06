@@ -232,23 +232,33 @@ class DirectoryService:
             if self.is_ou_matching(user_ou, dou):
                 return False, f"Access denied: User OU '{user_ou}' is explicitly denied by policy."
 
-        # 2. Deny-list Group checks
-        for dgroup in denied_groups:
+        # 2. Deny-list Group checks (Evaluated in comma-separated priority order: 1st = Priority #1)
+        ordered_denied_groups: List[str] = []
+        for dg in denied_groups:
+            dg_clean = (dg or "").strip().lower()
+            if dg_clean and dg_clean not in ordered_denied_groups:
+                ordered_denied_groups.append(dg_clean)
+        for idx, dgroup in enumerate(ordered_denied_groups, start=1):
             if self.is_user_in_group(target_email, dgroup):
-                return False, f"Access denied: User is a member of explicitly denied Group '{dgroup}'."
+                return False, f"Access denied: User is a member of explicitly denied Group '{dgroup}' (Priority #{idx})."
 
         # 3. Allow-list OU checks (Hierarchical prefix match)
         for aou in allowed_ous:
             if self.is_ou_matching(user_ou, aou):
                 return True, f"Authorized for '{feature_name}' via OU '{user_ou}' (matched rule '{aou}')."
 
-        # 4. Allow-list Group checks
-        for agroup in allowed_groups:
+        # 4. Allow-list Group checks (Evaluated in comma-separated priority order: 1st = Priority #1)
+        ordered_allowed_groups: List[str] = []
+        for ag in allowed_groups:
+            ag_clean = (ag or "").strip().lower()
+            if ag_clean and ag_clean not in ordered_allowed_groups:
+                ordered_allowed_groups.append(ag_clean)
+        for idx, agroup in enumerate(ordered_allowed_groups, start=1):
             if self.is_user_in_group(target_email, agroup):
-                return True, f"Authorized for '{feature_name}' via Group '{agroup}'."
+                return True, f"Authorized for '{feature_name}' via Group '{agroup}' (Priority #{idx})."
 
         # 5. If allowlists were configured but user matched neither
-        if allowed_ous or allowed_groups:
+        if allowed_ous or ordered_allowed_groups:
             return False, f"Access denied: User '{target_email}' (OU: '{user_ou}') is not in authorized OUs or Groups."
 
         # 6. If no allowlists were configured
@@ -298,9 +308,17 @@ class DirectoryService:
         """
         target_email = user_email.lower().strip()
         clean_ous = [o.strip() for o in (target_ous or []) if o and o.strip()]
-        clean_groups = [g.strip().lower() for g in (target_groups or []) if g and g.strip()]
+        clean_groups: List[str] = []
+        for g in target_groups or []:
+            gc = (g or "").strip().lower()
+            if gc and gc not in clean_groups:
+                clean_groups.append(gc)
         clean_exempt_ous = [o.strip() for o in (exempt_ous or []) if o and o.strip()]
-        clean_exempt_groups = [g.strip().lower() for g in (exempt_groups or []) if g and g.strip()]
+        clean_exempt_groups: List[str] = []
+        for g in exempt_groups or []:
+            gc = (g or "").strip().lower()
+            if gc and gc not in clean_exempt_groups:
+                clean_exempt_groups.append(gc)
         clean_admins = [a.strip().lower() for a in (portal_admins or []) if a and a.strip()]
         env_admin = os.getenv("WORKSPACE_ADMIN_EMAIL", "").lower().strip()
         if env_admin and env_admin not in clean_admins:
@@ -310,8 +328,8 @@ class DirectoryService:
             return False, f"Exempt administrator ({target_email})"
 
         cache_key = (
-            f"{target_email}|ous={','.join(sorted(clean_ous))}|grps={','.join(sorted(clean_groups))}"
-            f"|ex={exempt_admins}|ex_ous={','.join(sorted(clean_exempt_ous))}|ex_grps={','.join(sorted(clean_exempt_groups))}"
+            f"{target_email}|ous={','.join(sorted(clean_ous))}|grps={','.join(clean_groups)}"
+            f"|ex={exempt_admins}|ex_ous={','.join(sorted(clean_exempt_ous))}|ex_grps={','.join(clean_exempt_groups)}"
         )
         now = time.time()
         cached = self._scope_cache.get(cache_key)
@@ -343,16 +361,16 @@ class DirectoryService:
             self._scope_cache[cache_key] = (now, res[0], res[1])
             return res
 
-        # Check explicit exempt OUs / Groups
+        # Check explicit exempt OUs / Groups (Groups evaluated in comma-separated priority order)
         for eou in clean_exempt_ous:
             if self.is_ou_matching(user_ou, eou):
                 res = (False, f"Exempt OU '{user_ou}' (matched rule '{eou}')")
                 self._scope_cache[cache_key] = (now, res[0], res[1])
                 return res
 
-        for egrp in clean_exempt_groups:
+        for idx, egrp in enumerate(clean_exempt_groups, start=1):
             if self.is_user_in_group(target_email, egrp):
-                res = (False, f"Exempt Group '{egrp}'")
+                res = (False, f"Exempt Group '{egrp}' (Priority #{idx})")
                 self._scope_cache[cache_key] = (now, res[0], res[1])
                 return res
 
@@ -369,8 +387,8 @@ class DirectoryService:
                 self._scope_cache[cache_key] = (now, res[0], res[1])
                 return res
 
-        # 2. Check Group membership match
-        for group in clean_groups:
+        # 2. Check Group membership match in comma-separated priority order (1st in = Priority #1)
+        for idx, group in enumerate(clean_groups, start=1):
             try:
                 with self._lock:
                     member_check = (
@@ -380,7 +398,7 @@ class DirectoryService:
                         or {}
                     )
                 if member_check.get("isMember", False):
-                    res = (True, f"Matched target Group '{group}'")
+                    res = (True, f"Matched target Group '{group}' (Priority #{idx})")
                     self._scope_cache[cache_key] = (now, res[0], res[1])
                     return res
             except Exception as e:
@@ -735,12 +753,10 @@ class DirectoryService:
         configured_ous: Optional[List[str]] = None,
         configured_groups: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
-        """Discovers hierarchical Organizational Units (OUs) and Google Groups in the Workspace tenant.
+        """Discovers hierarchical Organizational Units (OUs) in the Workspace tenant and returns configured Groups in priority order.
 
-        Combines:
-        1. `admin.directory_v1.orgunits.list(type='all')` (if `admin.directory.orgunit.readonly` is authorized)
-        2. Active `orgUnitPath` values from `users.list` and `chromeosdevices.list` (using existing DWD scopes)
-        3. Configured OUs and Groups from `TenantConfig`, synthesizing full parent-child tree hierarchy.
+        Note: Does NOT bulk-import all domain Google Groups; admins specify comma-separated groups
+        where earlier entries have higher priority in the hierarchy (1st in = Priority #1).
         """
         cust_key = customer_id.replace("customers/", "").strip() if customer_id else "my_customer"
         if not cust_key:
@@ -752,15 +768,20 @@ class DirectoryService:
             cleaned = "/" + raw_ou.strip().strip("/") if raw_ou and raw_ou.strip() else "/"
             raw_ou_paths.add(cleaned)
 
-        groups_map: Dict[str, Dict[str, str]] = {}
+        ordered_groups: List[Dict[str, Any]] = []
+        seen_groups: set[str] = set()
         for raw_grp in configured_groups or []:
             g_clean = (raw_grp or "").strip().lower()
-            if g_clean:
-                groups_map[g_clean] = {
-                    "email": g_clean,
-                    "name": g_clean.split("@")[0],
-                    "description": "Configured Policy Group",
-                }
+            if g_clean and g_clean not in seen_groups:
+                seen_groups.add(g_clean)
+                ordered_groups.append(
+                    {
+                        "email": g_clean,
+                        "name": g_clean.split("@")[0],
+                        "priority": len(ordered_groups) + 1,
+                        "description": f"Priority #{len(ordered_groups) + 1} Configured Policy Group",
+                    }
+                )
 
         now = time.time()
         cached_meta = getattr(self, "_metadata_cache", None)
@@ -772,11 +793,8 @@ class DirectoryService:
             for p in cached_meta.get("discovered_ou_paths", []):
                 raw_ou_paths.add(p)
             ou_descriptions.update(cached_meta.get("ou_descriptions", {}))
-            for g in cached_meta.get("discovered_groups", []):
-                groups_map[g["email"]] = g
         else:
             discovered_ou_paths: set[str] = set()
-            discovered_groups: List[Dict[str, str]] = []
 
             # 1. Try orgunits().list if service or DWD credentials are available
             if self.key_path and self.admin_email and service_account and build:
@@ -837,36 +855,6 @@ class DirectoryService:
                 except Exception:
                     pass
 
-            # 3. Try groups().list if group.readonly is authorized
-            if self.key_path and self.admin_email and service_account and build:
-                try:
-                    with self._lock:
-                        if not getattr(self, "_groups_list_service", None):
-                            grp_creds = service_account.Credentials.from_service_account_file(
-                                self.key_path,
-                                scopes=["https://www.googleapis.com/auth/admin.directory.group.readonly"],
-                                subject=self.admin_email,
-                            )
-                            self._groups_list_service = build("admin", "directory_v1", credentials=grp_creds)
-                        g_resp = (
-                            self._groups_list_service.groups()
-                            .list(customer=cust_key, maxResults=200)
-                            .execute()
-                            or {}
-                        )
-                    for g in g_resp.get("groups", []) or []:
-                        g_email = (g.get("email") or "").strip().lower()
-                        if g_email:
-                            g_entry = {
-                                "email": g_email,
-                                "name": g.get("name") or g_email.split("@")[0],
-                                "description": g.get("description") or "",
-                            }
-                            discovered_groups.append(g_entry)
-                            groups_map[g_email] = g_entry
-                except Exception:
-                    pass
-
             for p in discovered_ou_paths:
                 raw_ou_paths.add(p)
 
@@ -875,7 +863,6 @@ class DirectoryService:
                 "_service_id": id(self.service),
                 "discovered_ou_paths": list(discovered_ou_paths),
                 "ou_descriptions": dict(ou_descriptions),
-                "discovered_groups": discovered_groups,
             }
 
         # Synthesize all intermediate parent OU paths so the tree is always complete
@@ -922,7 +909,7 @@ class DirectoryService:
 
         return {
             "org_units": ou_nodes,
-            "groups": sorted(groups_map.values(), key=lambda g: g["email"]),
+            "groups": ordered_groups,
         }
 
 

@@ -112,16 +112,18 @@ def get_directory_metadata(user_email: str = Depends(get_current_user_email)):
             *(config.session_guard_exempt_ous or []),
         }
     )
-    configured_groups = list(
-        {
-            *(config.session_watch_target_groups or []),
-            *(getattr(config, "cookie_threat_target_groups", []) or []),
-            *(config.network_approval_allowed_groups or []),
-            *(config.chaining_allowed_groups or []),
-            *(config.chaining_denied_groups or []),
-            *(config.session_guard_exempt_groups or []),
-        }
-    )
+    configured_groups: list[str] = []
+    for g in (
+        *(config.session_watch_target_groups or []),
+        *(getattr(config, "cookie_threat_target_groups", []) or []),
+        *(config.network_approval_allowed_groups or []),
+        *(config.chaining_allowed_groups or []),
+        *(config.chaining_denied_groups or []),
+        *(config.session_guard_exempt_groups or []),
+    ):
+        gc = (g or "").strip().lower()
+        if gc and gc not in configured_groups:
+            configured_groups.append(gc)
     return directory_service.list_domain_ous_and_groups(
         customer_id=config.customer_id or "customers/my_customer",
         configured_ous=configured_ous,
