@@ -20,7 +20,7 @@ from fastapi import APIRouter, HTTPException, Depends, Request
 from backend.services.config_service import config_service
 from backend.services.cloud_identity import cloud_identity_service, normalize_customer_id
 from backend.services.directory_service import directory_service
-from backend.services.session_guard import DeviceRecord
+from backend.services.session_guard import DeviceRecord, KNOWN_HOSTING_ASNS
 from backend.routes.session_watch import session_guard
 from backend.routes.admin import get_current_user_email
 
@@ -51,6 +51,13 @@ class DeviceUserItem(BaseModel):
     owner_type: str
     last_sync_time: str
     annotated_user: Optional[str] = ""
+    last_known_ip: Optional[str] = ""
+    region_code: Optional[str] = ""
+    subdivision_code: Optional[str] = ""
+    asn: Optional[str] = ""
+    is_hosting_asn: Optional[bool] = False
+    matches_current_ip: Optional[bool] = None
+    network_warning: Optional[str] = ""
 
 class DeviceActionRequest(BaseModel):
     device_user_name: str
@@ -352,7 +359,10 @@ def crawl_devices_for_user(
     return matched_items, total_devices_scanned
 
 @router.get("/my-devices", response_model=List[DeviceUserItem])
-def get_my_approved_devices(user_email: str = Depends(get_current_user_email)):
+def get_my_approved_devices(
+    http_request: Request = None,
+    user_email: str = Depends(get_current_user_email),
+):
     """Fetches the authentic list of devices assigned to the requesting user using server-side email filtering with adaptive fallback."""
     target_email = (user_email or "").lower().strip()
     if not target_email:
@@ -637,8 +647,176 @@ def get_my_approved_devices(user_email: str = Depends(get_current_user_email)):
     if warm_records:
         session_guard.load_device_inventory(warm_records)
 
+    _enrich_devices_with_network_context(deduped_devices, target_email, http_request)
+
     print(f"INFO [devices.py]: Matched {total_devices_matched} Cloud Identity assets and {len(directory_cbs)} Directory Chromebooks. Deduplicated {len(my_devices)} down to {len(deduped_devices)} primary device bindings.")
     return deduped_devices
+
+
+def _enrich_devices_with_network_context(
+    devices: List[DeviceUserItem],
+    user_email: str,
+    http_request: Optional[Request] = None,
+) -> None:
+    """Attaches $0-cost origin IP, Country/Subdivision code, ASN, and session network comparison
+    to personal BYOD devices using Admin SDK Reports API `networkInfo` + SQLite cache + request headers."""
+    if not devices:
+        return
+
+    import time as _time
+
+    now = _time.time()
+    caller_ip = ""
+    caller_country = ""
+    caller_subdivision = ""
+    caller_os = ""
+
+    if http_request is not None:
+        try:
+            forwarded = http_request.headers.get("x-forwarded-for", "")
+            raw_ip = (
+                forwarded.split(",")[0].strip()
+                if forwarded
+                else (http_request.client.host if http_request.client else "")
+            )
+            if raw_ip and raw_ip not in ("0.0.0.0", "127.0.0.1", "::1", "testclient"):
+                caller_ip = raw_ip
+            caller_country = (
+                http_request.headers.get("x-appengine-country")
+                or http_request.headers.get("cf-ipcountry")
+                or ""
+            ).strip().upper()
+            if caller_country == "ZZ":
+                caller_country = ""
+            raw_region = (http_request.headers.get("x-appengine-region") or "").strip().upper()
+            if caller_country and raw_region:
+                caller_subdivision = (
+                    raw_region if raw_region.startswith(f"{caller_country}-") else f"{caller_country}-{raw_region}"
+                )
+            geo_loc = (http_request.headers.get("x-client-geo-location") or "").strip().upper()
+            if geo_loc and not caller_country:
+                parts = [p.strip() for p in geo_loc.split(",") if p.strip()]
+                if parts:
+                    caller_country = parts[0]
+                    if len(parts) > 1 and not caller_subdivision:
+                        caller_subdivision = f"{caller_country}-{parts[1]}"
+
+            ua = (http_request.headers.get("user-agent") or "").lower()
+            if "cros" in ua:
+                caller_os = "CHROME_OS"
+            elif "macintosh" in ua or "mac os x" in ua:
+                caller_os = "MAC"
+            elif "windows" in ua:
+                caller_os = "WINDOWS"
+            elif "android" in ua:
+                caller_os = "ANDROID"
+            elif "iphone" in ua or "ipad" in ua:
+                caller_os = "IOS"
+        except Exception:
+            pass
+
+    recent_net_events: List[Dict[str, Any]] = []
+    if hasattr(directory_service, "get_user_recent_network_events"):
+        try:
+            recent_net_events = directory_service.get_user_recent_network_events(user_email) or []
+        except Exception:
+            recent_net_events = []
+
+    if caller_ip and not caller_country and recent_net_events:
+        for ev in recent_net_events:
+            if ev.get("ip_address") == caller_ip and ev.get("region_code"):
+                caller_country = str(ev["region_code"]).upper()
+                if ev.get("subdivision_code") and not caller_subdivision:
+                    caller_subdivision = str(ev["subdivision_code"]).upper()
+                break
+
+    for d in devices:
+        if d.owner_type == "COMPANY":
+            continue
+
+        persisted = session_guard.get_device_network_context(d.device_user_name)
+        sync_ep = sync_time_sort_key(d.last_sync_time)
+
+        matched_ev: Optional[Dict[str, Any]] = None
+        if recent_net_events:
+            if sync_ep > 0:
+                candidates = [
+                    ev
+                    for ev in recent_net_events
+                    if abs(float(ev.get("timestamp_epoch", 0.0)) - sync_ep) <= 21600.0
+                ]
+                if candidates:
+                    matched_ev = min(
+                        candidates,
+                        key=lambda ev: abs(float(ev.get("timestamp_epoch", 0.0)) - sync_ep),
+                    )
+            if matched_ev is None and d.approval_state == "PENDING_APPROVAL" and not persisted:
+                matched_ev = recent_net_events[0]
+
+        resolved_ip = ""
+        resolved_region = ""
+        resolved_subdivision = ""
+        resolved_asn = ""
+
+        if matched_ev and matched_ev.get("ip_address"):
+            resolved_ip = str(matched_ev.get("ip_address") or "").strip()
+            resolved_region = str(matched_ev.get("region_code") or "").strip().upper()
+            resolved_subdivision = str(matched_ev.get("subdivision_code") or "").strip().upper()
+            resolved_asn = str(matched_ev.get("asn") or "").strip().upper()
+        elif persisted and persisted.get("ip_address"):
+            resolved_ip = str(persisted.get("ip_address") or "").strip()
+            resolved_region = str(persisted.get("region_code") or "").strip().upper()
+            resolved_subdivision = str(persisted.get("subdivision_code") or "").strip().upper()
+            resolved_asn = str(persisted.get("asn") or "").strip().upper()
+
+        # Fallback when Admin Reports API lags (2-5m) and the user is currently opening the portal
+        # on that exact personal BYOD device
+        if not resolved_ip and caller_ip and caller_os:
+            dtype_upper = (d.device_type or "").upper()
+            os_upper = (d.os_version or "").upper()
+            os_matches = (
+                (caller_os == "MAC" and ("MAC" in dtype_upper or "MAC" in os_upper))
+                or (caller_os == "WINDOWS" and ("WINDOWS" in dtype_upper or "WINDOWS" in os_upper))
+                or (caller_os == "ANDROID" and ("ANDROID" in dtype_upper or "ANDROID" in os_upper))
+                or (caller_os == "IOS" and ("IOS" in dtype_upper or "IOS" in os_upper))
+                or (caller_os == "CHROME_OS" and "CHROME" in dtype_upper)
+            )
+            if os_matches and (sync_ep <= 0 or abs(now - sync_ep) <= 900.0):
+                resolved_ip = caller_ip
+                resolved_region = caller_country
+                resolved_subdivision = caller_subdivision
+
+        if resolved_ip:
+            session_guard.record_device_network_context(
+                device_user_name=d.device_user_name,
+                user_email=user_email,
+                ip_address=resolved_ip,
+                region_code=resolved_region,
+                subdivision_code=resolved_subdivision,
+                asn=resolved_asn,
+                now_epoch=now,
+            )
+            d.last_known_ip = resolved_ip
+            d.region_code = resolved_region
+            d.subdivision_code = resolved_subdivision
+            d.asn = resolved_asn
+            d.is_hosting_asn = bool(resolved_asn and resolved_asn.upper() in KNOWN_HOSTING_ASNS)
+            if caller_ip:
+                d.matches_current_ip = resolved_ip == caller_ip
+
+            if d.is_hosting_asn:
+                d.network_warning = "HOSTING_DATACENTER_ASN"
+            elif (
+                caller_country
+                and resolved_region
+                and resolved_region not in ("", "ZZ")
+                and caller_country != resolved_region
+            ):
+                d.network_warning = "DIFFERENT_COUNTRY"
+            elif d.matches_current_ip is False:
+                d.network_warning = "DIFFERENT_NETWORK"
+            else:
+                d.network_warning = ""
 
 @router.post("/approve")
 def approve_device(

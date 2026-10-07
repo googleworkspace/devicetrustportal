@@ -154,6 +154,13 @@ export interface DeviceUserItem {
   owner_type: string;
   last_sync_time: string;
   annotated_user?: string;
+  last_known_ip?: string;
+  region_code?: string;
+  subdivision_code?: string;
+  asn?: string;
+  is_hosting_asn?: boolean;
+  matches_current_ip?: boolean | null;
+  network_warning?: string;
 }
 
 export const sendClientLog = (

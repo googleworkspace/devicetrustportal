@@ -585,6 +585,17 @@ class DirectoryService:
             if "failure" in ev_name.lower() or "logout" in ev_name.lower():
                 continue
 
+            net_info = item.get("networkInfo", {}) or {}
+            region_code = str(net_info.get("regionCode") or "").strip().upper()
+            subdivision_code = str(net_info.get("subdivisionCode") or "").strip().upper()
+            raw_asn = net_info.get("ipAsn")
+            asn_str: Optional[str] = None
+            if raw_asn is not None:
+                if isinstance(raw_asn, list) and raw_asn:
+                    asn_str = f"AS{raw_asn[0]}" if not str(raw_asn[0]).upper().startswith("AS") else str(raw_asn[0]).upper()
+                elif str(raw_asn).strip():
+                    asn_str = f"AS{raw_asn}" if not str(raw_asn).upper().startswith("AS") else str(raw_asn).upper()
+
             is_suspicious = False
             login_type = ev_name
             for param in first_ev.get("parameters", []) or []:
@@ -599,6 +610,9 @@ class DirectoryService:
                     "event_id": f"{actor_email}:{unique_qual}",
                     "user_email": actor_email,
                     "ip_address": ip_address,
+                    "region_code": region_code,
+                    "subdivision_code": subdivision_code,
+                    "asn": asn_str or "",
                     "timestamp_epoch": ts_epoch,
                     "timestamp_iso": time_str,
                     "login_type": login_type,
@@ -672,6 +686,8 @@ class DirectoryService:
                 continue
 
             net_info = item.get("networkInfo", {}) or {}
+            region_code = str(net_info.get("regionCode") or "").strip().upper()
+            subdivision_code = str(net_info.get("subdivisionCode") or "").strip().upper()
             raw_asn = net_info.get("ipAsn")
             asn_str: Optional[str] = None
             if raw_asn is not None:
@@ -695,6 +711,8 @@ class DirectoryService:
                     "event_id": f"token:{actor_email}:{unique_qual}",
                     "user_email": actor_email,
                     "ip_address": ip_address,
+                    "region_code": region_code,
+                    "subdivision_code": subdivision_code,
                     "timestamp_epoch": ts_epoch,
                     "timestamp_iso": time_str,
                     "asn": asn_str,
@@ -702,6 +720,110 @@ class DirectoryService:
                 }
             )
         return events
+
+    def get_user_recent_network_events(
+        self, user_email: str, lookback_hours: int = 72
+    ) -> List[Dict[str, Any]]:
+        """Fetches recent login and token network events (IP, Country, State/Region, ASN) for a single user.
+
+        Uses Google Workspace Admin SDK Reports API (`networkInfo`) at $0 extra cost and caches per user
+        for 45 seconds so portal reloads do not consume extra Reports API quota.
+        """
+        target_email = (user_email or "").strip().lower()
+        if not target_email:
+            return []
+
+        now = time.time()
+        if not hasattr(self, "_user_network_cache"):
+            self._user_network_cache: Dict[str, Tuple[float, List[Dict[str, Any]]]] = {}
+        cached = self._user_network_cache.get(target_email)
+        if cached and (now - cached[0]) < 45.0:
+            return cached[1]
+
+        if not getattr(self, "_reports_service", None) and (not self.key_path or not self.admin_email):
+            return []
+
+        import datetime
+
+        combined: List[Dict[str, Any]] = []
+        try:
+            with self._lock:
+                if not getattr(self, "_reports_service", None):
+                    creds = service_account.Credentials.from_service_account_file(
+                        self.key_path,
+                        scopes=["https://www.googleapis.com/auth/admin.reports.audit.readonly"],
+                        subject=self.admin_email,
+                    )
+                    self._reports_service = build("admin", "reports_v1", credentials=creds)
+
+                start_dt = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(
+                    hours=max(1, lookback_hours)
+                )
+                start_time_iso = start_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+                for app_name in ("login", "token"):
+                    try:
+                        resp = (
+                            self._reports_service.activities()
+                            .list(
+                                userKey=target_email,
+                                applicationName=app_name,
+                                startTime=start_time_iso,
+                                maxResults=25,
+                            )
+                            .execute()
+                            or {}
+                        )
+                    except Exception:
+                        continue
+                    for item in resp.get("items", []) or []:
+                        ip_addr = str(item.get("ipAddress") or "").strip()
+                        if not ip_addr or ip_addr == "0.0.0.0":
+                            continue
+                        id_block = item.get("id", {}) or {}
+                        time_str = str(id_block.get("time") or "").strip()
+                        try:
+                            ts_epoch = datetime.datetime.fromisoformat(
+                                time_str.replace("Z", "+00:00")
+                            ).timestamp()
+                        except Exception:
+                            ts_epoch = now
+
+                        raw_events = item.get("events", []) or [{}]
+                        first_ev = raw_events[0]
+                        ev_name = str(first_ev.get("name") or first_ev.get("type") or "").lower()
+                        if "failure" in ev_name or "logout" in ev_name or "revoke" in ev_name:
+                            continue
+
+                        net_info = item.get("networkInfo", {}) or {}
+                        region_code = str(net_info.get("regionCode") or "").strip().upper()
+                        subdivision_code = str(net_info.get("subdivisionCode") or "").strip().upper()
+                        raw_asn = net_info.get("ipAsn")
+                        asn_str = ""
+                        if raw_asn is not None:
+                            if isinstance(raw_asn, list) and raw_asn:
+                                asn_str = f"AS{raw_asn[0]}" if not str(raw_asn[0]).upper().startswith("AS") else str(raw_asn[0]).upper()
+                            elif str(raw_asn).strip():
+                                asn_str = f"AS{raw_asn}" if not str(raw_asn).upper().startswith("AS") else str(raw_asn).upper()
+
+                        combined.append(
+                            {
+                                "ip_address": ip_addr,
+                                "region_code": region_code,
+                                "subdivision_code": subdivision_code,
+                                "asn": asn_str,
+                                "timestamp_epoch": ts_epoch,
+                                "timestamp_iso": time_str,
+                                "source": app_name,
+                            }
+                        )
+        except Exception as e:
+            print(f"WARNING [directory_service.py]: Could not fetch recent network events for '{target_email}': {e}")
+            return []
+
+        combined.sort(key=lambda x: x.get("timestamp_epoch", 0.0), reverse=True)
+        self._user_network_cache[target_email] = (now, combined)
+        return combined
 
     def sign_out_user(self, user_email: str) -> bool:
         """Executes `admin.directory_v1.users.signOut` circuit breaker to revoke active Workspace cookies/tokens.

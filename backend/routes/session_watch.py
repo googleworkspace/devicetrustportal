@@ -780,6 +780,27 @@ def _execute_single_live_sweep_pass(
                             approval_state=norm_state,
                             last_sync_epoch=sync_epoch,
                         )
+                        user_login_evs = [
+                            ev
+                            for ev in raw_events
+                            if ev.get("user_email") == du_email
+                            and ev.get("ip_address")
+                            and ev.get("ip_address") not in ("0.0.0.0", "cloud-identity-sync")
+                        ]
+                        if user_login_evs:
+                            closest_ev = min(
+                                user_login_evs,
+                                key=lambda ev: abs(float(ev.get("timestamp_epoch", 0.0)) - sync_epoch),
+                            )
+                            session_guard.record_device_network_context(
+                                device_user_name=du_name,
+                                user_email=du_email,
+                                ip_address=str(closest_ev.get("ip_address") or ""),
+                                region_code=str(closest_ev.get("region_code") or ""),
+                                subdivision_code=str(closest_ev.get("subdivision_code") or ""),
+                                asn=str(closest_ev.get("asn") or ""),
+                                now_epoch=now,
+                            )
                         if du_email not in users_with_ci_events:
                             users_with_ci_events.add(du_email)
                             unapproved_ci_byod_events_count += 1

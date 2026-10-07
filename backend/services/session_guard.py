@@ -170,6 +170,8 @@ class SessionGuardService:
         self._enforced_device_syncs: Dict[str, float] = {}
         # Enforced event IDs so the exact same event_id is never fired twice
         self._enforced_event_ids: Set[str] = set()
+        # Persisted device sign-in network/geolocation context indexed by device_user_name
+        self._device_network_context: Dict[str, Dict[str, Any]] = {}
 
         # Telemetry counters for scale/quota verification
         self.metrics: Dict[str, int] = {
@@ -228,12 +230,39 @@ class SessionGuardService:
                 )
                 """
             )
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS device_network_context (
+                    device_user_name TEXT PRIMARY KEY,
+                    user_email TEXT NOT NULL,
+                    ip_address TEXT NOT NULL,
+                    region_code TEXT NOT NULL DEFAULT '',
+                    subdivision_code TEXT NOT NULL DEFAULT '',
+                    asn TEXT NOT NULL DEFAULT '',
+                    updated_at_epoch REAL NOT NULL
+                )
+                """
+            )
             # Hydrate in-memory state from SQLite on startup
             cur = self._conn.cursor()
             cur.execute("SELECT device_user_name, last_enforced_sync_epoch FROM enforced_device_syncs")
             for du_name, sync_ep in cur.fetchall():
                 if du_name:
                     self._enforced_device_syncs[str(du_name)] = float(sync_ep or 0.0)
+            cur.execute(
+                "SELECT device_user_name, user_email, ip_address, region_code, subdivision_code, asn, updated_at_epoch FROM device_network_context"
+            )
+            for du_name, u_email, ip_addr, reg_code, sub_code, asn_val, upd_ep in cur.fetchall():
+                if du_name and ip_addr:
+                    self._device_network_context[str(du_name)] = {
+                        "device_user_name": str(du_name),
+                        "user_email": str(u_email or "").lower(),
+                        "ip_address": str(ip_addr),
+                        "region_code": str(reg_code or "").upper(),
+                        "subdivision_code": str(sub_code or "").upper(),
+                        "asn": str(asn_val or "").upper(),
+                        "updated_at_epoch": float(upd_ep or 0.0),
+                    }
             cur.execute(
                 "SELECT event_id, user_email, timestamp_iso FROM session_enforcement_log WHERE decision = 'REVOKE_SIGN_OUT'"
             )
@@ -248,6 +277,73 @@ class SessionGuardService:
                             self._recent_signouts[norm_u] = ep
                     except Exception:
                         pass
+
+    def record_device_network_context(
+        self,
+        device_user_name: str,
+        user_email: str,
+        ip_address: str,
+        region_code: str = "",
+        subdivision_code: str = "",
+        asn: str = "",
+        now_epoch: Optional[float] = None,
+    ) -> None:
+        """Persists the last observed IP address, country/subdivision code, and ASN for a device binding."""
+        du_key = (device_user_name or "").strip()
+        email_key = (user_email or "").strip().lower()
+        clean_ip = (ip_address or "").strip()
+        if not du_key or not clean_ip or clean_ip in ("0.0.0.0", "127.0.0.1", "::1", "testclient"):
+            return
+        now = now_epoch if now_epoch is not None else time.time()
+        clean_reg = (region_code or "").strip().upper()
+        clean_sub = (subdivision_code or "").strip().upper()
+        clean_asn = (asn or "").strip().upper()
+        with self._lock:
+            existing = self._device_network_context.get(du_key, {})
+            # Preserve richer region/ASN metadata if the new event has the same IP but lacks networkInfo
+            if existing and existing.get("ip_address") == clean_ip:
+                if not clean_reg:
+                    clean_reg = existing.get("region_code", "")
+                if not clean_sub:
+                    clean_sub = existing.get("subdivision_code", "")
+                if not clean_asn:
+                    clean_asn = existing.get("asn", "")
+            ctx = {
+                "device_user_name": du_key,
+                "user_email": email_key,
+                "ip_address": clean_ip,
+                "region_code": clean_reg,
+                "subdivision_code": clean_sub,
+                "asn": clean_asn,
+                "updated_at_epoch": now,
+            }
+            self._device_network_context[du_key] = ctx
+            with self._conn:
+                self._conn.execute(
+                    """
+                    INSERT INTO device_network_context (
+                        device_user_name, user_email, ip_address, region_code, subdivision_code, asn, updated_at_epoch
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(device_user_name) DO UPDATE SET
+                        user_email = excluded.user_email,
+                        ip_address = excluded.ip_address,
+                        region_code = excluded.region_code,
+                        subdivision_code = excluded.subdivision_code,
+                        asn = excluded.asn,
+                        updated_at_epoch = excluded.updated_at_epoch
+                    """,
+                    (du_key, email_key, clean_ip, clean_reg, clean_sub, clean_asn, now),
+                )
+
+    def get_device_network_context(self, device_user_name: str) -> Optional[Dict[str, Any]]:
+        """Retrieves persisted IP and geolocation context for a device binding."""
+        du_key = (device_user_name or "").strip()
+        if not du_key:
+            return None
+        with self._lock:
+            ctx = self._device_network_context.get(du_key)
+            return dict(ctx) if ctx else None
 
     def is_device_sync_already_enforced(self, device_user_name: str, sync_epoch: float) -> bool:
         """Returns True if this device_user_name has already been enforced at or after sync_epoch."""

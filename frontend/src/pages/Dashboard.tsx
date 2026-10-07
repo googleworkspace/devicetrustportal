@@ -109,6 +109,105 @@ const selectPlatformMatchedDevice = (list: DeviceUserItem[]): DeviceUserItem | u
   );
 };
 
+const countryCodeToFlag = (code?: string): string => {
+  const cleaned = (code || "").trim().toUpperCase();
+  if (!/^[A-Z]{2}$/.test(cleaned) || cleaned === "ZZ") return "🌐";
+  return String.fromCodePoint(
+    0x1f1e6 + cleaned.charCodeAt(0) - 65,
+    0x1f1e6 + cleaned.charCodeAt(1) - 65
+  );
+};
+
+const formatCountryName = (code?: string, locale: string = "en"): string => {
+  const cleaned = (code || "").trim().toUpperCase();
+  if (!cleaned || cleaned === "ZZ") return "";
+  try {
+    if (typeof Intl !== "undefined" && typeof Intl.DisplayNames === "function") {
+      const displayNames = new Intl.DisplayNames([locale || "en"], { type: "region" });
+      return displayNames.of(cleaned) || cleaned;
+    }
+  } catch (_) {
+    // Fallback to raw ISO code if locale is unsupported
+  }
+  return cleaned;
+};
+
+interface DeviceLocationSummary {
+  flag: string;
+  countryName: string;
+  subdivision: string;
+  locationText: string;
+  ipLabel: string;
+  asnLabel: string;
+  warningType: string;
+  isSuspicious: boolean;
+  isHighRisk: boolean;
+  statusPillText: string;
+}
+
+const formatDeviceLocationSummary = (
+  d: DeviceUserItem,
+  locale: string = "en"
+): DeviceLocationSummary | null => {
+  const ip = (d.last_known_ip || "").trim();
+  const region = (d.region_code || "").trim().toUpperCase();
+  if (!ip && !region) return null;
+
+  const flag = countryCodeToFlag(region);
+  const countryName = formatCountryName(region, locale);
+  let subdivision = (d.subdivision_code || "").trim().toUpperCase();
+  if (region && subdivision.startsWith(`${region}-`)) {
+    subdivision = subdivision.slice(region.length + 1);
+  }
+
+  const locationParts: string[] = [];
+  if (countryName) locationParts.push(countryName);
+  if (subdivision && subdivision !== "ZZ") locationParts.push(subdivision);
+  const locationText = locationParts.length > 0 ? `${flag} ${locationParts.join(", ")}` : `${flag} Unknown Region`;
+
+  const asnLabel = (d.asn || "").trim().toUpperCase();
+  const warningType =
+    d.network_warning ||
+    (d.is_hosting_asn
+      ? "HOSTING_DATACENTER_ASN"
+      : d.matches_current_ip === false
+      ? "DIFFERENT_NETWORK"
+      : "");
+
+  const isHighRisk = Boolean(
+    d.is_hosting_asn ||
+      warningType === "HOSTING_DATACENTER_ASN" ||
+      warningType === "DIFFERENT_COUNTRY"
+  );
+  const isSuspicious = Boolean(
+    isHighRisk || warningType === "DIFFERENT_NETWORK" || d.matches_current_ip === false
+  );
+
+  let statusPillText = "";
+  if (d.is_hosting_asn || warningType === "HOSTING_DATACENTER_ASN") {
+    statusPillText = `⚠️ Cloud/VPN Proxy${asnLabel ? ` (${asnLabel})` : ""}`;
+  } else if (warningType === "DIFFERENT_COUNTRY") {
+    statusPillText = "⚠️ Foreign Country";
+  } else if (warningType === "DIFFERENT_NETWORK" || d.matches_current_ip === false) {
+    statusPillText = "⚠️ Different Network";
+  } else if (d.matches_current_ip === true) {
+    statusPillText = "✓ Matches Current Network";
+  }
+
+  return {
+    flag,
+    countryName: countryName || region || "Unknown",
+    subdivision,
+    locationText,
+    ipLabel: ip || "Unknown IP",
+    asnLabel,
+    warningType,
+    isSuspicious,
+    isHighRisk,
+    statusPillText,
+  };
+};
+
 export const Dashboard: React.FC = () => {
   const [userEmail, setUserEmail] = useState(() => localStorage.getItem("userEmail") || "");
   const [message, setMessage] = useState("");
@@ -239,6 +338,11 @@ export const Dashboard: React.FC = () => {
   const [revokeTarget, setRevokeTarget] = useState<string[]>([]);
   const [showRevokeModal, setShowRevokeModal] = useState(false);
   const [isRevoking, setIsRevoking] = useState(false);
+
+  // Suspicious Location / Proxy Approval Confirmation Modal State
+  const [suspiciousApproveDevice, setSuspiciousApproveDevice] = useState<DeviceUserItem | null>(null);
+  const [suspiciousApproveChecked, setSuspiciousApproveChecked] = useState<boolean>(false);
+  const [isApprovingSuspicious, setIsApprovingSuspicious] = useState<boolean>(false);
 
   const loadDevices = useCallback(() => {
     if (userEmail) {
@@ -371,6 +475,28 @@ export const Dashboard: React.FC = () => {
         device_user_name: name,
         error: e?.message || String(e),
       });
+    }
+  };
+
+  const initiateApprove = (d: DeviceUserItem) => {
+    const loc = formatDeviceLocationSummary(d, locale);
+    if (loc && loc.isSuspicious) {
+      setSuspiciousApproveDevice(d);
+      setSuspiciousApproveChecked(false);
+      return;
+    }
+    handleApprove(d.device_user_name);
+  };
+
+  const handleConfirmSuspiciousApprove = async () => {
+    if (!suspiciousApproveDevice || !suspiciousApproveChecked) return;
+    setIsApprovingSuspicious(true);
+    try {
+      await handleApprove(suspiciousApproveDevice.device_user_name);
+    } finally {
+      setIsApprovingSuspicious(false);
+      setSuspiciousApproveDevice(null);
+      setSuspiciousApproveChecked(false);
     }
   };
 
@@ -1094,6 +1220,7 @@ export const Dashboard: React.FC = () => {
                         const isRevokable = d.approval_state === "APPROVED";
                         const isPending = d.approval_state === "PENDING_APPROVAL";
                         const isSelected = selectedDevices.includes(d.device_user_name);
+                        const locSummary = formatDeviceLocationSummary(d, locale);
                         const rowClass = isSelected
                           ? "dtg-row-selected"
                           : isPending
@@ -1132,6 +1259,50 @@ export const Dashboard: React.FC = () => {
                                   >
                                     {t.personalByodLabel}
                                   </div>
+                                  {locSummary && (
+                                    <div
+                                      data-testid="device-location-badge"
+                                      style={{
+                                        marginTop: "5px",
+                                        display: "inline-flex",
+                                        alignItems: "center",
+                                        flexWrap: "wrap",
+                                        gap: "6px",
+                                        padding: "3px 8px",
+                                        borderRadius: "6px",
+                                        fontSize: "11.5px",
+                                        fontWeight: 600,
+                                        lineHeight: 1.35,
+                                        backgroundColor: locSummary.isHighRisk
+                                          ? "#fce8e6"
+                                          : locSummary.isSuspicious
+                                          ? "#fef7e0"
+                                          : "#e6f4ea",
+                                        color: locSummary.isHighRisk
+                                          ? "#c5221f"
+                                          : locSummary.isSuspicious
+                                          ? "#b06000"
+                                          : "#137333",
+                                        border: locSummary.isHighRisk
+                                          ? "1px solid #f5c2c0"
+                                          : locSummary.isSuspicious
+                                          ? "1px solid #fde293"
+                                          : "1px solid #ceead6",
+                                      }}
+                                    >
+                                      <span>{locSummary.locationText}</span>
+                                      <span style={{ opacity: 0.7 }}>•</span>
+                                      <span style={{ fontFamily: "monospace", fontSize: "11px" }}>
+                                        IP: {locSummary.ipLabel}
+                                      </span>
+                                      {locSummary.statusPillText && (
+                                        <>
+                                          <span style={{ opacity: 0.7 }}>•</span>
+                                          <span>{locSummary.statusPillText}</span>
+                                        </>
+                                      )}
+                                    </div>
+                                  )}
                                 </div>
                               </div>
                             </td>
@@ -1175,7 +1346,7 @@ export const Dashboard: React.FC = () => {
                                 </button>
                               ) : (
                                 <button
-                                  onClick={() => handleApprove(d.device_user_name)}
+                                  onClick={() => initiateApprove(d)}
                                   className="dtg-btn dtg-btn-success"
                                 >
                                   ✓ {t.approveAction}
@@ -1332,6 +1503,133 @@ export const Dashboard: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Suspicious Location / Cloud Hosting ASN Approval Confirmation Modal */}
+      {suspiciousApproveDevice && (() => {
+        const modalLoc = formatDeviceLocationSummary(suspiciousApproveDevice, locale);
+        return (
+          <div
+            className="dtg-modal-backdrop"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="suspicious-approve-modal-title"
+            data-testid="suspicious-approve-modal"
+          >
+            <div className="dtg-modal" style={{ maxWidth: "500px" }}>
+              <div
+                id="suspicious-approve-modal-title"
+                style={{
+                  fontSize: "18px",
+                  fontWeight: 700,
+                  color: modalLoc?.isHighRisk ? "#c5221f" : "#b06000",
+                  marginBottom: "10px",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "8px",
+                }}
+              >
+                ⚠️ Verify Device Location Before Approving
+              </div>
+              <p style={{ color: "var(--dtg-text)", fontSize: "14px", lineHeight: 1.5, marginBottom: "14px" }}>
+                {modalLoc?.warningType === "HOSTING_DATACENTER_ASN" || suspiciousApproveDevice.is_hosting_asn
+                  ? "This device connected from a cloud hosting datacenter or VPN proxy rather than a typical home or school ISP. Bad actors frequently use cloud proxies to hijack student accounts."
+                  : modalLoc?.warningType === "DIFFERENT_COUNTRY"
+                  ? "This device connected from a different country than your current browser session. Only approve this device if you physically recognize it."
+                  : "This device connected from a different IP address than your current browser session (such as cellular data or another Wi-Fi network). Please confirm this is your personal device before approving."}
+              </p>
+
+              <div
+                style={{
+                  backgroundColor: modalLoc?.isHighRisk ? "#fce8e6" : "#fef7e0",
+                  border: modalLoc?.isHighRisk ? "1px solid #f5c2c0" : "1px solid #fde293",
+                  padding: "12px 14px",
+                  borderRadius: "8px",
+                  marginBottom: "16px",
+                  fontSize: "13px",
+                  color: "#202124",
+                  lineHeight: 1.6,
+                }}
+              >
+                <div>
+                  <strong>Device:</strong> {suspiciousApproveDevice.model} ({suspiciousApproveDevice.os_version})
+                </div>
+                {modalLoc && (
+                  <>
+                    <div>
+                      <strong>Origin Location:</strong> {modalLoc.locationText}
+                    </div>
+                    <div>
+                      <strong>Origin IP:</strong>{" "}
+                      <span style={{ fontFamily: "monospace" }}>{modalLoc.ipLabel}</span>
+                      {modalLoc.asnLabel ? ` • ${modalLoc.asnLabel}` : ""}
+                    </div>
+                    {modalLoc.statusPillText && (
+                      <div
+                        style={{
+                          marginTop: "4px",
+                          fontWeight: 700,
+                          color: modalLoc.isHighRisk ? "#c5221f" : "#b06000",
+                        }}
+                      >
+                        {modalLoc.statusPillText}
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+
+              <label
+                style={{
+                  display: "flex",
+                  alignItems: "flex-start",
+                  gap: "10px",
+                  fontSize: "13px",
+                  color: "var(--dtg-text)",
+                  lineHeight: 1.45,
+                  marginBottom: "20px",
+                  cursor: "pointer",
+                  userSelect: "none",
+                }}
+              >
+                <input
+                  type="checkbox"
+                  data-testid="confirm-suspicious-approve-checkbox"
+                  checked={suspiciousApproveChecked}
+                  onChange={(e) => setSuspiciousApproveChecked(e.target.checked)}
+                  style={{ marginTop: "3px" }}
+                />
+                <span>
+                  I confirm that I physically own this device and recognize this sign-in location.
+                </span>
+              </label>
+
+              <div className="dtg-modal-actions">
+                <button
+                  type="button"
+                  data-testid="cancel-suspicious-approve-btn"
+                  onClick={() => {
+                    setSuspiciousApproveDevice(null);
+                    setSuspiciousApproveChecked(false);
+                  }}
+                  disabled={isApprovingSuspicious}
+                  className="dtg-btn dtg-btn-neutral"
+                >
+                  {t.cancelAction}
+                </button>
+                <button
+                  type="button"
+                  data-testid="confirm-suspicious-approve-btn"
+                  onClick={handleConfirmSuspiciousApprove}
+                  disabled={!suspiciousApproveChecked || isApprovingSuspicious}
+                  className="dtg-btn dtg-btn-danger"
+                >
+                  {isApprovingSuspicious ? "Approving..." : "✓ Approve Device Anyway"}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 };

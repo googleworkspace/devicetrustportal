@@ -21,6 +21,7 @@ import { vi, describe, test, expect, beforeEach } from "vitest";
 import { Dashboard } from "./Dashboard";
 import {
   getMyDevices,
+  approveDevice,
   checkIsAdmin,
   getPublicConfig,
   startOnboardingLease,
@@ -408,6 +409,95 @@ describe("Dashboard Page", () => {
       expect(mockGeneratePairingCode).toHaveBeenCalledTimes(1);
       expect(screen.getByTestId("generated-pairing-code-card")).toBeInTheDocument();
       expect(screen.getByTestId("generated-pairing-code-value")).toHaveTextContent("482910");
+    });
+  });
+
+  test("renders zero-cost IP & country geolocation badges and requires confirmation modal before approving suspicious/proxy BYOD devices", async () => {
+    localStorage.setItem("userEmail", "student@example.com");
+    localStorage.setItem("googleIdToken", "mock-token");
+
+    const mockApproveDevice = approveDevice as ReturnType<typeof vi.fn>;
+    mockApproveDevice.mockResolvedValue({ status: "SUCCESS" });
+    mockCheckIsAdmin.mockResolvedValue(false);
+    mockGetMyDevices.mockResolvedValue([
+      {
+        device_user_name: "devices/home-mac/deviceUsers/du-1",
+        device_type: "MAC_OS",
+        model: "Home MacBook Air",
+        os_version: "macOS 15.1",
+        serial_number: "C02HOME1",
+        approval_state: "PENDING_APPROVAL",
+        owner_type: "BYOD",
+        last_sync_time: "2026-10-07T18:00:00Z",
+        last_known_ip: "73.14.22.10",
+        region_code: "US",
+        subdivision_code: "US-MO",
+        asn: "AS7922",
+        is_hosting_asn: false,
+        matches_current_ip: true,
+        network_warning: "",
+      },
+      {
+        device_user_name: "devices/proxy-pc/deviceUsers/du-2",
+        device_type: "LINUX",
+        model: "Unknown Linux VPS",
+        os_version: "Ubuntu 24.04",
+        serial_number: "VPS-CF-99",
+        approval_state: "PENDING_APPROVAL",
+        owner_type: "BYOD",
+        last_sync_time: "2026-10-07T18:01:00Z",
+        last_known_ip: "104.16.88.99",
+        region_code: "US",
+        subdivision_code: "US-TX",
+        asn: "AS13335",
+        is_hosting_asn: true,
+        matches_current_ip: false,
+        network_warning: "HOSTING_DATACENTER_ASN",
+      },
+    ]);
+
+    render(<Dashboard />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Home MacBook Air")).toBeInTheDocument();
+      expect(screen.getByText("Unknown Linux VPS")).toBeInTheDocument();
+    });
+
+    const badges = screen.getAllByTestId("device-location-badge");
+    expect(badges.length).toBe(2);
+    expect(badges[0]).toHaveTextContent("United States, MO");
+    expect(badges[0]).toHaveTextContent("IP: 73.14.22.10");
+    expect(badges[0]).toHaveTextContent("✓ Matches Current Network");
+
+    expect(badges[1]).toHaveTextContent("United States, TX");
+    expect(badges[1]).toHaveTextContent("IP: 104.16.88.99");
+    expect(badges[1]).toHaveTextContent("⚠️ Cloud/VPN Proxy (AS13335)");
+
+    const approveButtons = screen.getAllByRole("button", { name: /✓ Approve/i });
+    expect(approveButtons.length).toBe(2);
+
+    // 1. Clicking Approve on same-network device approves immediately without warning modal
+    fireEvent.click(approveButtons[0]);
+    await waitFor(() => {
+      expect(mockApproveDevice).toHaveBeenCalledWith("devices/home-mac/deviceUsers/du-1");
+    });
+    expect(screen.queryByTestId("suspicious-approve-modal")).not.toBeInTheDocument();
+
+    // 2. Clicking Approve on Cloud/VPN Proxy device opens confirmation modal and blocks until checkbox checked
+    fireEvent.click(approveButtons[1]);
+    await waitFor(() => {
+      expect(screen.getByTestId("suspicious-approve-modal")).toBeInTheDocument();
+    });
+    expect(screen.getByText(/Verify Device Location Before Approving/i)).toBeInTheDocument();
+    const confirmBtn = screen.getByTestId("confirm-suspicious-approve-btn");
+    expect(confirmBtn).toBeDisabled();
+
+    fireEvent.click(screen.getByTestId("confirm-suspicious-approve-checkbox"));
+    expect(confirmBtn).not.toBeDisabled();
+
+    fireEvent.click(confirmBtn);
+    await waitFor(() => {
+      expect(mockApproveDevice).toHaveBeenCalledWith("devices/proxy-pc/deviceUsers/du-2");
     });
   });
 });

@@ -2503,3 +2503,129 @@ def test_chaining_24h_ttl_and_redemption_grace_and_auto_approve():
             device_user_name="devices/mac-home/deviceUsers/du-teacher",
             customer_id="customers/my_customer",
         )
+
+
+def test_my_devices_enriches_zero_cost_ip_country_and_hosting_asn_warnings():
+    """Verifies that GET /api/devices/my-devices enriches personal BYOD devices with free
+    Workspace Admin Reports API networkInfo (IP, region_code, subdivision_code, ASN),
+    persists context in SessionGuardService, and sets network_warning for:
+    - Same-network residential ISP -> matches_current_ip=True, network_warning=""
+    - Foreign country attacker -> network_warning="DIFFERENT_COUNTRY"
+    - Domestic cloud hosting / proxy ASN (e.g. AS13335 Cloudflare) -> is_hosting_asn=True, network_warning="HOSTING_DATACENTER_ASN"
+    """
+    import time
+    from datetime import datetime, timezone
+    from backend.routes.devices import DeviceUserItem
+    from backend.routes.session_watch import session_guard
+
+    app.dependency_overrides[get_current_user_email] = lambda: "student@example.com"
+    now_ep = time.time()
+    sync_same_iso = datetime.fromtimestamp(now_ep - 60, tz=timezone.utc).isoformat()
+    sync_foreign_iso = datetime.fromtimestamp(now_ep - 180, tz=timezone.utc).isoformat()
+    sync_proxy_iso = datetime.fromtimestamp(now_ep - 300, tz=timezone.utc).isoformat()
+
+    mock_byod_devices = [
+        DeviceUserItem(
+            device_user_name="devices/home-mac/deviceUsers/du-1",
+            device_type="MAC_OS",
+            model="MacBook Air",
+            os_version="macOS 15.1",
+            serial_number="C02HOME1",
+            approval_state="PENDING_APPROVAL",
+            owner_type="BYOD",
+            last_sync_time=sync_same_iso,
+        ),
+        DeviceUserItem(
+            device_user_name="devices/foreign-win/deviceUsers/du-2",
+            device_type="WINDOWS",
+            model="Windows PC",
+            os_version="Windows 11",
+            serial_number="WIN-NG-99",
+            approval_state="PENDING_APPROVAL",
+            owner_type="BYOD",
+            last_sync_time=sync_foreign_iso,
+        ),
+        DeviceUserItem(
+            device_user_name="devices/proxy-linux/deviceUsers/du-3",
+            device_type="LINUX",
+            model="Linux Desktop",
+            os_version="Ubuntu 24.04",
+            serial_number="VPS-CF-01",
+            approval_state="PENDING_APPROVAL",
+            owner_type="BYOD",
+            last_sync_time=sync_proxy_iso,
+        ),
+    ]
+
+    mock_net_events = [
+        {
+            "timestamp_epoch": now_ep - 58,
+            "ip_address": "73.14.22.10",
+            "region_code": "US",
+            "subdivision_code": "US-MO",
+            "asn": "AS7922",
+            "source": "login",
+        },
+        {
+            "timestamp_epoch": now_ep - 178,
+            "ip_address": "102.89.33.12",
+            "region_code": "NG",
+            "subdivision_code": "NG-LA",
+            "asn": "AS29465",
+            "source": "login",
+        },
+        {
+            "timestamp_epoch": now_ep - 298,
+            "ip_address": "104.16.88.99",
+            "region_code": "US",
+            "subdivision_code": "US-TX",
+            "asn": "AS13335",
+            "source": "token",
+        },
+    ]
+
+    with patch("backend.routes.devices.crawl_devices_for_user", return_value=(mock_byod_devices, 3)), \
+         patch("backend.routes.devices.directory_service.get_user_chromeos_devices", return_value=[]), \
+         patch("backend.routes.devices.directory_service.get_user_recent_network_events", return_value=mock_net_events):
+        resp = client.get(
+            "/api/devices/my-devices",
+            headers={
+                "X-Forwarded-For": "73.14.22.10",
+                "X-AppEngine-Country": "US",
+                "X-AppEngine-Region": "mo",
+            },
+        )
+        assert resp.status_code == 200
+        items = {d["device_user_name"]: d for d in resp.json()}
+
+        # 1. Home Mac on same network
+        home = items["devices/home-mac/deviceUsers/du-1"]
+        assert home["last_known_ip"] == "73.14.22.10"
+        assert home["region_code"] == "US"
+        assert home["subdivision_code"] == "US-MO"
+        assert home["asn"] == "AS7922"
+        assert home["is_hosting_asn"] is False
+        assert home["matches_current_ip"] is True
+        assert home["network_warning"] == ""
+
+        # 2. Foreign country Windows PC (Nigeria vs US caller)
+        foreign = items["devices/foreign-win/deviceUsers/du-2"]
+        assert foreign["last_known_ip"] == "102.89.33.12"
+        assert foreign["region_code"] == "NG"
+        assert foreign["matches_current_ip"] is False
+        assert foreign["network_warning"] == "DIFFERENT_COUNTRY"
+
+        # 3. Domestic Cloud Hosting / Proxy ASN (US-TX Cloudflare AS13335)
+        proxy = items["devices/proxy-linux/deviceUsers/du-3"]
+        assert proxy["last_known_ip"] == "104.16.88.99"
+        assert proxy["region_code"] == "US"
+        assert proxy["asn"] == "AS13335"
+        assert proxy["is_hosting_asn"] is True
+        assert proxy["network_warning"] == "HOSTING_DATACENTER_ASN"
+
+        # Persisted in SessionGuardService SQLite cache
+        persisted = session_guard.get_device_network_context("devices/proxy-linux/deviceUsers/du-3")
+        assert persisted is not None
+        assert persisted["ip_address"] == "104.16.88.99"
+        assert persisted["asn"] == "AS13335"
+
