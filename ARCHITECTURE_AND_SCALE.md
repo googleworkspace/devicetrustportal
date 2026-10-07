@@ -84,14 +84,36 @@ In a district of **40,000 students + 5,000 staff**:
 
 ---
 
-## 7. 3-Tier Logging Architecture & Monthly GCP Cost Estimate (40,000 Students)
+## 7. 3-Tier Logging Architecture & Monthly GCP Cost Estimate (1,000 to 40,000 Students)
 
-| GCP Component | Sizing for 40,000 Students (~2.2M logins/mo) | Estimated Monthly Cost |
-| :--- | :--- | :--- |
-| **Cloud Run (`device-trust-gateway`)** | 1 vCPU, 512 MB RAM, `--max-instances=1` (consistent SQLite/RAM state) | **$5.00 – $14.00 / mo** |
-| **Secret Manager (`device_trust_gateway_config` & `dwd_key`)** | Dynamic JSON configuration + DWD service account key | **$0.00 – $0.15 / mo** |
-| **Cloud Logging (30-day structured JSON logs)** | ~0.6 GiB / month (`devicetrustportal.session_guard` & `[CLIENT_LOG]`, first 50 GiB free) | **$0.00 / mo** |
-| **BigQuery (Optional 1-year forensic log sink)** | ~7 GiB / year (first 10 GiB free, 1 TiB SQL queries free) | **$0.00 – $0.50 / mo** |
-| **Cloud Scheduler (`session-watch-login-sweep` & cleanup)** | 2 jobs (first 3 jobs free per billing account) | **$0.00 / mo** |
-| **Total Estimated District Cost** | **40,000 Students + 5,000 Staff** | **~$5.00 – $16.00 / month** |
+Because `devicetrustportal` evaluates domain login and Cloud Identity sync events in batched sweeps rather than per-student background workers, **a 1,000-student district and a 40,000-student district have nearly identical GCP compute costs**. Monthly cost depends almost entirely on which deployment target and polling cadence the district selects:
+
+### Summary by Deployment & Enforcement Mode
+
+| Deployment & Enforcement Mode | Detection Speed | Cloud Run Active Compute | Estimated Monthly Cost (1,000 – 40,000 Students) |
+| :--- | :--- | :--- | :--- |
+| **1. On-Premise Docker** (`./deploy.sh --target 2`) | **~2 – 10s** | Runs on existing district VM (~60 MB RAM) | **$0.00 / mo** |
+| **2. Cloud Run — CAA-Only Mode** (*Education Standard / Plus*, `session_watch_enabled: false`) | **Immediate (Edge 403)** | Scales to zero when idle (~5,000 vCPU-s/mo; **97% inside GCP Free Tier**) | **$0.00 – $0.20 / mo** |
+| **3. Cloud Run — Free-Tier 1-Minute Session Sweep** (*Education Fundamentals*, `--sweep-cadence 1min` / `sub_poll_cycles: 1`) | **~30 – 60s** | ~2.5s/min (~110,000 vCPU-s/mo; **fits 100% inside 180k vCPU-s Free Tier**) | **$0.00 – $0.20 / mo** |
+| **4. Cloud Run — 24/7 Sub-10s Rapid Polling** (*Education Fundamentals / `BOTH`*, default `--sweep-cadence sub10s` / `sub_poll_cycles: 5`) | **~2 – 10s** | ~43s/min (`5 × 10s` sub-polls ≈ 1.88M vCPU-s/mo at `1 vCPU, 512 MiB` / concurrency `80`) | **~$38.00 – $43.00 / mo** |
+
+### Detailed GCP Line-Item Breakdown
+
+| GCP Component | Monthly Usage (1,000 – 40,000 Students) | GCP Monthly Free Tier Allowance | Estimated Monthly Cost |
+| :--- | :--- | :--- | :--- |
+| **Google Workspace & Cloud Identity APIs** | Admin SDK Directory, Reports, & Cloud Identity Devices API calls | Included with Google Workspace for Education | **$0.00 / mo** |
+| **Cloud Scheduler** | 1 – 2 cron jobs (`session-watch-login-sweep` & inventory cleanup) | First 3 jobs free per billing account | **$0.00 / mo** |
+| **Cloud Logging (30-day structured JSON)** | ~0.02 – 0.6 GiB / month (`devicetrustportal.session_guard` & `[CLIENT_LOG]`) | First 50 GiB / month free | **$0.00 / mo** |
+| **Firestore (`chaining.py`)** | 6-digit Trust Chaining pairing codes (< 5,000 reads/writes per month) | 50,000 reads & 20,000 writes / day free | **$0.00 / mo** |
+| **Cloud Build & Container Storage** | ~200 MB image, ~2 build-minutes per deployment | 120 build-min/day & 0.5 GB storage free | **$0.00 – $0.03 / mo** |
+| **Secret Manager (`config` & `dwd_key`)** | 2 active secret versions, ~50,000 – 60,000 reads/mo | 6 versions + 10,000 reads free ($0.03 per 10k after) | **$0.00 – $0.15 / mo** |
+| **BigQuery (Optional 1-yr forensic sink)** | ~0.2 – 7 GiB / year | First 10 GiB storage & 1 TiB queries free | **$0.00 – $0.50 / mo** |
+| **Cloud Run (`device-trust-gateway`)** | `1 vCPU, 512 MiB RAM`, `--max-instances=1` (keeps `--concurrency=80` for SQLite/RAM state) | First **180,000 vCPU-s** & **360,000 GiB-s** free / month | • **$0.00 / mo** *(CAA-Only or 1-Min Sweep)*<br>• **~$42.25 / mo** *(24/7 Sub-10s Polling)* |
+
+> [!NOTE]
+> **Why `1 vCPU` Instead of Fractional CPU (`< 1 vCPU`)?**
+> Cloud Run enforces `--concurrency=1` whenever `--cpu < 1` is configured. Keeping the default `1 vCPU` preserves `--concurrency=80` on our single `--max-instances=1` container, ensuring student portal page loads never queue behind an active 43-second `live-sweep` request. Districts on Education Fundamentals that want **$0/mo** Cloud Run compute can select the **Free-Tier 1-Minute Sweep (`--sweep-cadence 1min`)** in `./deploy.sh`.
+>
+> **Strict IAP Edge Defense Note:** Leave **Strict IAP Edge Defense** at its default **`N`** during `./deploy.sh` (recommended for K-12 & Higher Ed so students can use 6-digit Trust Chaining from home). Enabling Strict IAP provisions a Global External Application Load Balancer forwarding rule, which incurs an ~$18/month base GCP networking fee.
+
 

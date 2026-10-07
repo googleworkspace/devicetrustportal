@@ -64,6 +64,19 @@ For complete documentation detailing supported Workspace editions, end-user flow
 > - **Verbose Mode (`--verbose` / `-v`):** Run `./deploy.sh --verbose` to stream live Cloud Build logs, Cloud Run deploy events, and comprehensive command debug traces.
 > - **Bypass Option (`--skip-billing-check`):** If billing is managed centrally by an organization administrator and your deployment account lacks `roles/billing.viewer`, pass `--skip-billing-check` or confirm the on-screen prompt to proceed.
 
+### 💰 Estimated Monthly GCP Running Cost (1,000 to 40,000 Students)
+
+Because `devicetrustportal` evaluates domain login and Cloud Identity sync events in batched sweeps rather than per-student background processes, **a 1,000-student district and a 40,000-student district have nearly identical GCP running costs**. All Google Workspace Admin SDK and Cloud Identity API calls are **100% free** (included with Google Workspace for Education):
+
+| Deployment & Enforcement Mode | Detection Speed | Est. Monthly Cost (1,000 – 40,000 Students) | Why |
+| :--- | :--- | :--- | :--- |
+| **1. On-Premise Docker** (`./deploy.sh --target 2`) | **~2 – 10s** | **$0.00 / mo** | Runs on any existing district VM (~60 MB RAM). |
+| **2. Cloud Run — CAA-Only Mode** (*Education Standard / Plus*, `session_watch_enabled: false`) | **Immediate (Edge 403)** | **$0.00 – $0.20 / mo** | Scales to zero when idle; `< 3%` of GCP's 180k vCPU-s monthly Free Tier. |
+| **3. Cloud Run — Free-Tier 1-Minute Session Sweep** (*Education Fundamentals*, `--sweep-cadence 1min`) | **~30 – 60s** | **$0.00 – $0.20 / mo** | 1 sweep/min (~110k vCPU-s/mo) fits **100% inside GCP's 180k vCPU-s Free Tier**. |
+| **4. Cloud Run — 24/7 Sub-10s Rapid Polling** (*Education Fundamentals / `BOTH`*, default `--sweep-cadence sub10s`) | **~2 – 10s** | **~$38.00 – $43.00 / mo** | 5× 10s sub-polls/min (~43s/min active window ≈ 1.88M vCPU-s/mo at `1 vCPU, 512 MiB`). |
+
+*(See **[ARCHITECTURE_AND_SCALE.md](ARCHITECTURE_AND_SCALE.md#7-3-tier-logging-architecture--monthly-gcp-cost-estimate-1000-to-40000-students)** for the full GCP service-by-service line-item breakdown).*
+
 ---
 
 ## 🐣 Beginner-Friendly Quickstart: Download & Deployment Guide
@@ -158,6 +171,7 @@ You can pass command-line flags to customize execution or troubleshoot deploymen
 | `--region <REGION>` | `GCP_REGION=<REGION>` | Sets the target GCP region (default: `us-central1`). |
 | `--target <1\|2>` | `DEPLOY_TARGET=<1\|2>` | Pre-selects deployment target (`1`: Google Cloud Run, `2`: On-Premise Docker). |
 | `--mode <MODE>` | `ENFORCEMENT_MODE=<MODE>` | Sets initial enforcement mode (`DISABLED` [default for new installs], `SESSION_WATCH`, `CAA`, or `BOTH`). |
+| `--sweep-cadence <sub10s\|1min>` | `SWEEP_CADENCE=<sub10s\|1min>` | Selects Session Watch polling cadence (`sub10s` [default, ~$38–$43/mo] or `1min` [$0/mo GCP Free Tier]). |
 | `-h`, `--help` | — | Displays the help and options menu. |
 
 ---
@@ -311,6 +325,7 @@ You can pass command-line flags or environment variables to customize the deploy
 | `--region <REGION>` | `GCP_REGION=<REGION>` | Pre-configures Cloud Run / Scheduler target region (default: `us-central1`). |
 | `--target <1\|2>` | `DEPLOY_TARGET=<1\|2>` | Pre-selects deployment target (`1`: Google Cloud Run, `2`: On-Premise Docker). |
 | `--mode <MODE>` | `ENFORCEMENT_MODE=<MODE>` | Sets initial enforcement mode (`DISABLED` [default for new installs], `SESSION_WATCH`, `CAA`, or `BOTH`). |
+| `--sweep-cadence <sub10s\|1min>` | `SWEEP_CADENCE=<sub10s\|1min>` | Selects Session Watch polling cadence (`sub10s` [default, ~$38–$43/mo] or `1min` [$0/mo GCP Free Tier]). |
 | `-h`, `--help` | — | Displays the CLI help and options menu. |
 
 You will be presented with a simplified interactive menu:

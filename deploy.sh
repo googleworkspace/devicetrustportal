@@ -55,6 +55,7 @@ GCP_REGION="${GCP_REGION:-us-central1}"
 DEPLOY_TARGET="${DEPLOY_TARGET:-}"
 WORKSPACE_ADMIN_EMAIL="${WORKSPACE_ADMIN_EMAIL:-}"
 ENFORCEMENT_MODE="${ENFORCEMENT_MODE:-}"
+SWEEP_CADENCE="${SWEEP_CADENCE:-}"
 
 # Help / Usage function
 show_help() {
@@ -72,6 +73,8 @@ Options:
   --mode <DISABLED|SESSION_WATCH|CAA|BOTH>
                                       Initial enforcement mode (Default on new installs: DISABLED —
                                       admins enable Session Management and/or CAA in the #/admin portal)
+  --sweep-cadence <sub10s|1min>       Session Watch polling cadence (Default: sub10s [5x 10s sub-polls/min,
+                                      ~\$38-\$43/mo]; 1min [1 poll/min, \$0/mo inside GCP Free Tier])
   -h, --help                          Show this help message and exit
 
 Environment Variables:
@@ -81,10 +84,12 @@ Environment Variables:
   GCP_REGION                  Google Cloud Region (default: us-central1)
   WORKSPACE_ADMIN_EMAIL       Workspace Super Administrator email for Domain-Wide Delegation
   ENFORCEMENT_MODE            Optional override ('DISABLED', 'SESSION_WATCH', 'CAA', or 'BOTH')
+  SWEEP_CADENCE               Optional override ('sub10s' [default] or '1min' [Free-Tier 1-Minute Sweep])
 
 Examples:
   ./deploy.sh --verbose
   ./deploy.sh -v --project devicetrustportal
+  ./deploy.sh --sweep-cadence 1min
   ./deploy.sh --skip-billing-check
   VERBOSE=true ./deploy.sh
 EOF
@@ -115,6 +120,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --mode)
             ENFORCEMENT_MODE=$(echo "$2" | tr '[:lower:]' '[:upper:]' | tr '-' '_' | xargs)
+            shift 2
+            ;;
+        --sweep-cadence)
+            SWEEP_CADENCE=$(echo "$2" | tr '[:upper:]' '[:lower:]' | xargs)
             shift 2
             ;;
         -h|--help)
@@ -947,24 +956,48 @@ EOF
     fi
 }
 
-# Helper function for CAA-Free Session Watch Cloud Scheduler 1-Minute Sub-10s Sweep setup
+# Helper function for CAA-Free Session Watch Cloud Scheduler Sweep setup (Sub-10s or Free-Tier 1-Min)
 configure_session_watch_scheduler() {
     local GATEWAY_URL="$1"
     echo -e "\n${YELLOW}===================================================================================================${NC}"
-    echo -e "${YELLOW}      Session Watch & users.signOut Circuit Breaker Cloud Scheduler (Sub-10s Polling)              ${NC}"
+    echo -e "${YELLOW}      Session Watch & users.signOut Circuit Breaker Cloud Scheduler                                ${NC}"
     echo -e "${YELLOW}===================================================================================================${NC}"
     echo -e "Provisioning the background Cloud Scheduler job (${GREEN}session-watch-login-sweep${NC}) ensures that whenever"
     echo -e "an administrator enables ${GREEN}Session Management${NC} in ${YELLOW}#/admin${NC}, the gateway automatically polls"
-    echo -e "Cloud Identity device syncs and Admin SDK login events every 10 seconds (via a 1-minute cron)."
+    echo -e "Cloud Identity device syncs and Admin SDK login events via a 1-minute cron."
     echo -e "While Session Management is disabled in ${YELLOW}#/admin${NC} (the default on a new install), this job safely no-ops."
     echo ""
     read -p "Configure 1-Minute Cloud Scheduler Login & Device Sync Sweep ('session-watch-login-sweep')? (Y/n) [Default: Y]: " DO_SWEEP_CRON
     DO_SWEEP_CRON=$(echo "${DO_SWEEP_CRON:-y}" | tr -d '\r' | xargs)
 
     if [[ "$DO_SWEEP_CRON" =~ ^[Yy]$ ]]; then
+        local CADENCE_OPT=""
+        if [ "$SWEEP_CADENCE" = "1min" ] || [ "$SWEEP_CADENCE" = "free" ] || [ "$SWEEP_CADENCE" = "2" ]; then
+            CADENCE_OPT="2"
+        elif [ "$SWEEP_CADENCE" = "sub10s" ] || [ "$SWEEP_CADENCE" = "1" ]; then
+            CADENCE_OPT="1"
+        else
+            echo ""
+            echo "Select Session Watch polling cadence & Cloud Run cost profile:"
+            echo -e "  1) ${GREEN}Sub-10s Rapid Polling [Default]${NC} — 5x 10s sub-polls/min (~2–10s detection, ~\$38–\$43/mo on Cloud Run)"
+            echo -e "  2) ${CYAN}Free-Tier 1-Minute Sweep${NC}        — 1 poll/min (~30–60s detection, \$0/mo — fits 100% inside GCP Free Tier)"
+            echo ""
+            read -p "Enter option [1-2] (default: 1): " CADENCE_OPT
+            CADENCE_OPT=$(echo "${CADENCE_OPT:-1}" | tr -d '\r' | xargs)
+        fi
+
+        local MSG_BODY='{"lookback_minutes":15,"persist_all_allowed":true,"sub_poll_cycles":5}'
+        local SCHED_DESC="Every 1 minute (5x 10s sub-polls): sweeps Cloud Identity BYOD syncs and Admin SDK login events"
+        local CADENCE_LABEL="5x 10s sub-polls (~2-10s detection)"
+        if [ "$CADENCE_OPT" = "2" ]; then
+            MSG_BODY='{"lookback_minutes":15,"persist_all_allowed":true,"sub_poll_cycles":1}'
+            SCHED_DESC="Every 1 minute (1 pass, GCP Free Tier): sweeps Cloud Identity BYOD syncs and Admin SDK login events"
+            CADENCE_LABEL="1 pass/min (~30-60s detection, GCP Free Tier)"
+        fi
+
         GATEWAY_URL="${GATEWAY_URL%/}"
         local SCHEDULER_REGION="${GCP_REGION:-us-central1}"
-        echo -e "\n${BLUE}Configuring 1-Minute Cloud Scheduler Job 'session-watch-login-sweep' in '$SCHEDULER_REGION'...${NC}"
+        echo -e "\n${BLUE}Configuring 1-Minute Cloud Scheduler Job 'session-watch-login-sweep' (${CADENCE_LABEL}) in '$SCHEDULER_REGION'...${NC}"
         local sched_err
         sched_err=$(mktemp)
         if ! gcloud scheduler jobs create http session-watch-login-sweep \
@@ -973,10 +1006,10 @@ configure_session_watch_scheduler() {
             --uri="${GATEWAY_URL}/api/session-watch/live-sweep" \
             --http-method=POST \
             --headers="X-Cloudscheduler=true,Content-Type=application/json" \
-            --message-body='{"lookback_minutes":15,"persist_all_allowed":true}' \
+            --message-body="$MSG_BODY" \
             --location="$SCHEDULER_REGION" \
             --project="$GCP_PROJECT" \
-            --description="Every 1 minute (5x 10s sub-polls): sweeps Cloud Identity BYOD syncs and Admin SDK login events" --quiet 2>"$sched_err"; then
+            --description="$SCHED_DESC" --quiet 2>"$sched_err"; then
             if grep -qi "ALREADY_EXISTS" "$sched_err"; then
                 gcloud scheduler jobs update http session-watch-login-sweep \
                     --schedule="* * * * *" \
@@ -984,15 +1017,15 @@ configure_session_watch_scheduler() {
                     --uri="${GATEWAY_URL}/api/session-watch/live-sweep" \
                     --http-method=POST \
                     --headers="X-Cloudscheduler=true,Content-Type=application/json" \
-                    --message-body='{"lookback_minutes":15,"persist_all_allowed":true}' \
+                    --message-body="$MSG_BODY" \
                     --location="$SCHEDULER_REGION" \
                     --project="$GCP_PROJECT" --quiet 2>/dev/null || true
-                log_success "Updated existing 'session-watch-login-sweep' Cloud Scheduler job (runs every 1 minute with 10s sub-polls)."
+                log_success "Updated existing 'session-watch-login-sweep' Cloud Scheduler job (${CADENCE_LABEL})."
             else
                 log_warn "Scheduler creation notice: $(cat "$sched_err")"
             fi
         else
-            log_success "Created 'session-watch-login-sweep' Cloud Scheduler job (runs every 1 minute with 10s sub-polls)."
+            log_success "Created 'session-watch-login-sweep' Cloud Scheduler job (${CADENCE_LABEL})."
         fi
         rm -f "$sched_err"
     else
