@@ -23,6 +23,13 @@ from backend.services.directory_service import directory_service
 
 router = APIRouter(prefix="/api/admin", tags=["Admin"])
 
+_GOOGLE_AUTH_REQUEST = requests.Request()
+# Allow cryptographically verified Google ID tokens to sustain an active portal session
+# for up to 24 hours (3600s default exp + 82800s portal session extension) when browser
+# third-party cookie / FedCM restrictions suppress silent background One Tap renewal,
+# while still immediately revoking any token issued before `session_guard.get_last_signout_epoch`.
+PORTAL_SESSION_CLOCK_SKEW_SEC = 82800
+
 class AdminStatusResponse(BaseModel):
     is_admin: bool
 
@@ -36,7 +43,18 @@ def get_current_user_email(
         try:
             config = config_service.get_tenant_config()
             audience = config.google_client_id if config.google_client_id else None
-            id_info = id_token.verify_oauth2_token(token, requests.Request(), audience=audience)
+            try:
+                id_info = id_token.verify_oauth2_token(token, _GOOGLE_AUTH_REQUEST, audience=audience)
+            except Exception as first_err:
+                if "Token expired" in str(first_err):
+                    id_info = id_token.verify_oauth2_token(
+                        token,
+                        _GOOGLE_AUTH_REQUEST,
+                        audience=audience,
+                        clock_skew_in_seconds=PORTAL_SESSION_CLOCK_SKEW_SEC,
+                    )
+                else:
+                    raise
             email = id_info.get("email")
             if email:
                 try:

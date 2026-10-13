@@ -164,3 +164,119 @@ def test_directory_get_user_chromeos_devices(mock_dir):
     admin_devices = directory_service.get_user_chromeos_devices("admin@example.com", "customers/my_customer", is_admin=True)
     assert len(admin_devices) == 0
 
+
+def test_directory_chromeos_broken_pipe_retry_and_cache():
+    mock_service = MagicMock()
+    chromeos_payload = {
+        "chromeosdevices": [
+            {
+                "deviceId": "cb-retry-1",
+                "serialNumber": "CB-RETRY-101",
+                "model": "Lenovo 10e Chromebook Tablet",
+                "osVersion": "ChromeOS 151.0",
+                "annotatedUser": "",
+                "recentUsers": [{"email": "claycodes@gwfe.org"}],
+                "lastSync": "2026-10-12T16:03:00Z",
+            },
+            {
+                "deviceId": "cb-retry-2",
+                "serialNumber": "CB-RETRY-102",
+                "model": "Google Pixelbook Go",
+                "osVersion": "ChromeOS 151.0",
+                "annotatedUser": "claycodes@gwfe.org",
+                "recentUsers": [],
+                "lastSync": "2026-10-12T16:04:00Z",
+            },
+        ]
+    }
+    # First .execute() raises [Errno 32] Broken pipe (idle httplib2 socket), second succeeds
+    mock_service.chromeosdevices().list().execute.side_effect = [
+        BrokenPipeError(32, "Broken pipe"),
+        chromeos_payload,
+    ]
+    directory_service.service = mock_service
+
+    devices = directory_service.get_user_chromeos_devices("claycodes@gwfe.org", "customers/my_customer")
+    assert len(devices) == 2
+    assert {d["serial_number"] for d in devices} == {"CB-RETRY-101", "CB-RETRY-102"}
+
+    # If a later call fails all retries on the same service instance, fallback cache returns the 2 devices
+    mock_service.chromeosdevices().list().execute.side_effect = RuntimeError("Upstream unavailable")
+    cached_devices = directory_service.get_user_chromeos_devices("claycodes@gwfe.org", "customers/my_customer")
+    assert len(cached_devices) == 2
+
+
+def test_session_guard_reauth_zero_ip_and_refresh_attestation():
+    from backend.services.session_guard import SessionGuardService, LoginAuditEvent
+
+    guard = SessionGuardService(enabled=True, grace_window_sec=15, attestation_ttl_sec=300)
+    guard.promote_approved_device(
+        device_id="devices/cros-1",
+        serial_number="CROS-APPROVED-1",
+        user_email="claycodes@gwfe.org",
+        ip_address="108.6.43.131",
+        now_epoch=1000.0,
+        device_type="CHROMEOS",
+    )
+
+    # Admin SDK Reports API emits login_type=reauth with ip_address='0.0.0.0' 30s after sign-in
+    reauth_event = LoginAuditEvent(
+        event_id="claycodes@gwfe.org:reauth-1",
+        user_email="claycodes@gwfe.org",
+        ip_address="0.0.0.0",
+        timestamp_epoch=1030.0,
+        login_type="reauth",
+    )
+    actions = guard.evaluate_login_batch(
+        [reauth_event],
+        now_epoch=1045.0,
+        persist_all_allowed=True,
+    )
+    assert len(actions) == 1
+    assert actions[0].decision == "ALLOW_ATTESTED"
+    assert actions[0].matched_serial == "CROS-APPROVED-1"
+
+    # Refreshing attestation at t=1250 keeps the session attested past the original 1300 expiry
+    assert guard.refresh_user_attestation("claycodes@gwfe.org", ip_address="108.6.43.131", now_epoch=1250.0) is True
+    later_reauth = LoginAuditEvent(
+        event_id="claycodes@gwfe.org:reauth-2",
+        user_email="claycodes@gwfe.org",
+        ip_address="0.0.0.0",
+        timestamp_epoch=1400.0,
+        login_type="reauth",
+    )
+    actions2 = guard.evaluate_login_batch(
+        [later_reauth],
+        now_epoch=1420.0,
+        persist_all_allowed=True,
+    )
+    assert len(actions2) == 1
+    assert actions2[0].decision == "ALLOW_ATTESTED"
+
+
+def test_portal_token_expired_within_24h_accepted_unless_signed_out():
+    from unittest.mock import patch
+    from fastapi import HTTPException
+    import pytest
+    from backend.routes.admin import get_current_user_email, PORTAL_SESSION_CLOCK_SKEW_SEC
+    from backend.routes.session_watch import session_guard
+
+    def fake_verify(token, request, audience=None, clock_skew_in_seconds=0):
+        if clock_skew_in_seconds == 0:
+            raise ValueError("Token expired, 1791824630 < 1791824657")
+        assert clock_skew_in_seconds == PORTAL_SESSION_CLOCK_SKEW_SEC
+        return {"email": "claycodes@gwfe.org", "iat": 1791821030}
+
+    session_guard._recent_signouts.pop("claycodes@gwfe.org", None)
+    with patch("backend.routes.admin.id_token.verify_oauth2_token", side_effect=fake_verify):
+        email = get_current_user_email(authorization="Bearer expired-60m-jwt")
+        assert email == "claycodes@gwfe.org"
+
+        # If Session Guard revokes the user's session after iat, get_current_user_email must reject with 401
+        session_guard._recent_signouts["claycodes@gwfe.org"] = 1791822000.0
+        with pytest.raises(HTTPException) as exc_info:
+            get_current_user_email(authorization="Bearer expired-60m-jwt")
+        assert exc_info.value.status_code == 401
+    session_guard._recent_signouts.pop("claycodes@gwfe.org", None)
+
+

@@ -13,9 +13,10 @@
 # limitations under the License.
 
 import os
+import ssl
 import time
 import threading
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Tuple, Callable
 try:
     from google.oauth2 import service_account
     from googleapiclient.discovery import build
@@ -28,12 +29,36 @@ except ImportError:
 
 from backend.services.cloud_identity import resolve_dwd_key_path
 
+
+def _is_transient_transport_error(exc: Exception) -> bool:
+    """Returns True if the exception is a stale keep-alive socket or TLS EOF error from httplib2."""
+    if isinstance(exc, HttpError):
+        return False
+    if isinstance(exc, (BrokenPipeError, ConnectionError, TimeoutError, ssl.SSLError)):
+        return True
+    msg = str(exc).lower()
+    transient_markers = (
+        "broken pipe",
+        "errno 32",
+        "errno 104",
+        "connection reset",
+        "unexpected_eof_while_reading",
+        "eof occurred in violation of protocol",
+        "remotedisconnected",
+        "remote end closed connection",
+        "badstatusline",
+        "timed out",
+    )
+    return any(marker in msg for marker in transient_markers)
+
+
 class DirectoryService:
     def __init__(self):
         self._lock = threading.RLock()
         self._scope_cache: Dict[str, Tuple[float, bool, str]] = {}
         self._user_cache: Dict[str, Dict[str, Any]] = {}
         self._group_cache: Dict[str, Dict[str, Any]] = {}
+        self._chromeos_user_cache: Dict[str, Dict[str, Any]] = {}
         self.scopes = [
             "https://www.googleapis.com/auth/admin.directory.user.readonly",
             "https://www.googleapis.com/auth/admin.directory.group.member.readonly",
@@ -74,6 +99,64 @@ class DirectoryService:
             print(f"Error initializing Directory service: {e}")
             self.service = None
 
+    def _rebuild_client(
+        self,
+        attr_name: str = "service",
+        api_version: str = "directory_v1",
+        scopes: Optional[List[str]] = None,
+    ) -> None:
+        """Rebuilds a googleapiclient client when httplib2's keep-alive socket breaks."""
+        current = getattr(self, attr_name, None)
+        if current is not None and hasattr(current, "_mock_name"):
+            return
+        key_path = getattr(self, "key_path", None)
+        admin_email = getattr(self, "admin_email", None)
+        if not key_path or not admin_email or not service_account or not build:
+            return
+        try:
+            eff_scopes = scopes or getattr(self, "scopes", [])
+            creds = service_account.Credentials.from_service_account_file(
+                key_path, scopes=eff_scopes, subject=admin_email
+            )
+            setattr(self, attr_name, build("admin", api_version, credentials=creds))
+            print(f"INFO [directory_service.py]: Rebuilt '{attr_name}' ({api_version}) client after transient socket reset.")
+        except Exception as rebuild_err:
+            print(f"WARNING [directory_service.py]: Failed to rebuild '{attr_name}' client: {rebuild_err}")
+
+    def _execute_with_retry(
+        self,
+        op: Callable[[], Any],
+        attr_name: str = "service",
+        api_version: str = "directory_v1",
+        scopes: Optional[List[str]] = None,
+        max_attempts: int = 3,
+    ) -> Any:
+        """Executes a googleapiclient request under lock, rebuilding the client on broken pipe / TLS EOF."""
+        lock = getattr(self, "_lock", None)
+        last_err: Optional[Exception] = None
+        for attempt in range(max_attempts):
+            try:
+                if lock:
+                    with lock:
+                        return op()
+                return op()
+            except Exception as exc:
+                last_err = exc
+                if not _is_transient_transport_error(exc) or attempt + 1 >= max_attempts:
+                    raise
+                print(
+                    f"WARNING [directory_service.py]: Transient transport error on '{attr_name}' "
+                    f"(attempt {attempt + 1}/{max_attempts}): {exc}; resetting connection pool."
+                )
+                if lock:
+                    with lock:
+                        self._rebuild_client(attr_name=attr_name, api_version=api_version, scopes=scopes)
+                else:
+                    self._rebuild_client(attr_name=attr_name, api_version=api_version, scopes=scopes)
+        if last_err:
+            raise last_err
+        return None
+
     def verify_user_is_admin(self, user_email: str, portal_admins: List[str] = None) -> bool:
         target_email = user_email.lower().strip()
         
@@ -91,15 +174,18 @@ class DirectoryService:
             return False
 
         try:
-            with self._lock:
-                request = self.service.users().get(userKey=target_email, projection="full")
-                response = request.execute()
+            response = self._execute_with_retry(
+                lambda: self.service.users().get(userKey=target_email, projection="full").execute()
+            )
             is_admin = response.get("isAdmin", False)
             if is_admin:
                 print(f"SUCCESS [directory_service.py]: User '{target_email}' verified as Workspace Super Administrator.")
             return is_admin
         except HttpError as e:
             print(f"Directory API error checking admin status for {target_email}: {e}")
+            return False
+        except Exception as e:
+            print(f"Unexpected error checking admin status for {target_email}: {e}")
             return False
 
     def get_user_details(self, user_email: str) -> Dict[str, Any]:
@@ -121,14 +207,9 @@ class DirectoryService:
             return default_info
 
         try:
-            lock = getattr(self, "_lock", None)
-            if lock:
-                with lock:
-                    req = self.service.users().get(userKey=target_email, projection="full")
-                    res = req.execute()
-            else:
-                req = self.service.users().get(userKey=target_email, projection="full")
-                res = req.execute()
+            res = self._execute_with_retry(
+                lambda: self.service.users().get(userKey=target_email, projection="full").execute()
+            )
             info = {
                 "orgUnitPath": res.get("orgUnitPath", "/"),
                 "isAdmin": res.get("isAdmin", False),
@@ -139,6 +220,9 @@ class DirectoryService:
             return info
         except HttpError as e:
             print(f"Directory API error fetching user details for '{target_email}': {e}")
+            return default_info
+        except Exception as e:
+            print(f"Unexpected error fetching user details for '{target_email}': {e}")
             return default_info
 
     def is_user_in_group(self, user_email: str, group_email: str) -> bool:
@@ -161,18 +245,12 @@ class DirectoryService:
             return False
 
         try:
-            lock = getattr(self, "_lock", None)
-            if lock:
-                with lock:
-                    member_check = self.service.members().hasMember(
-                        groupKey=target_group,
-                        memberKey=target_email
-                    ).execute()
-            else:
-                member_check = self.service.members().hasMember(
+            member_check = self._execute_with_retry(
+                lambda: self.service.members().hasMember(
                     groupKey=target_group,
                     memberKey=target_email
                 ).execute()
+            )
             is_member = member_check.get("isMember", False)
             self._group_cache[cache_key] = {
                 "is_member": is_member,
@@ -182,6 +260,9 @@ class DirectoryService:
             return is_member
         except HttpError as e:
             print(f"Warning: Failed to check membership in group '{target_group}' for '{target_email}': {e}")
+            return False
+        except Exception as e:
+            print(f"Warning: Unexpected error checking membership in group '{target_group}' for '{target_email}': {e}")
             return False
 
     def is_ou_matching(self, user_ou: str, target_ou: str) -> bool:
@@ -344,13 +425,14 @@ class DirectoryService:
         user_ou = "/"
         is_super_admin = False
         try:
-            with self._lock:
-                user_res = (
-                    self.service.users()
+            user_res = (
+                self._execute_with_retry(
+                    lambda: self.service.users()
                     .get(userKey=target_email, projection="basic")
                     .execute()
-                    or {}
                 )
+                or {}
+            )
             user_ou = user_res.get("orgUnitPath") or "/"
             is_super_admin = bool(user_res.get("isAdmin", False))
         except Exception as e:
@@ -390,13 +472,14 @@ class DirectoryService:
         # 2. Check Group membership match in comma-separated priority order (1st in = Priority #1)
         for idx, group in enumerate(clean_groups, start=1):
             try:
-                with self._lock:
-                    member_check = (
-                        self.service.members()
-                        .hasMember(groupKey=group, memberKey=target_email)
+                member_check = (
+                    self._execute_with_retry(
+                        lambda g=group: self.service.members()
+                        .hasMember(groupKey=g, memberKey=target_email)
                         .execute()
-                        or {}
                     )
+                    or {}
+                )
                 if member_check.get("isMember", False):
                     res = (True, f"Matched target Group '{group}' (Priority #{idx})")
                     self._scope_cache[cache_key] = (now, res[0], res[1])
@@ -420,6 +503,9 @@ class DirectoryService:
         if not cust_key:
             cust_key = "my_customer"
 
+        if not hasattr(self, "_chromeos_user_cache"):
+            self._chromeos_user_cache: Dict[str, Dict[str, Any]] = {}
+
         matched_devices = []
         try:
             page_token = None
@@ -427,14 +513,19 @@ class DirectoryService:
             page = 0
             while page < max_pages:
                 page += 1
-                with self._lock:
-                    request = self.service.chromeosdevices().list(
-                        customerId=cust_key,
-                        pageToken=page_token,
-                        maxResults=100,
-                        projection="FULL"
+                response = (
+                    self._execute_with_retry(
+                        lambda pt=page_token: self.service.chromeosdevices()
+                        .list(
+                            customerId=cust_key,
+                            pageToken=pt,
+                            maxResults=100,
+                            projection="FULL",
+                        )
+                        .execute()
                     )
-                    response = request.execute()
+                    or {}
+                )
                 devices = response.get("chromeosdevices", [])
                 if not devices:
                     break
@@ -443,8 +534,8 @@ class DirectoryService:
                     annotated_user = dev.get("annotatedUser", "").lower().strip()
                     recent_users = [u.get("email", "").lower().strip() for u in dev.get("recentUsers", []) if isinstance(u, dict)]
                     
-                    # Only include company-owned ChromeOS devices that this user has actually accessed/signed into
-                    is_match = target_email in recent_users
+                    # Include company-owned ChromeOS devices that this user has accessed/signed into (or is annotated on)
+                    is_match = (target_email in recent_users) or (annotated_user == target_email)
                     if is_match:
                         serial = dev.get("serialNumber") or dev.get("deviceId") or "N/A"
                         model = dev.get("model") or "Google Chromebook"
@@ -469,12 +560,23 @@ class DirectoryService:
                     break
 
             print(f"INFO [directory_service.py]: Found {len(matched_devices)} accessed company-owned ChromeOS device(s) for '{target_email}'.")
+            self._chromeos_user_cache[target_email] = {
+                "devices": list(matched_devices),
+                "_cached_at": time.time(),
+                "_service_id": id(self.service),
+            }
             return matched_devices
         except HttpError as e:
             print(f"Directory API error fetching ChromeOS devices for {target_email}: {e}")
+            cached_entry = self._chromeos_user_cache.get(target_email)
+            if cached_entry and cached_entry.get("_service_id") == id(self.service):
+                return list(cached_entry.get("devices", []))
             return []
         except Exception as e:
             print(f"Unexpected error fetching ChromeOS devices for {target_email}: {e}")
+            cached_entry = self._chromeos_user_cache.get(target_email)
+            if cached_entry and cached_entry.get("_service_id") == id(self.service):
+                return list(cached_entry.get("devices", []))
             return []
 
     def list_all_chromeos_inventory(self, customer_id: str = "my_customer") -> List[Dict[str, Any]]:
@@ -494,14 +596,19 @@ class DirectoryService:
         page = 0
         while page < max_pages:
             page += 1
-            with self._lock:
-                request = self.service.chromeosdevices().list(
-                    customerId=cust_key,
-                    pageToken=page_token,
-                    maxResults=200,
-                    projection="BASIC",
+            response = (
+                self._execute_with_retry(
+                    lambda pt=page_token: self.service.chromeosdevices()
+                    .list(
+                        customerId=cust_key,
+                        pageToken=pt,
+                        maxResults=200,
+                        projection="BASIC",
+                    )
+                    .execute()
                 )
-                response = request.execute()
+                or {}
+            )
             devices = response.get("chromeosdevices", [])
             if not devices:
                 break
@@ -539,11 +646,12 @@ class DirectoryService:
 
         import datetime
 
+        reports_scopes = ["https://www.googleapis.com/auth/admin.reports.audit.readonly"]
         with self._lock:
             if not getattr(self, "_reports_service", None):
                 creds = service_account.Credentials.from_service_account_file(
                     self.key_path,
-                    scopes=["https://www.googleapis.com/auth/admin.reports.audit.readonly"],
+                    scopes=reports_scopes,
                     subject=self.admin_email,
                 )
                 self._reports_service = build("admin", "reports_v1", credentials=creds)
@@ -552,16 +660,22 @@ class DirectoryService:
             )
             start_time_iso = start_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
-            resp = (
-                self._reports_service.activities()
+        resp = (
+            self._execute_with_retry(
+                lambda: self._reports_service.activities()
                 .list(
                     userKey="all",
                     applicationName="login",
                     startTime=start_time_iso,
                     maxResults=min(1000, max(1, max_results)),
                 )
-                .execute()
+                .execute(),
+                attr_name="_reports_service",
+                api_version="reports_v1",
+                scopes=reports_scopes,
             )
+            or {}
+        )
         items = resp.get("items", [])
         events: List[Dict[str, Any]] = []
         for item in items:
@@ -639,11 +753,12 @@ class DirectoryService:
 
         import datetime
 
+        reports_scopes = ["https://www.googleapis.com/auth/admin.reports.audit.readonly"]
         with self._lock:
             if not getattr(self, "_reports_service", None):
                 creds = service_account.Credentials.from_service_account_file(
                     self.key_path,
-                    scopes=["https://www.googleapis.com/auth/admin.reports.audit.readonly"],
+                    scopes=reports_scopes,
                     subject=self.admin_email,
                 )
                 self._reports_service = build("admin", "reports_v1", credentials=creds)
@@ -652,16 +767,22 @@ class DirectoryService:
             )
             start_time_iso = start_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
-            resp = (
-                self._reports_service.activities()
+        resp = (
+            self._execute_with_retry(
+                lambda: self._reports_service.activities()
                 .list(
                     userKey="all",
                     applicationName="token",
                     startTime=start_time_iso,
                     maxResults=min(1000, max(1, max_results)),
                 )
-                .execute()
+                .execute(),
+                attr_name="_reports_service",
+                api_version="reports_v1",
+                scopes=reports_scopes,
             )
+            or {}
+        )
         items = resp.get("items", [])
         events: List[Dict[str, Any]] = []
         for item in items:
@@ -745,13 +866,14 @@ class DirectoryService:
 
         import datetime
 
+        reports_scopes = ["https://www.googleapis.com/auth/admin.reports.audit.readonly"]
         combined: List[Dict[str, Any]] = []
         try:
             with self._lock:
                 if not getattr(self, "_reports_service", None):
                     creds = service_account.Credentials.from_service_account_file(
                         self.key_path,
-                        scopes=["https://www.googleapis.com/auth/admin.reports.audit.readonly"],
+                        scopes=reports_scopes,
                         subject=self.admin_email,
                     )
                     self._reports_service = build("admin", "reports_v1", credentials=creds)
@@ -761,62 +883,67 @@ class DirectoryService:
                 )
                 start_time_iso = start_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
-                for app_name in ("login", "token"):
-                    try:
-                        resp = (
-                            self._reports_service.activities()
+            for app_name in ("login", "token"):
+                try:
+                    resp = (
+                        self._execute_with_retry(
+                            lambda an=app_name: self._reports_service.activities()
                             .list(
                                 userKey=target_email,
-                                applicationName=app_name,
+                                applicationName=an,
                                 startTime=start_time_iso,
                                 maxResults=25,
                             )
-                            .execute()
-                            or {}
+                            .execute(),
+                            attr_name="_reports_service",
+                            api_version="reports_v1",
+                            scopes=reports_scopes,
                         )
-                    except Exception:
+                        or {}
+                    )
+                except Exception:
+                    continue
+                for item in resp.get("items", []) or []:
+                    ip_addr = str(item.get("ipAddress") or "").strip()
+                    if not ip_addr or ip_addr == "0.0.0.0":
                         continue
-                    for item in resp.get("items", []) or []:
-                        ip_addr = str(item.get("ipAddress") or "").strip()
-                        if not ip_addr or ip_addr == "0.0.0.0":
-                            continue
-                        id_block = item.get("id", {}) or {}
-                        time_str = str(id_block.get("time") or "").strip()
-                        try:
-                            ts_epoch = datetime.datetime.fromisoformat(
-                                time_str.replace("Z", "+00:00")
-                            ).timestamp()
-                        except Exception:
-                            ts_epoch = now
+                    id_block = item.get("id", {}) or {}
+                    time_str = str(id_block.get("time") or "").strip()
+                    try:
+                        ts_epoch = datetime.datetime.fromisoformat(
+                            time_str.replace("Z", "+00:00")
+                        ).timestamp()
+                    except Exception:
+                        ts_epoch = now
 
-                        raw_events = item.get("events", []) or [{}]
-                        first_ev = raw_events[0]
-                        ev_name = str(first_ev.get("name") or first_ev.get("type") or "").lower()
-                        if "failure" in ev_name or "logout" in ev_name or "revoke" in ev_name:
-                            continue
+                    raw_events = item.get("events", []) or [{}]
+                    first_ev = raw_events[0]
+                    ev_name = str(first_ev.get("name") or first_ev.get("type") or "").lower()
+                    if "failure" in ev_name or "logout" in ev_name or "revoke" in ev_name:
+                        continue
 
-                        net_info = item.get("networkInfo", {}) or {}
-                        region_code = str(net_info.get("regionCode") or "").strip().upper()
-                        subdivision_code = str(net_info.get("subdivisionCode") or "").strip().upper()
-                        raw_asn = net_info.get("ipAsn")
-                        asn_str = ""
-                        if raw_asn is not None:
-                            if isinstance(raw_asn, list) and raw_asn:
-                                asn_str = f"AS{raw_asn[0]}" if not str(raw_asn[0]).upper().startswith("AS") else str(raw_asn[0]).upper()
-                            elif str(raw_asn).strip():
-                                asn_str = f"AS{raw_asn}" if not str(raw_asn).upper().startswith("AS") else str(raw_asn).upper()
+                    net_info = item.get("networkInfo", {}) or {}
+                    region_code = str(net_info.get("regionCode") or "").strip().upper()
+                    subdivision_code = str(net_info.get("subdivisionCode") or "").strip().upper()
+                    raw_asn = net_info.get("ipAsn")
+                    asn_str = ""
+                    if raw_asn is not None:
+                        if isinstance(raw_asn, list) and raw_asn:
+                            asn_str = f"AS{raw_asn[0]}" if not str(raw_asn[0]).upper().startswith("AS") else str(raw_asn[0]).upper()
+                        elif str(raw_asn).strip():
+                            asn_str = f"AS{raw_asn}" if not str(raw_asn).upper().startswith("AS") else str(raw_asn).upper()
 
-                        combined.append(
-                            {
-                                "ip_address": ip_addr,
-                                "region_code": region_code,
-                                "subdivision_code": subdivision_code,
-                                "asn": asn_str,
-                                "timestamp_epoch": ts_epoch,
-                                "timestamp_iso": time_str,
-                                "source": app_name,
-                            }
-                        )
+                    combined.append(
+                        {
+                            "ip_address": ip_addr,
+                            "region_code": region_code,
+                            "subdivision_code": subdivision_code,
+                            "asn": asn_str,
+                            "timestamp_epoch": ts_epoch,
+                            "timestamp_iso": time_str,
+                            "source": app_name,
+                        }
+                    )
         except Exception as e:
             print(f"WARNING [directory_service.py]: Could not fetch recent network events for '{target_email}': {e}")
             return []
@@ -835,7 +962,9 @@ class DirectoryService:
         if not self.key_path or not self.admin_email:
             if self.service:
                 try:
-                    self.service.users().signOut(userKey=target_email).execute()
+                    self._execute_with_retry(
+                        lambda: self.service.users().signOut(userKey=target_email).execute()
+                    )
                     return True
                 except Exception as e:
                     print(f"ERROR [directory_service.py]: Failed users.signOut for '{target_email}': {e}")
@@ -844,26 +973,37 @@ class DirectoryService:
                 self.init_error or "DWD service account key or WORKSPACE_ADMIN_EMAIL is not configured."
             )
 
+        security_scopes = ["https://www.googleapis.com/auth/admin.directory.user.security"]
         with self._lock:
             if not getattr(self, "_security_dir_service", None):
                 creds = service_account.Credentials.from_service_account_file(
                     self.key_path,
-                    scopes=["https://www.googleapis.com/auth/admin.directory.user.security"],
+                    scopes=security_scopes,
                     subject=self.admin_email,
                 )
                 self._security_dir_service = build("admin", "directory_v1", credentials=creds)
-            self._security_dir_service.users().signOut(userKey=target_email).execute()
-            # Also revoke OAuth 2.0 token grant for the portal client ID if configured
-            try:
-                from backend.services.config_service import config_service
+        self._execute_with_retry(
+            lambda: self._security_dir_service.users().signOut(userKey=target_email).execute(),
+            attr_name="_security_dir_service",
+            api_version="directory_v1",
+            scopes=security_scopes,
+        )
+        # Also revoke OAuth 2.0 token grant for the portal client ID if configured
+        try:
+            from backend.services.config_service import config_service
 
-                cfg = config_service.get_tenant_config()
-                if cfg and getattr(cfg, "google_client_id", None):
-                    self._security_dir_service.tokens().delete(
-                        userKey=target_email, clientId=cfg.google_client_id
-                    ).execute()
-            except Exception:
-                pass
+            cfg = config_service.get_tenant_config()
+            if cfg and getattr(cfg, "google_client_id", None):
+                self._execute_with_retry(
+                    lambda: self._security_dir_service.tokens()
+                    .delete(userKey=target_email, clientId=cfg.google_client_id)
+                    .execute(),
+                    attr_name="_security_dir_service",
+                    api_version="directory_v1",
+                    scopes=security_scopes,
+                )
+        except Exception:
+            pass
         print(
             f"WARNING [directory_service.py]: Executed users.signOut circuit breaker for '{target_email}'."
         )

@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+substitutions:
+  _GOOGLE_CLIENT_ID: ''
+
 steps:
 - name: 'gcr.io/cloud-builders/docker'
   args: ['build', '--build-arg', 'REACT_APP_GOOGLE_CLIENT_ID=$_GOOGLE_CLIENT_ID', '-t', 'gcr.io/$PROJECT_ID/device-trust-gateway', '-f', 'deploy/Dockerfile', '.']

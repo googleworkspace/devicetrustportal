@@ -182,9 +182,14 @@ def crawl_devices_for_user(
             list_kwargs["filter"] = query_filter
 
         try:
-            with cloud_identity_service._lock:
-                request = cloud_identity_service.service.devices().list(**list_kwargs)
-                response = request.execute() or {}
+            response = (
+                cloud_identity_service.execute_with_retry(
+                    lambda lk=dict(list_kwargs): cloud_identity_service.service.devices()
+                    .list(**lk)
+                    .execute()
+                )
+                or {}
+            )
         except Exception as list_err:
             print(f"WARNING [devices.py]: Failed to fetch page of devices: {list_err}")
             if not next_page_token:
@@ -226,9 +231,15 @@ def crawl_devices_for_user(
                 }
                 if du_wildcard_token:
                     du_w_kwargs["pageToken"] = du_wildcard_token
-                with cloud_identity_service._lock:
-                    du_w_req = cloud_identity_service.service.devices().deviceUsers().list(**du_w_kwargs)
-                    du_w_resp = du_w_req.execute() or {}
+                du_w_resp = (
+                    cloud_identity_service.execute_with_retry(
+                        lambda dwk=dict(du_w_kwargs): cloud_identity_service.service.devices()
+                        .deviceUsers()
+                        .list(**dwk)
+                        .execute()
+                    )
+                    or {}
+                )
                 du_w_list = du_w_resp.get("deviceUsers") or []
                 if not isinstance(du_w_list, list):
                     du_w_list = []
@@ -244,10 +255,14 @@ def crawl_devices_for_user(
                         parent_dev_name = du_name.split("/deviceUsers/")[0]
                         if parent_dev_name not in device_map:
                             try:
-                                with cloud_identity_service._lock:
-                                    fetched_dev = cloud_identity_service.service.devices().get(
-                                        name=parent_dev_name, customer=cid
-                                    ).execute() or {}
+                                fetched_dev = (
+                                    cloud_identity_service.execute_with_retry(
+                                        lambda pdn=parent_dev_name: cloud_identity_service.service.devices()
+                                        .get(name=pdn, customer=cid)
+                                        .execute()
+                                    )
+                                    or {}
+                                )
                                 if isinstance(fetched_dev, dict) and isinstance(fetched_dev.get("name"), str) and fetched_dev.get("name"):
                                     device_map[parent_dev_name] = fetched_dev
                                     total_devices_scanned += 1
@@ -305,9 +320,15 @@ def crawl_devices_for_user(
                 }
                 if du_page_token:
                     du_kwargs["pageToken"] = du_page_token
-                with cloud_identity_service._lock:
-                    du_req = cloud_identity_service.service.devices().deviceUsers().list(**du_kwargs)
-                    du_resp = du_req.execute() or {}
+                du_resp = (
+                    cloud_identity_service.execute_with_retry(
+                        lambda duk=dict(du_kwargs): cloud_identity_service.service.devices()
+                        .deviceUsers()
+                        .list(**duk)
+                        .execute()
+                    )
+                    or {}
+                )
 
                 du_list = du_resp.get("deviceUsers") or []
                 if not isinstance(du_list, list):

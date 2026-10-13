@@ -13,9 +13,10 @@
 # limitations under the License.
 
 import os
+import ssl
 import datetime
 import threading
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Callable
 try:
     from google.oauth2 import service_account
     from googleapiclient.discovery import build
@@ -27,6 +28,28 @@ except ImportError:
     class HttpError(Exception):
         pass
     BatchHttpRequest = None
+
+
+def is_transient_socket_error(exc: Exception) -> bool:
+    """Returns True if exc is a stale keep-alive socket / BrokenPipe / TLS EOF error from httplib2."""
+    if isinstance(exc, HttpError):
+        return False
+    if isinstance(exc, (BrokenPipeError, ConnectionError, TimeoutError, ssl.SSLError)):
+        return True
+    msg = str(exc).lower()
+    markers = (
+        "broken pipe",
+        "errno 32",
+        "errno 104",
+        "connection reset",
+        "unexpected_eof_while_reading",
+        "eof occurred in violation of protocol",
+        "remotedisconnected",
+        "remote end closed connection",
+        "badstatusline",
+        "timed out",
+    )
+    return any(m in msg for m in markers)
 
 def resolve_dwd_key_path() -> Optional[str]:
     """Resolves the DWD service account key file path, recovering from MSYS2/Windows path mangling."""
@@ -97,16 +120,60 @@ class CloudIdentityService:
             print(f"Error initializing Cloud Identity service: {e}")
             self.service = None
 
+    def _rebuild_service(self) -> None:
+        """Rebuilds the Cloud Identity client when httplib2's keep-alive socket breaks."""
+        current = getattr(self, "service", None)
+        if current is not None and hasattr(current, "_mock_name"):
+            return
+        key_path = getattr(self, "key_path", None)
+        admin_email = getattr(self, "admin_email", None)
+        if not key_path or not admin_email or not service_account or not build:
+            return
+        try:
+            credentials = service_account.Credentials.from_service_account_file(
+                key_path, scopes=self.scopes, subject=admin_email
+            )
+            self.service = build("cloudidentity", "v1", credentials=credentials)
+            print("INFO [cloud_identity.py]: Rebuilt Cloud Identity v1 client after transient socket reset.")
+        except Exception as rebuild_err:
+            print(f"WARNING [cloud_identity.py]: Failed to rebuild Cloud Identity client: {rebuild_err}")
+
+    def execute_with_retry(self, op: Callable[[], Any], max_attempts: int = 3) -> Any:
+        """Executes a Cloud Identity request under lock, rebuilding the client on broken pipe / TLS EOF."""
+        lock = getattr(self, "_lock", None)
+        last_err: Optional[Exception] = None
+        for attempt in range(max_attempts):
+            try:
+                if lock:
+                    with lock:
+                        return op()
+                return op()
+            except Exception as exc:
+                last_err = exc
+                if not is_transient_socket_error(exc) or attempt + 1 >= max_attempts:
+                    raise
+                print(
+                    f"WARNING [cloud_identity.py]: Transient socket error "
+                    f"(attempt {attempt + 1}/{max_attempts}): {exc}; resetting connection pool."
+                )
+                if lock:
+                    with lock:
+                        self._rebuild_service()
+                else:
+                    self._rebuild_service()
+        if last_err:
+            raise last_err
+        return None
+
     def get_device_user(self, device_user_name: str, customer_id: str) -> Optional[Dict[str, Any]]:
         if not self.service:
             raise Exception("Cloud Identity service not initialized with valid credentials")
 
         cid = normalize_customer_id(customer_id)
         try:
-            with self._lock:
-                request = self.service.devices().deviceUsers().get(name=device_user_name, customer=cid)
-                response = request.execute()
-            return response
+            return self.execute_with_retry(
+                lambda: self.service.devices().deviceUsers().get(name=device_user_name, customer=cid).execute()
+            )
         except HttpError as e:
             print(f"Cloud Identity API error during get_device_user: {e}")
             return None
@@ -118,10 +185,9 @@ class CloudIdentityService:
         cid = normalize_customer_id(customer_id)
         try:
             body = {"customer": cid}
-            with self._lock:
-                request = self.service.devices().deviceUsers().approve(name=device_user_name, body=body)
-                operation = request.execute()
-            return operation
+            return self.execute_with_retry(
+                lambda: self.service.devices().deviceUsers().approve(name=device_user_name, body=body).execute()
+            )
         except HttpError as e:
             raise Exception(f"Cloud Identity API error during approve: {e}")
 
@@ -135,17 +201,17 @@ class CloudIdentityService:
             if not query and raw_device_id.startswith("devices/"):
                 device_name = raw_device_id
             else:
-                with self._lock:
-                    request = self.service.devices().list(customer=cid, filter=query)
-                    response = request.execute()
+                response = self.execute_with_retry(
+                    lambda: self.service.devices().list(customer=cid, filter=query).execute()
+                )
                 devices = response.get("devices", [])
                 if not devices:
                     return None
                 device_name = devices[0]["name"]
 
-            with self._lock:
-                users_request = self.service.devices().deviceUsers().list(parent=device_name, customer=cid)
-                users_response = users_request.execute()
+            users_response = self.execute_with_retry(
+                lambda: self.service.devices().deviceUsers().list(parent=device_name, customer=cid).execute()
+            )
             device_users = users_response.get("deviceUsers", [])
             
             for du in device_users:
@@ -174,16 +240,29 @@ class CloudIdentityService:
             cutoff_str = cutoff_date.strftime("%Y-%m-%dT%H:%M:%SZ")
             
             query = f"lastSyncTime < '{cutoff_str}'"
-            with self._lock:
-                request = self.service.devices().list(customer=cid, filter=query)
-                response = request.execute()
-            devices = response.get("devices", [])
+            try:
+                response = self.execute_with_retry(
+                    lambda: self.service.devices().list(customer=cid, filter=query).execute()
+                )
+                devices = response.get("devices", [])
+            except HttpError as filter_err:
+                if getattr(filter_err, "resp", None) and getattr(filter_err.resp, "status", None) == 400:
+                    all_resp = self.execute_with_retry(
+                        lambda: self.service.devices().list(customer=cid).execute()
+                    )
+                    devices = [
+                        d
+                        for d in (all_resp.get("devices", []) or [])
+                        if (d.get("lastSyncTime") or "") and d.get("lastSyncTime") < cutoff_str
+                    ]
+                else:
+                    raise
             
             inactive_device_users = []
             for d in devices:
-                with self._lock:
-                    du_req = self.service.devices().deviceUsers().list(parent=d["name"], customer=cid)
-                    du_resp = du_req.execute()
+                du_resp = self.execute_with_retry(
+                    lambda d_name=d["name"]: self.service.devices().deviceUsers().list(parent=d_name, customer=cid).execute()
+                )
                 for du in du_resp.get("deviceUsers", []):
                     state = (du.get("managementState") or du.get("approvalState") or "").upper()
                     if state == "APPROVED":
@@ -201,10 +280,9 @@ class CloudIdentityService:
         try:
             # Strictly enforce BLOCK method to ensure revoked devices remain explicitly BLOCKED
             body = {"customer": cid}
-            with self._lock:
-                request = self.service.devices().deviceUsers().block(name=device_user_name, body=body)
-                response = request.execute()
-            return response
+            return self.execute_with_retry(
+                lambda: self.service.devices().deviceUsers().block(name=device_user_name, body=body).execute()
+            )
         except HttpError as e:
             raise Exception(f"Cloud Identity API error during revocation: {e}")
 
@@ -214,10 +292,12 @@ class CloudIdentityService:
 
         cid = normalize_customer_id(customer_id)
         print(f"INFO [cloud_identity.py]: Executing BatchHttpRequest for {len(device_user_names)} device revocation(s) using BLOCK method...")
-        with self._lock:
+        errors: List[Any] = []
+
+        def _run_batch():
+            errors.clear()
             batch = self.service.new_batch_http_request()
-            
-            errors = []
+
             def callback(request_id, response, exception):
                 if exception:
                     errors.append(exception)
@@ -228,6 +308,8 @@ class CloudIdentityService:
                 batch.add(req, callback=callback)
 
             batch.execute()
+
+        self.execute_with_retry(_run_batch)
         if errors:
             raise Exception(f"Batch revocation encountered {len(errors)} error(s). First error: {errors[0]}")
             

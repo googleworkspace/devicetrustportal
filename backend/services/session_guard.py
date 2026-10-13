@@ -667,6 +667,51 @@ class SessionGuardService:
         self._active_attestations[email_key] = fresh
         return True, f"Verified {device.device_type} device '{serial_key}'."
 
+    def refresh_user_attestation(
+        self,
+        user_email: str,
+        ip_address: Optional[str] = None,
+        now_epoch: Optional[float] = None,
+    ) -> bool:
+        """Refreshes active attestation timestamps for an authenticated user on an approved portal session."""
+        now = now_epoch if now_epoch is not None else time.time()
+        email_key = (user_email or "").strip().lower()
+        if not email_key:
+            return False
+        clean_ip = (ip_address or "").strip()
+        with self._lock:
+            existing = self._active_attestations.get(email_key, [])
+            if existing:
+                for att in existing:
+                    att.attested_at_epoch = now
+                if clean_ip and clean_ip not in ("0.0.0.0", "unknown") and not any(a.ip_address == clean_ip for a in existing):
+                    last_att = existing[-1]
+                    existing.append(
+                        SessionAttestation(
+                            user_email=email_key,
+                            serial_number=last_att.serial_number,
+                            ip_address=clean_ip,
+                            attested_at_epoch=now,
+                            user_agent=last_att.user_agent,
+                            session_id=last_att.session_id or "portal-heartbeat",
+                        )
+                    )
+                return True
+            # If the user has an approved device assigned in _approved_serials, re-seed attestation
+            for serial_key, dev in self._approved_serials.items():
+                if (dev.assigned_user or "").strip().lower() == email_key and dev.status == "APPROVED":
+                    self._active_attestations[email_key] = [
+                        SessionAttestation(
+                            user_email=email_key,
+                            serial_number=serial_key,
+                            ip_address=clean_ip or "0.0.0.0",
+                            attested_at_epoch=now,
+                            session_id="portal-heartbeat",
+                        )
+                    ]
+                    return True
+        return False
+
     def _find_matching_attestation(
         self, user_email: str, ip_address: str, login_epoch: float
     ) -> Optional[SessionAttestation]:
@@ -677,12 +722,17 @@ class SessionGuardService:
             return None
 
         cutoff = login_epoch - self.attestation_ttl_sec
+        clean_ev_ip = (ip_address or "").strip().lower()
+        ev_ip_unspecified = clean_ev_ip in ("", "0.0.0.0", "unknown")
         for att in reversed(attestations):
             if att.attested_at_epoch < cutoff:
                 continue
+            clean_att_ip = (att.ip_address or "").strip().lower()
+            att_ip_unspecified = clean_att_ip in ("", "0.0.0.0", "unknown")
             # The attestation must originate from the same IP address as the login event
-            # (or both must originate from verified campus NAT egress IPs within 120s).
-            same_ip = att.ip_address == ip_address
+            # (or both must originate from verified campus NAT egress IPs within 120s,
+            # or the Reports API omitted ipAddress as '0.0.0.0' on a reauth event).
+            same_ip = (att.ip_address == ip_address) or ev_ip_unspecified or att_ip_unspecified
             both_campus_nat = (
                 bool(self.campus_egress_ips)
                 and att.ip_address in self.campus_egress_ips

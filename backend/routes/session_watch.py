@@ -318,6 +318,9 @@ async def verify_active_session_status(
     sec_ch_platform = (request.headers.get("sec-ch-ua-platform") or "").lower()
     is_cros = "cros" in ua or "chrome os" in sec_ch_platform or "chromeos" in sec_ch_platform
     if is_cros:
+        session_guard.refresh_user_attestation(
+            user_email=norm_user, ip_address=_extract_client_ip(request)
+        )
         return {"status": "OK", "session_watch_enabled": True, "platform": "CHROME_OS"}
 
     os_family = None
@@ -421,6 +424,9 @@ async def verify_active_session_status(
         except Exception as e:
             print(f"WARNING [session_watch.py]: verify_active_session_status check notice: {e}")
 
+    session_guard.refresh_user_attestation(
+        user_email=norm_user, ip_address=_extract_client_ip(request)
+    )
     return {"status": "OK", "session_watch_enabled": True}
 
 
@@ -685,18 +691,23 @@ def _execute_single_live_sweep_pass(
         raw_ci_byod_records_by_user: Dict[str, List[Dict[str, Any]]] = {}
         if cloud_identity_service.service:
             try:
-                with cloud_identity_service._lock:
-                    devs_resp = (
-                        cloud_identity_service.service.devices()
+                devs_resp = (
+                    cloud_identity_service.execute_with_retry(
+                        lambda: cloud_identity_service.service.devices()
                         .list(customer=cid, pageSize=100)
                         .execute()
                     )
-                    dus_resp = (
-                        cloud_identity_service.service.devices()
+                    or {}
+                )
+                dus_resp = (
+                    cloud_identity_service.execute_with_retry(
+                        lambda: cloud_identity_service.service.devices()
                         .deviceUsers()
                         .list(parent="devices/-", customer=cid, pageSize=100)
                         .execute()
                     )
+                    or {}
+                )
                 devs_by_name = {
                     d.get("name", ""): d for d in (devs_resp.get("devices", []) or []) if d.get("name")
                 }
@@ -708,15 +719,14 @@ def _execute_single_live_sweep_pass(
                     parent_name = "/".join(du_name.split("/")[:2])
                     parent_dev = devs_by_name.get(parent_name, {})
                     owner_type = (parent_dev.get("ownerType") or "BYOD").upper()
-                    if owner_type in ("COMPANY", "CUSTOMER"):
-                        continue
+                    is_company_owned = owner_type in ("COMPANY", "CUSTOMER")
                     raw_state = (
                         du.get("managementState")
                         or du.get("approvalState")
                         or parent_dev.get("managementState")
                         or ""
                     ).upper()
-                    model = parent_dev.get("model") or "Personal BYOD Device"
+                    model = parent_dev.get("model") or ("Company Device" if is_company_owned else "Personal BYOD Device")
                     dtype = (parent_dev.get("deviceType") or "BYOD").upper()
                     serial = (parent_dev.get("serialNumber") or "N/A").strip() or "N/A"
                     last_sync_str = (
@@ -732,7 +742,10 @@ def _execute_single_live_sweep_pass(
                     except Exception:
                         sync_epoch = now - 30.0
 
-                    norm_state = "PENDING_APPROVAL" if raw_state in ("PENDING", "PENDING_APPROVAL") else raw_state
+                    if is_company_owned:
+                        norm_state = "APPROVED"
+                    else:
+                        norm_state = "PENDING_APPROVAL" if raw_state in ("PENDING", "PENDING_APPROVAL") else raw_state
                     raw_ci_byod_records_by_user.setdefault(du_email, []).append(
                         {
                             "device_user_name": du_name,
@@ -740,10 +753,14 @@ def _execute_single_live_sweep_pass(
                             "device_type": dtype,
                             "serial_number": serial,
                             "approval_state": norm_state,
+                            "owner_type": owner_type,
                             "sync_epoch": sync_epoch,
                             "last_sync_str": last_sync_str,
                         }
                     )
+
+                    if is_company_owned:
+                        continue
 
                     is_pending = norm_state == "PENDING_APPROVAL"
                     is_blocked_or_unapproved = norm_state in ("BLOCKED", "UNAPPROVED")
@@ -845,27 +862,33 @@ def _execute_single_live_sweep_pass(
                 try:
                     raw_records = raw_ci_byod_records_by_user.get(norm_user)
                     if raw_records is None:
-                        from backend.routes.devices import crawl_devices_for_user
+                        from backend.routes.devices import crawl_devices_for_user, sync_time_sort_key
 
                         user_items, _ = crawl_devices_for_user(
                             customer_id=cid,
                             target_email=norm_user,
                             query_filter=f"email:{norm_user}",
                         )
-                        raw_records = [
-                            {
-                                "device_user_name": it.device_user_name,
-                                "model": it.model,
-                                "device_type": it.device_type,
-                                "serial_number": it.serial_number,
-                                "approval_state": it.approval_state,
-                                "sync_epoch": now - 30.0,
-                            }
-                            for it in user_items
-                            if it.owner_type != "COMPANY"
-                        ]
+                        raw_records = []
+                        for it in user_items:
+                            it_sync_str = it.last_sync_time if it.last_sync_time and it.last_sync_time != "N/A" else ""
+                            it_sync_ep = sync_time_sort_key(it_sync_str) if it_sync_str else 0.0
+                            raw_records.append(
+                                {
+                                    "device_user_name": it.device_user_name,
+                                    "model": it.model,
+                                    "device_type": it.device_type,
+                                    "serial_number": it.serial_number,
+                                    "approval_state": "APPROVED" if it.owner_type in ("COMPANY", "CUSTOMER") else it.approval_state,
+                                    "owner_type": it.owner_type,
+                                    "sync_epoch": it_sync_ep if it_sync_ep > 0 else (now - 30.0),
+                                    "last_sync_str": it_sync_str,
+                                }
+                            )
 
                     for rec in raw_records:
+                        if str(rec.get("owner_type") or "").upper() in ("COMPANY", "CUSTOMER"):
+                            continue
                         rec_state = rec["approval_state"]
                         rec_sync_ep = float(rec.get("sync_epoch") or (now - 30.0))
                         is_active_unapproved = rec_state == "PENDING_APPROVAL" or (
@@ -920,14 +943,24 @@ def _execute_single_live_sweep_pass(
 
                     if found_dev is None:
                         # If no unapproved device is active and Cloud Identity shows an APPROVED device
-                        # that synced within the last 180 seconds, auto-attest the user's login session
-                        # so logging into an approved Chromebook/BYOD device isn't signed out before opening the portal.
+                        # that synced within the last 180 seconds (or when evaluating a background OAuth
+                        # `reauth` / `0.0.0.0` event for a user with an approved device), auto-attest
+                        # so logging into or using an approved Chromebook/BYOD device isn't signed out.
+                        user_has_reauth_or_unspecified_ip = any(
+                            ev_item.user_email.strip().lower() == norm_user
+                            and (
+                                ev_item.login_type == "reauth"
+                                or (ev_item.ip_address or "").strip() in ("", "0.0.0.0", "unknown")
+                            )
+                            for ev_item in audit_events
+                        )
                         for rec in raw_records:
                             rec_sync_ep = float(rec.get("sync_epoch") or 0.0)
-                            if (
-                                rec.get("approval_state") == "APPROVED"
-                                and rec.get("last_sync_str")
-                                and 0.0 <= (now - rec_sync_ep) <= 180.0
+                            is_recent_sync = bool(
+                                rec.get("last_sync_str") and 0.0 <= (now - rec_sync_ep) <= 180.0
+                            )
+                            if rec.get("approval_state") == "APPROVED" and (
+                                is_recent_sync or user_has_reauth_or_unspecified_ip
                             ):
                                 eff_serial = (
                                     rec["serial_number"].strip().upper()
@@ -941,13 +974,17 @@ def _execute_single_live_sweep_pass(
                                 )
                                 for ev_item in audit_events:
                                     if ev_item.user_email.strip().lower() == norm_user:
-                                        session_guard.promote_approved_device(
-                                            user_email=norm_user,
-                                            serial_number=eff_serial,
-                                            device_type=dtype_tag,
-                                            ip_address=ev_item.ip_address,
-                                            now_epoch=now,
-                                        )
+                                        if is_recent_sync or (
+                                            ev_item.login_type == "reauth"
+                                            or (ev_item.ip_address or "").strip() in ("", "0.0.0.0", "unknown")
+                                        ):
+                                            session_guard.promote_approved_device(
+                                                user_email=norm_user,
+                                                serial_number=eff_serial,
+                                                device_type=dtype_tag,
+                                                ip_address=ev_item.ip_address,
+                                                now_epoch=now,
+                                            )
                                 break
                 except Exception as ci_err:
                     print(

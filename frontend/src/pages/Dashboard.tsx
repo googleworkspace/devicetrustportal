@@ -314,8 +314,26 @@ export const Dashboard: React.FC = () => {
           const refreshDelayMs = Math.max(30000, expiresAtMs - Date.now() - 5 * 60 * 1000);
           timerId = setTimeout(() => {
             const googleAccounts = (window as any).google?.accounts?.id;
-            if (googleAccounts && typeof googleAccounts.prompt === "function") {
-              googleAccounts.prompt();
+            if (googleAccounts) {
+              if (typeof googleAccounts.initialize === "function" && payload?.aud) {
+                try {
+                  googleAccounts.initialize({
+                    client_id: payload.aud,
+                    auto_select: true,
+                    callback: (resp: any) => {
+                      if (resp?.credential) {
+                        localStorage.setItem("googleIdToken", resp.credential);
+                        setAuthToken(resp.credential);
+                      }
+                    },
+                  });
+                } catch (_) {
+                  // Ignore initialization errors in test environments
+                }
+              }
+              if (typeof googleAccounts.prompt === "function") {
+                googleAccounts.prompt();
+              }
             }
           }, refreshDelayMs);
         }
