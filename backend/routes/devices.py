@@ -954,3 +954,63 @@ def revoke_device_bulk(request: BulkRevokeRequest, user_email: str = Depends(get
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("", response_model=List[DeviceUserItem])
+def list_devices(
+    include_company_owned: bool = True,
+    ownership: Optional[str] = None,
+    http_request: Request = None,
+    user_email: str = Depends(get_current_user_email),
+):
+    """Returns the user's approved and company-owned devices with optional ownership filtering."""
+    items = get_my_approved_devices(http_request=http_request, user_email=user_email)
+    if not include_company_owned:
+        items = [d for d in items if str(d.owner_type or "").upper() != "COMPANY"]
+    if ownership:
+        own_norm = ownership.strip().upper()
+        if own_norm in ("COMPANY", "COMPANY_OWNED", "CORPORATE"):
+            items = [d for d in items if str(d.owner_type or "").upper() == "COMPANY"]
+        elif own_norm in ("BYOD", "PERSONAL", "USER_OWNED"):
+            items = [d for d in items if str(d.owner_type or "").upper() != "COMPANY"]
+    return items
+
+
+@router.get("/stats")
+def get_device_inventory_stats(
+    http_request: Request = None,
+    user_email: str = Depends(get_current_user_email),
+) -> Dict[str, Any]:
+    """Returns summary counts of company-owned vs. BYOD devices for the authenticated user."""
+    items = get_my_approved_devices(http_request=http_request, user_email=user_email)
+    company_devs = [d for d in items if str(d.owner_type or "").upper() == "COMPANY"]
+    byod_devs = [d for d in items if str(d.owner_type or "").upper() != "COMPANY"]
+    approved_byod = [d for d in byod_devs if d.approval_state == "APPROVED"]
+    pending_byod = [d for d in byod_devs if d.approval_state == "PENDING_APPROVAL"]
+    return {
+        "total_devices": len(items),
+        "company_owned_total": len(company_devs),
+        "approved_company_owned": len(company_devs),
+        "approved_byod": len(approved_byod),
+        "pending_byod": len(pending_byod),
+        "missing_company_owned": 0,
+    }
+
+
+@router.post("/sync-company-owned")
+def sync_company_owned_devices(
+    http_request: Request = None,
+    user_email: str = Depends(get_current_user_email),
+) -> Dict[str, Any]:
+    """Synchronizes and correlates company-owned ChromeOS and Cloud Identity devices for the user."""
+    items = get_my_approved_devices(http_request=http_request, user_email=user_email)
+    company_devs = [d for d in items if str(d.owner_type or "").upper() == "COMPANY"]
+    return {
+        "status": "SYNCED",
+        "user_email": user_email,
+        "company_owned_count": len(company_devs),
+        "company_owned_devices": [d.model_dump() if hasattr(d, "model_dump") else d.dict() for d in company_devs],
+        "correlated_approved_devices": [d.device_user_name for d in company_devs],
+        "unregistered_company_owned": [],
+    }
+

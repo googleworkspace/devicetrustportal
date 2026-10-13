@@ -280,3 +280,52 @@ def test_portal_token_expired_within_24h_accepted_unless_signed_out():
     session_guard._recent_signouts.pop("claycodes@gwfe.org", None)
 
 
+def test_reset_approved_device_sessions_and_company_owned_prefix_match():
+    from backend.services.session_guard import SessionGuardService, DeviceRecord
+
+    signed_out = []
+    guard = SessionGuardService(
+        enabled=True,
+        signout_callback=lambda email: signed_out.append(email) or True,
+    )
+    guard.load_device_inventory(
+        [
+            DeviceRecord(
+                device_id="directory/devices/cb-1/deviceUsers/claycodes@gwfe.org",
+                serial_number="CB-CORP-001",
+                device_type="CHROMEOS",
+                status="APPROVED",
+                assigned_user="claycodes",
+            ),
+            DeviceRecord(
+                device_id="devices/byod-1/deviceUsers/claycodes@gwfe.org",
+                serial_number="MAC-BYOD-002",
+                device_type="CLOUD_IDENTITY_APPROVED",
+                status="APPROVED",
+                assigned_user="claycodes@gwfe.org",
+            ),
+        ]
+    )
+    guard.record_extension_attestation(
+        user_email="claycodes@gwfe.org",
+        serial_number="CB-CORP-001",
+        ip_address="108.6.43.131",
+        now_epoch=2000.0,
+    )
+    affected = guard.collect_approved_devices_for_user("claycodes@gwfe.org")
+    assert len(affected) == 2
+    assert {d["serial_number"] for d in affected} == {"CB-CORP-001", "MAC-BYOD-002"}
+
+    reset_res = guard.reset_approved_device_sessions(
+        user_email="claycodes@gwfe.org",
+        reason="Reset sessions across approved devices",
+        now_epoch=2050.0,
+    )
+    assert reset_res["status"] == "SESSIONS_RESET"
+    assert reset_res["signout_executed"] is True
+    assert len(reset_res["approved_devices_affected"]) == 2
+    assert signed_out == ["claycodes@gwfe.org"]
+    assert guard.get_active_attestations(now_epoch=2050.0) == []
+
+
+

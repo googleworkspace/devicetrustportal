@@ -1230,3 +1230,91 @@ async def get_session_watch_metrics() -> Dict[str, object]:
     }
 
 
+class ResetApprovedDevicesRequest(BaseModel):
+    user_email: Optional[str] = Field(default=None, description="Target Google Workspace user email")
+    reason: str = Field(
+        default="Approved-device session reset across user fleet",
+        description="Reason for resetting sessions across approved devices",
+    )
+    dry_run: bool = Field(default=False, description="Whether to simulate without executing users.signOut")
+
+
+@router.post("/reset-approved-devices")
+async def reset_user_approved_device_sessions(
+    request: Request,
+    body: Optional[ResetApprovedDevicesRequest] = None,
+) -> Dict[str, Any]:
+    """Resets active sessions across all approved and company-owned devices for a user and executes users.signOut."""
+    req_body = body or ResetApprovedDevicesRequest()
+    target_email = (req_body.user_email or "").strip().lower()
+    if not target_email:
+        auth_header = request.headers.get("Authorization")
+        if auth_header:
+            target_email = get_current_user_email(authorization=auth_header).strip().lower()
+    if not target_email:
+        raise HTTPException(status_code=400, detail="user_email or Authorization bearer token is required")
+
+    config = config_service.get_tenant_config()
+    cid = normalize_customer_id(config.customer_id or "customers/my_customer")
+
+    # Ensure approved ChromeOS & Cloud Identity devices for this user are populated in session_guard
+    if not session_guard.collect_approved_devices_for_user(target_email):
+        warm_records: List[DeviceRecord] = []
+        try:
+            cros_devs = directory_service.get_user_chromeos_devices(
+                user_email=target_email, customer_id=config.customer_id
+            ) or []
+            for cb in cros_devs:
+                serial = str(cb.get("serial_number") or cb.get("device_user_name") or "").strip().upper()
+                if serial and serial != "N/A":
+                    warm_records.append(
+                        DeviceRecord(
+                            device_id=str(cb.get("device_user_name") or serial),
+                            serial_number=serial,
+                            device_type="CHROMEOS",
+                            status="APPROVED",
+                            assigned_user=target_email,
+                        )
+                    )
+        except Exception:
+            pass
+        try:
+            from backend.routes.devices import crawl_devices_for_user
+
+            ci_items, _ = crawl_devices_for_user(
+                customer_id=cid,
+                target_email=target_email,
+                query_filter=f"email:{target_email}",
+            )
+            for it in ci_items:
+                if it.owner_type == "COMPANY" or it.approval_state == "APPROVED":
+                    eff_serial = (
+                        it.serial_number.strip().upper()
+                        if it.serial_number and it.serial_number != "N/A"
+                        else it.device_user_name.strip().upper()
+                    )
+                    warm_records.append(
+                        DeviceRecord(
+                            device_id=it.device_user_name,
+                            serial_number=eff_serial,
+                            device_type="CHROMEOS"
+                            if (it.owner_type == "COMPANY" or "CHROME" in (it.device_type or "").upper())
+                            else "CLOUD_IDENTITY_APPROVED",
+                            status="APPROVED",
+                            assigned_user=target_email,
+                        )
+                    )
+        except Exception:
+            pass
+        if warm_records:
+            session_guard.load_device_inventory(warm_records)
+
+    return session_guard.reset_approved_device_sessions(
+        user_email=target_email,
+        reason=req_body.reason,
+        ip_address=_extract_client_ip(request),
+        dry_run=req_body.dry_run,
+    )
+
+
+

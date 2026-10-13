@@ -434,6 +434,75 @@ class SessionGuardService:
             self._persist_actions([action])
             return action
 
+    def collect_approved_devices_for_user(self, user_email: str) -> List[Dict[str, Any]]:
+        """Collects all approved and company-owned devices in inventory/attestations associated with user_email."""
+        email_key = (user_email or "").strip().lower()
+        if not email_key:
+            return []
+        email_prefix = email_key.split("@")[0] if "@" in email_key else email_key
+        matched: Dict[str, Dict[str, Any]] = {}
+        with self._lock:
+            for serial_key, dev in self._approved_serials.items():
+                assigned = (dev.assigned_user or "").strip().lower()
+                if assigned and (
+                    assigned == email_key
+                    or ("@" not in assigned and assigned == email_prefix)
+                ):
+                    matched[serial_key] = {
+                        "device_id": dev.device_id,
+                        "serial_number": dev.serial_number,
+                        "device_type": dev.device_type,
+                        "status": dev.status,
+                        "assigned_user": email_key,
+                        "org_unit_path": dev.org_unit_path,
+                    }
+            for att in self._active_attestations.get(email_key, []):
+                serial_key = (att.serial_number or "").strip().upper()
+                if serial_key and serial_key not in matched:
+                    dev = self._approved_serials.get(serial_key)
+                    matched[serial_key] = {
+                        "device_id": dev.device_id if dev else serial_key,
+                        "serial_number": serial_key,
+                        "device_type": dev.device_type if dev else "CHROMEOS",
+                        "status": dev.status if dev else "APPROVED",
+                        "assigned_user": email_key,
+                        "org_unit_path": dev.org_unit_path if dev else "/",
+                    }
+        return list(matched.values())
+
+    def reset_approved_device_sessions(
+        self,
+        user_email: str,
+        reason: str = "Approved-device session reset across user fleet",
+        ip_address: str = "portal-approved-reset",
+        dry_run: bool = False,
+        now_epoch: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """Resets active Workspace sessions across all approved and company-owned devices for a user,
+        clearing cached browser attestations and executing `users.signOut`."""
+        now = now_epoch if now_epoch is not None else time.time()
+        email_key = (user_email or "").strip().lower()
+        approved_devices = self.collect_approved_devices_for_user(email_key)
+        with self._lock:
+            if not dry_run:
+                self._active_attestations.pop(email_key, None)
+        action = self.execute_immediate_signout(
+            user_email=email_key,
+            event_id=f"reset-approved-devices:{email_key}:{int(now)}",
+            reason=f"{reason} (affected_approved_devices={len(approved_devices)})",
+            ip_address=ip_address,
+            dry_run=dry_run,
+            now_epoch=now,
+        )
+        return {
+            "status": "SESSIONS_RESET" if not dry_run else "DRY_RUN_SESSIONS_RESET",
+            "user_email": email_key,
+            "signout_executed": not dry_run,
+            "approved_devices_affected": approved_devices,
+            "affected_device_ids": [d["device_id"] for d in approved_devices],
+            "action": dataclasses.asdict(action),
+        }
+
     def load_device_inventory(self, devices: Iterable[DeviceRecord]) -> int:
         """Populates the O(1) in-memory inventory map from ChromeOS + Cloud Identity sync."""
         count = 0

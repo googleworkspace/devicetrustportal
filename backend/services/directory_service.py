@@ -530,12 +530,17 @@ class DirectoryService:
                 if not devices:
                     break
 
+                target_prefix = target_email.split("@")[0] if "@" in target_email else target_email
                 for dev in devices:
                     annotated_user = dev.get("annotatedUser", "").lower().strip()
                     recent_users = [u.get("email", "").lower().strip() for u in dev.get("recentUsers", []) if isinstance(u, dict)]
                     
-                    # Include company-owned ChromeOS devices that this user has accessed/signed into (or is annotated on)
-                    is_match = (target_email in recent_users) or (annotated_user == target_email)
+                    # Include company-owned ChromeOS devices that this user has accessed/signed into (or is annotated on by email or username prefix)
+                    is_match = (
+                        (target_email in recent_users)
+                        or (annotated_user == target_email)
+                        or (bool(annotated_user) and "@" not in annotated_user and annotated_user == target_prefix)
+                    )
                     if is_match:
                         serial = dev.get("serialNumber") or dev.get("deviceId") or "N/A"
                         model = dev.get("model") or "Google Chromebook"
@@ -551,7 +556,7 @@ class DirectoryService:
                             "approval_state": "APPROVED",
                             "owner_type": "COMPANY",
                             "last_sync_time": last_sync,
-                            "annotated_user": annotated_user,
+                            "annotated_user": annotated_user or target_email,
                             "asset_tag": dev.get("annotatedAssetId", "")
                         })
 
