@@ -172,6 +172,10 @@ class SessionGuardService:
         self._enforced_event_ids: Set[str] = set()
         # Persisted device sign-in network/geolocation context indexed by device_user_name
         self._device_network_context: Dict[str, Dict[str, Any]] = {}
+        # Authoritative registry of BYOD devices explicitly approved via the Device Trust Portal
+        # (used to distinguish portal-approved BYOD devices from Google Basic Mobile Management auto-approvals)
+        self._portal_approved_device_users: Set[str] = set()
+        self._portal_approved_serials: Set[str] = set()
 
         # Telemetry counters for scale/quota verification
         self.metrics: Dict[str, int] = {
@@ -189,6 +193,7 @@ class SessionGuardService:
             "signouts_simulated": 0,
             "tokens_flagged_hosting_asn": 0,
             "tokens_flagged_ip_mismatch": 0,
+            "basic_mobile_auto_quarantined": 0,
             "reports_api_calls": 0,
             "directory_api_calls": 0,
             "directory_batch_http_calls": 0,
@@ -243,12 +248,29 @@ class SessionGuardService:
                 )
                 """
             )
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS portal_approved_devices (
+                    device_user_name TEXT PRIMARY KEY,
+                    user_email TEXT NOT NULL,
+                    serial_number TEXT NOT NULL DEFAULT '',
+                    approved_at_epoch REAL NOT NULL
+                )
+                """
+            )
             # Hydrate in-memory state from SQLite on startup
             cur = self._conn.cursor()
             cur.execute("SELECT device_user_name, last_enforced_sync_epoch FROM enforced_device_syncs")
             for du_name, sync_ep in cur.fetchall():
                 if du_name:
                     self._enforced_device_syncs[str(du_name)] = float(sync_ep or 0.0)
+            cur.execute("SELECT device_user_name, serial_number FROM portal_approved_devices")
+            for du_name, ser_num in cur.fetchall():
+                if du_name:
+                    self._portal_approved_device_users.add(str(du_name).strip())
+                clean_ser = str(ser_num or "").strip().upper()
+                if clean_ser and clean_ser not in ("N/A", "NONE", "UNKNOWN"):
+                    self._portal_approved_serials.add(clean_ser)
             cur.execute(
                 "SELECT device_user_name, user_email, ip_address, region_code, subdivision_code, asn, updated_at_epoch FROM device_network_context"
             )
@@ -574,6 +596,88 @@ class SessionGuardService:
             user_map = self._unapproved_devices.get(email_key, {})
             return list(user_map.values())
 
+    def is_portal_approved_device(
+        self, device_user_name: str = "", serial_number: str = ""
+    ) -> bool:
+        """Returns True if the BYOD device binding or hardware serial was explicitly approved via the portal."""
+        du_key = (device_user_name or "").strip()
+        ser_key = (serial_number or "").strip().upper()
+        with self._lock:
+            if du_key and du_key in self._portal_approved_device_users:
+                return True
+            if (
+                ser_key
+                and ser_key not in ("N/A", "NONE", "UNKNOWN")
+                and ser_key in self._portal_approved_serials
+            ):
+                return True
+            return False
+
+    def record_portal_approved_device(
+        self,
+        device_user_name: str,
+        user_email: str = "",
+        serial_number: str = "",
+        now_epoch: Optional[float] = None,
+    ) -> None:
+        """Persists an explicit portal device approval in SQLite and in-memory sets."""
+        du_key = (device_user_name or "").strip()
+        email_key = (user_email or "").strip().lower()
+        ser_key = (serial_number or "").strip().upper()
+        if ser_key in ("N/A", "NONE", "UNKNOWN"):
+            ser_key = ""
+        if not du_key and not ser_key:
+            return
+        now = now_epoch if now_epoch is not None else time.time()
+        effective_du = du_key or f"serial/{ser_key}"
+        with self._lock:
+            if du_key:
+                self._portal_approved_device_users.add(du_key)
+            if ser_key:
+                self._portal_approved_serials.add(ser_key)
+            with self._conn:
+                self._conn.execute(
+                    """
+                    INSERT INTO portal_approved_devices (
+                        device_user_name, user_email, serial_number, approved_at_epoch
+                    )
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(device_user_name) DO UPDATE SET
+                        user_email = excluded.user_email,
+                        serial_number = CASE WHEN excluded.serial_number != '' THEN excluded.serial_number ELSE portal_approved_devices.serial_number END,
+                        approved_at_epoch = excluded.approved_at_epoch
+                    """,
+                    (effective_du, email_key, ser_key, now),
+                )
+
+    def demote_approved_device(
+        self, device_user_name: str = "", serial_number: str = ""
+    ) -> None:
+        """Removes a revoked device from the portal-approved registry and O(1) approved serials cache."""
+        du_key = (device_user_name or "").strip()
+        ser_key = (serial_number or "").strip().upper()
+        if ser_key in ("N/A", "NONE", "UNKNOWN"):
+            ser_key = ""
+        with self._lock:
+            if du_key:
+                self._portal_approved_device_users.discard(du_key)
+                self._approved_serials.pop(du_key.upper(), None)
+            if ser_key:
+                self._portal_approved_serials.discard(ser_key)
+                self._approved_serials.pop(ser_key, None)
+            self.metrics["inventory_devices_cached"] = len(self._approved_serials)
+            with self._conn:
+                if du_key:
+                    self._conn.execute(
+                        "DELETE FROM portal_approved_devices WHERE device_user_name = ?",
+                        (du_key,),
+                    )
+                if ser_key:
+                    self._conn.execute(
+                        "DELETE FROM portal_approved_devices WHERE serial_number = ?",
+                        (ser_key,),
+                    )
+
     def promote_approved_device(
         self,
         device_id: str = "",
@@ -582,6 +686,7 @@ class SessionGuardService:
         ip_address: Optional[str] = None,
         now_epoch: Optional[float] = None,
         device_type: str = "CLOUD_IDENTITY_APPROVED",
+        record_portal_approval: Optional[bool] = None,
     ) -> str:
         """Immediately promotes a newly approved personal or corporate device into the O(1) cache
         and optionally attests the user's current browser session IP so they are never signed out.
@@ -593,6 +698,19 @@ class SessionGuardService:
             clean_serial = (device_id or "").strip().upper()
         if not clean_serial:
             return ""
+
+        should_record_portal = (
+            record_portal_approval
+            if record_portal_approval is not None
+            else bool(device_id and device_id.strip())
+        )
+        if should_record_portal:
+            self.record_portal_approved_device(
+                device_user_name=device_id or clean_serial,
+                user_email=email_key,
+                serial_number=serial_number,
+                now_epoch=now,
+            )
 
         rec = DeviceRecord(
             device_id=device_id or clean_serial,

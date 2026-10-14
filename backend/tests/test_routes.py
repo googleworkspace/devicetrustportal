@@ -2629,3 +2629,435 @@ def test_my_devices_enriches_zero_cost_ip_country_and_hosting_asn_warnings():
         assert persisted["ip_address"] == "104.16.88.99"
         assert persisted["asn"] == "AS13335"
 
+
+def test_basic_mobile_auto_quarantine_inline_and_live_sweep():
+    """Verifies Agentless (Basic) Mobile Management Auto-Quarantine:
+    1. When basic_mobile_auto_quarantine_enabled is True and the user is in basic_mobile_target_ous /
+       basic_mobile_target_groups, unverified Basic Android/iOS BYOD devices in APPROVED state are
+       immediately flipped to BLOCKED inline on GET /api/devices/my-devices and on POST /api/session-watch/live-sweep.
+    2. Once approved through the portal (/api/devices/approve or /api/chaining/verify), the device is
+       persisted in portal_approved_devices and is NOT re-blocked until revoked.
+    """
+    import time
+    from datetime import datetime, timezone
+    from backend.routes.devices import DeviceUserItem
+    from backend.routes.session_watch import session_guard
+    from backend.services.config_service import TenantConfig
+
+    app.dependency_overrides[get_current_user_email] = lambda: "baumanjosh@festusedu.com"
+    now_iso = datetime.fromtimestamp(time.time() - 10, tz=timezone.utc).isoformat()
+
+    # Ensure clean state for this test device
+    du_pixel = "devices/pixel-9-basic/deviceUsers/du-josh"
+    sn_pixel = "PX9-BASIC-001"
+    session_guard.demote_approved_device(device_user_name=du_pixel, serial_number=sn_pixel)
+
+    cfg = TenantConfig(
+        customer_id="customers/my_customer",
+        basic_mobile_auto_quarantine_enabled=True,
+        basic_mobile_target_ous=["/Staff"],
+        basic_mobile_target_groups=["mobile-pilot@festusedu.com"],
+        session_watch_enabled=False,
+        cookie_threat_detection_enabled=False,
+    )
+
+    mock_byod_devices = [
+        DeviceUserItem(
+            device_user_name=du_pixel,
+            device_type="ANDROID",
+            model="Pixel 9 Pro",
+            os_version="Android 16",
+            serial_number=sn_pixel,
+            approval_state="APPROVED",
+            owner_type="BYOD",
+            last_sync_time=now_iso,
+        ),
+        DeviceUserItem(
+            device_user_name="devices/mac-approved/deviceUsers/du-josh-mac",
+            device_type="MAC_OS",
+            model="MacBook Pro",
+            os_version="macOS 15",
+            serial_number="MAC-BYOD-001",
+            approval_state="APPROVED",
+            owner_type="BYOD",
+            last_sync_time=now_iso,
+        ),
+    ]
+
+    with patch("backend.routes.devices.config_service.get_tenant_config", return_value=cfg), \
+         patch("backend.routes.devices.directory_service.is_user_in_session_watch_scope", return_value=(True, "IN_TARGET_GROUP:mobile-pilot@festusedu.com")), \
+         patch("backend.routes.devices.crawl_devices_for_user", return_value=(mock_byod_devices, 2)), \
+         patch("backend.routes.devices.directory_service.get_user_chromeos_devices", return_value=[]), \
+         patch("backend.routes.devices.directory_service.get_user_recent_network_events", return_value=[]), \
+         patch("backend.routes.devices.cloud_identity_service.revoke_device_user", return_value={"done": True}) as mock_revoke:
+        resp = client.get("/api/devices/my-devices")
+        assert resp.status_code == 200
+        items = {d["device_user_name"]: d for d in resp.json()}
+
+        # Unverified Basic Android phone was immediately flipped from APPROVED -> BLOCKED!
+        assert items[du_pixel]["approval_state"] == "BLOCKED"
+        # Desktop MacBook was untouched
+        assert items["devices/mac-approved/deviceUsers/du-josh-mac"]["approval_state"] == "APPROVED"
+        mock_revoke.assert_called_once_with(
+            device_user_name=du_pixel,
+            customer_id="customers/my_customer",
+            action="BLOCK",
+        )
+
+    # Now user approves the Pixel phone via the portal -> recorded in portal_approved_devices
+    session_guard.promote_approved_device(
+        user_email="baumanjosh@festusedu.com",
+        device_id=du_pixel,
+        serial_number=sn_pixel,
+    )
+    assert session_guard.is_portal_approved_device(du_pixel, sn_pixel) is True
+
+    # Reset mock item to APPROVED and verify GET /api/devices/my-devices does NOT block it now
+    mock_byod_devices[0].approval_state = "APPROVED"
+    with patch("backend.routes.devices.config_service.get_tenant_config", return_value=cfg), \
+         patch("backend.routes.devices.directory_service.is_user_in_session_watch_scope", return_value=(True, "IN_TARGET_GROUP:mobile-pilot@festusedu.com")), \
+         patch("backend.routes.devices.crawl_devices_for_user", return_value=(mock_byod_devices, 2)), \
+         patch("backend.routes.devices.directory_service.get_user_chromeos_devices", return_value=[]), \
+         patch("backend.routes.devices.directory_service.get_user_recent_network_events", return_value=[]), \
+         patch("backend.routes.devices.cloud_identity_service.revoke_device_user", return_value={"done": True}) as mock_revoke_after:
+        resp2 = client.get("/api/devices/my-devices")
+        assert resp2.status_code == 200
+        items2 = {d["device_user_name"]: d for d in resp2.json()}
+        assert items2[du_pixel]["approval_state"] == "APPROVED"
+        mock_revoke_after.assert_not_called()
+
+    # Demote (revoke) the device and verify POST /api/session-watch/live-sweep auto-quarantines it in CAA-only mode
+    session_guard.demote_approved_device(device_user_name=du_pixel, serial_number=sn_pixel)
+    assert session_guard.is_portal_approved_device(du_pixel, sn_pixel) is False
+
+    mock_ci_service = MagicMock()
+    mock_ci_service.devices.return_value.list.return_value.execute.return_value = {
+        "devices": [
+            {
+                "name": "devices/pixel-9-basic",
+                "deviceType": "ANDROID",
+                "model": "Pixel 9 Pro",
+                "osVersion": "Android 16",
+                "serialNumber": sn_pixel,
+                "ownerType": "BYOD",
+                "managementState": "APPROVED",
+                "lastSyncTime": now_iso,
+            }
+        ]
+    }
+    mock_ci_service.devices.return_value.deviceUsers.return_value.list.return_value.execute.return_value = {
+        "deviceUsers": [
+            {
+                "name": du_pixel,
+                "userEmail": "baumanjosh@festusedu.com",
+                "managementState": "APPROVED",
+                "lastSyncTime": now_iso,
+            }
+        ]
+    }
+
+    with patch("backend.routes.session_watch.config_service.get_tenant_config", return_value=cfg), \
+         patch("backend.routes.session_watch.cloud_identity_service.service", mock_ci_service), \
+         patch("backend.routes.session_watch.cloud_identity_service.execute_with_retry", side_effect=lambda fn: fn()), \
+         patch("backend.routes.session_watch.directory_service.is_user_in_session_watch_scope", return_value=(True, "IN_TARGET_OU:/Staff")), \
+         patch("backend.routes.session_watch.cloud_identity_service.revoke_device_user", return_value={"done": True}) as mock_sweep_revoke:
+        sweep_resp = client.post("/api/session-watch/live-sweep", json={"lookback_minutes": 10})
+        assert sweep_resp.status_code == 200
+        sweep_data = sweep_resp.json()
+        assert sweep_data["status"] == "LIVE_SWEEP_COMPLETE"
+        assert sweep_data["basic_mobile_auto_quarantine_enabled"] is True
+        assert sweep_data["auto_blocked_byod_devices"] == 1
+        assert any(a["decision"] == "QUARANTINE_BASIC_MOBILE" for a in sweep_data["actions"])
+        mock_sweep_revoke.assert_called_once_with(
+            device_user_name=du_pixel,
+            customer_id="customers/my_customer",
+            action="BLOCK",
+        )
+
+
+def test_event_driven_mobile_audit_webhook_off_for_advanced_and_on_for_basic():
+    """Verifies POST /api/webhook/mobile-audit ($0.00/mo Event-Driven Basic Mobile Auto-Quarantine):
+    1. When basic_mobile_auto_quarantine_enabled is False (Advanced Mobile Management mode),
+       immediately returns SKIPPED_DISABLED and makes 0 Cloud Identity API calls.
+    2. When basic_mobile_auto_quarantine_enabled is True, checks OU Tree + Priority #1 -> #N
+       Google Group Hierarchy and flips unverified Basic Android/iOS BYOD devices to BLOCKED.
+    """
+    import base64
+    import json
+    from backend.routes.devices import DeviceUserItem
+    from backend.routes.session_watch import session_guard
+    from backend.services.config_service import TenantConfig
+
+    du_iphone = "devices/iphone-basic/deviceUsers/du-staff"
+    sn_iphone = "IPHONE-BASIC-99"
+    session_guard.demote_approved_device(device_user_name=du_iphone, serial_number=sn_iphone)
+
+    raw_payload = {
+        "actor": {"email": "teacher@festusedu.com"},
+        "events": [
+            {
+                "name": "DEVICE_REGISTER_EVENT",
+                "parameters": [{"name": "USER_EMAIL", "value": "teacher@festusedu.com"}],
+            }
+        ],
+    }
+    b64_data = base64.b64encode(json.dumps(raw_payload).encode("utf-8")).decode("utf-8")
+    pubsub_body = {
+        "message": {"data": b64_data, "message_id": "msg-1"},
+        "subscription": "projects/devicetrustportal/subscriptions/mobile-audit-sub",
+    }
+
+    # Case 1: Advanced Mobile Management mode (basic_mobile_auto_quarantine_enabled = False) -> 0 API calls
+    cfg_advanced = TenantConfig(
+        customer_id="customers/my_customer",
+        basic_mobile_auto_quarantine_enabled=False,
+    )
+    with patch("backend.routes.webhook.config_service.get_tenant_config", return_value=cfg_advanced), \
+         patch("backend.routes.webhook.crawl_devices_for_user") as mock_crawl_off:
+        r_off = client.post("/api/webhook/mobile-audit", json=pubsub_body)
+        assert r_off.status_code == 200
+        assert r_off.json()["status"] == "SKIPPED_DISABLED"
+        assert r_off.json()["basic_mobile_auto_quarantine_enabled"] is False
+        mock_crawl_off.assert_not_called()
+
+    # Case 2: Basic Mobile Auto-Quarantine ON -> Event-driven quarantine for Priority #1 Group / OU
+    import time
+    from datetime import datetime, timezone
+    fresh_iso = datetime.fromtimestamp(time.time() - 10, tz=timezone.utc).isoformat()
+    cfg_basic = TenantConfig(
+        customer_id="customers/my_customer",
+        basic_mobile_auto_quarantine_enabled=True,
+        basic_mobile_target_ous=["/Staff"],
+        basic_mobile_target_groups=["staff-mobile-pilot@festusedu.com"],
+    )
+    mock_items = [
+        DeviceUserItem(
+            device_user_name=du_iphone,
+            device_type="IOS",
+            model="iPhone 16",
+            os_version="iOS 18.2",
+            serial_number=sn_iphone,
+            approval_state="APPROVED",
+            owner_type="BYOD",
+            last_sync_time=fresh_iso,
+            create_time=fresh_iso,
+        )
+    ]
+    with patch("backend.routes.webhook.config_service.get_tenant_config", return_value=cfg_basic), \
+         patch("backend.routes.webhook.directory_service.is_user_in_session_watch_scope", return_value=(True, "IN_TARGET_GROUP_PRIORITY_1:staff-mobile-pilot@festusedu.com")), \
+         patch("backend.routes.webhook.crawl_devices_for_user", return_value=(mock_items, 1)), \
+         patch("backend.routes.webhook.cloud_identity_service.revoke_device_user", return_value={"done": True}) as mock_wh_revoke:
+        r_on = client.post("/api/webhook/mobile-audit", json=pubsub_body)
+        assert r_on.status_code == 200
+        data_on = r_on.json()
+        assert data_on["status"] == "SUCCESS"
+        assert data_on["quarantined_devices"] == 1
+        assert data_on["devices"][0]["device_user_name"] == du_iphone
+        assert data_on["devices"][0]["scope_reason"] == "IN_TARGET_GROUP_PRIORITY_1:staff-mobile-pilot@festusedu.com"
+        mock_wh_revoke.assert_called_once_with(
+            device_user_name=du_iphone,
+            customer_id="customers/my_customer",
+            action="BLOCK",
+        )
+
+
+def test_basic_mobile_auto_quarantine_root_enabled_and_anti_accidental_block_safeguards():
+    """Verifies Root (`/`) enablement and strict anti-accidental-block safeguards for Agentless (Basic) Mobile Auto-Quarantine:
+    1. Admins CAN enable Basic Mobile Auto-Quarantine at the Root Organization (`/` — empty `target_ous=[]` or `["/"]`),
+       as well as on specific Sub-OUs (`/Students/HighSchool`) or Ordered Google Groups (`Priority #1 -> #N`).
+    2. Pre-existing mobile devices (`createTime` / `firstSyncTime` / `lastSyncTime` > 15m old) are AUTOMATICALLY
+       baselined into `portal_approved_devices` and NEVER blocked when enabled at Root (`/`)—even if that
+       pre-existing phone subsequently syncs (`lastSyncTime` = `now`).
+    3. Active 15-Minute Onboarding Grace Leases (`session_guard.grant_onboarding_lease`) protect users who are
+       actively enrolling a personal mobile device via `+ Add Personal Device (15m Grace Pass)` or a 6-digit Pairing Code.
+    4. Android devices managed by Advanced Mobile Management MDM (`ownershipPrivilege: PROFILE_OWNER` / `DEVICE_OWNER`)
+       and Company-Owned (`COMPANY` / `CUSTOMER`) devices are never touched.
+    """
+    import time
+    from datetime import datetime, timezone
+    from backend.services.directory_service import directory_service
+    from backend.services.config_service import TenantConfig
+    from backend.routes.devices import DeviceUserItem
+    from backend.routes.session_watch import session_guard, _is_mobile_byod_device
+
+    now_ts = time.time()
+    fresh_iso = datetime.fromtimestamp(now_ts - 15, tz=timezone.utc).isoformat()
+    preexisting_iso = datetime.fromtimestamp(now_ts - (86400 * 30), tz=timezone.utc).isoformat()  # 30 days old
+
+    # 1. Default empty scope (`target_ous=[]`, `target_groups=[]`) is NOT enabled by default (`require_explicit_target_scope=True`),
+    #    while explicitly checking Root (`target_ous=["/"]`) IS allowed!
+    in_empty_default, reason_empty_default = directory_service.is_user_in_session_watch_scope(
+        user_email="anyone@festusedu.com",
+        target_ous=[],
+        target_groups=[],
+        exempt_admins=False,
+        require_explicit_target_scope=True,
+    )
+    assert in_empty_default is False
+    assert "unchecked by default" in reason_empty_default.lower()
+
+    in_root_slash, reason_root_slash = directory_service.is_user_in_session_watch_scope(
+        user_email="anyone@festusedu.com",
+        target_ous=["/"],
+        target_groups=[],
+        exempt_admins=False,
+        require_explicit_target_scope=True,
+    )
+    assert in_root_slash is True
+
+    # 2. Verify Group Priority #1 -> #2 Hierarchy and Sub-OU Inheritance when scoped
+    mock_dir_service = MagicMock()
+
+    def users_get_side_effect(userKey, projection="basic"):
+        req = MagicMock()
+        if userKey == "student_hs@festusedu.com":
+            req.execute.return_value = {"orgUnitPath": "/Students/HighSchool/Grade10", "isAdmin": False}
+        elif userKey == "pilot_teacher@festusedu.com":
+            req.execute.return_value = {"orgUnitPath": "/Staff/Elementary", "isAdmin": False}
+        else:
+            req.execute.return_value = {"orgUnitPath": "/Administration", "isAdmin": False}
+        return req
+
+    def members_has_member_side_effect(groupKey, memberKey):
+        req = MagicMock()
+        is_mem = (
+            groupKey == "mobile-pilot-tier1@festusedu.com"
+            and memberKey == "pilot_teacher@festusedu.com"
+        )
+        req.execute.return_value = {"isMember": is_mem}
+        return req
+
+    mock_dir_service.users.return_value.get.side_effect = users_get_side_effect
+    mock_dir_service.members.return_value.hasMember.side_effect = members_has_member_side_effect
+
+    directory_service._scope_cache.clear()
+    with patch.object(directory_service, "service", mock_dir_service):
+        in_grp, reason_grp = directory_service.is_user_in_session_watch_scope(
+            user_email="pilot_teacher@festusedu.com",
+            target_ous=["/Students/HighSchool"],
+            target_groups=["mobile-pilot-tier1@festusedu.com", "mobile-pilot-tier2@festusedu.com"],
+            exempt_admins=False,
+        )
+        assert in_grp is True
+        assert "Matched target Group 'mobile-pilot-tier1@festusedu.com' (Priority #1)" in reason_grp
+
+        in_sub_ou, reason_sub_ou = directory_service.is_user_in_session_watch_scope(
+            user_email="student_hs@festusedu.com",
+            target_ous=["/Students/HighSchool"],
+            target_groups=["mobile-pilot-tier1@festusedu.com"],
+            exempt_admins=False,
+        )
+        assert in_sub_ou is True
+        assert "Matched target OU '/Students/HighSchool'" in reason_sub_ou
+
+        in_other, reason_other = directory_service.is_user_in_session_watch_scope(
+            user_email="superintendent@festusedu.com",
+            target_ous=["/Students/HighSchool"],
+            target_groups=["mobile-pilot-tier1@festusedu.com"],
+            exempt_admins=False,
+        )
+        assert in_other is False
+        assert "Outside target OUs/Groups" in reason_other
+
+    # 3. Root (`/`) enabled: Pre-existing phone (created 30 days ago, synced just now) is AUTO-BASELINED and NEVER blocked,
+    #    while a brand-new (<15m) unverified phone IS quarantined to BLOCKED!
+    app.dependency_overrides[get_current_user_email] = lambda: "teacher@festusedu.com"
+    du_preexisting = "devices/iphone-existing-30d/deviceUsers/du-existing"
+    sn_preexisting = "IPHONE-EXISTING-30D"
+    du_brand_new = "devices/pixel-brand-new/deviceUsers/du-new"
+    sn_brand_new = "PIXEL-NEW-15S"
+    session_guard.demote_approved_device(device_user_name=du_preexisting, serial_number=sn_preexisting)
+    session_guard.demote_approved_device(device_user_name=du_brand_new, serial_number=sn_brand_new)
+
+    cfg_root = TenantConfig(
+        customer_id="customers/my_customer",
+        basic_mobile_auto_quarantine_enabled=True,
+        basic_mobile_target_ous=["/"],
+        basic_mobile_target_groups=[],
+    )
+    mixed_devices = [
+        DeviceUserItem(
+            device_user_name=du_preexisting,
+            device_type="IOS",
+            model="iPhone 15 Pro",
+            os_version="iOS 18.1",
+            serial_number=sn_preexisting,
+            approval_state="APPROVED",
+            owner_type="BYOD",
+            last_sync_time=fresh_iso,       # Synced 15s ago
+            create_time=preexisting_iso,    # Created 30 days ago -> Pre-existing!
+        ),
+        DeviceUserItem(
+            device_user_name=du_brand_new,
+            device_type="ANDROID",
+            model="Pixel 9",
+            os_version="Android 16",
+            serial_number=sn_brand_new,
+            approval_state="APPROVED",
+            owner_type="BYOD",
+            last_sync_time=fresh_iso,
+            create_time=fresh_iso,          # Created 15s ago -> Brand-new unverified!
+        ),
+    ]
+    with patch("backend.routes.devices.config_service.get_tenant_config", return_value=cfg_root), \
+         patch("backend.routes.devices.directory_service.is_user_in_session_watch_scope", return_value=(True, "Domain-Wide (All OUs & Groups)")), \
+         patch("backend.routes.devices.crawl_devices_for_user", return_value=(mixed_devices, 2)), \
+         patch("backend.routes.devices.directory_service.get_user_chromeos_devices", return_value=[]), \
+         patch("backend.routes.devices.directory_service.get_user_recent_network_events", return_value=[]), \
+         patch("backend.routes.devices.cloud_identity_service.revoke_device_user", return_value={"done": True}) as mock_root_revoke:
+        resp_root = client.get("/api/devices/my-devices")
+        assert resp_root.status_code == 200
+        by_name = {d["device_user_name"]: d for d in resp_root.json()}
+
+        # Pre-existing 30-day-old iPhone stayed APPROVED and was auto-baselined in portal_approved_devices!
+        assert by_name[du_preexisting]["approval_state"] == "APPROVED"
+        assert session_guard.is_portal_approved_device(du_preexisting, sn_preexisting) is True
+
+        # Brand-new 15s-old unverified Pixel was quarantined to BLOCKED!
+        assert by_name[du_brand_new]["approval_state"] == "BLOCKED"
+        mock_root_revoke.assert_called_once_with(
+            device_user_name=du_brand_new,
+            customer_id="customers/my_customer",
+            action="BLOCK",
+        )
+
+    # 4. Active 15-Minute Onboarding Grace Lease prevents blocking while user is mid-onboarding
+    du_grace_phone = "devices/iphone-grace/deviceUsers/du-grace"
+    sn_grace_phone = "IPHONE-GRACE-01"
+    session_guard.demote_approved_device(device_user_name=du_grace_phone, serial_number=sn_grace_phone)
+    session_guard.grant_onboarding_lease("teacher@festusedu.com", duration_sec=900, reason="portal_add_personal_device")
+    try:
+        grace_devices = [
+            DeviceUserItem(
+                device_user_name=du_grace_phone,
+                device_type="IOS",
+                model="iPhone 16",
+                os_version="iOS 18.2",
+                serial_number=sn_grace_phone,
+                approval_state="APPROVED",
+                owner_type="BYOD",
+                last_sync_time=fresh_iso,
+                create_time=fresh_iso,
+            )
+        ]
+        with patch("backend.routes.devices.config_service.get_tenant_config", return_value=cfg_root), \
+             patch("backend.routes.devices.directory_service.is_user_in_session_watch_scope", return_value=(True, "Domain-Wide (All OUs & Groups)")), \
+             patch("backend.routes.devices.crawl_devices_for_user", return_value=(grace_devices, 1)), \
+             patch("backend.routes.devices.directory_service.get_user_chromeos_devices", return_value=[]), \
+             patch("backend.routes.devices.directory_service.get_user_recent_network_events", return_value=[]), \
+             patch("backend.routes.devices.cloud_identity_service.revoke_device_user") as mock_grace_revoke:
+            resp_grace = client.get("/api/devices/my-devices")
+            assert resp_grace.status_code == 200
+            assert resp_grace.json()[0]["approval_state"] == "APPROVED"
+            mock_grace_revoke.assert_not_called()
+    finally:
+        session_guard._onboarding_leases.pop("teacher@festusedu.com", None)
+
+    # 5. Verify Advanced Mobile Management MDM devices (PROFILE_OWNER / DEVICE_OWNER) are skipped
+    assert _is_mobile_byod_device("ANDROID", "Android 16", "Pixel 9", ownership_privilege="PROFILE_OWNER") is False
+    assert _is_mobile_byod_device("ANDROID", "Android 16", "Pixel 9", ownership_privilege="DEVICE_OWNER") is False
+    assert _is_mobile_byod_device("ANDROID", "Android 16", "Pixel 9", ownership_privilege="") is True
+
+
+
+

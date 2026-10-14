@@ -373,5 +373,90 @@ describe("AdminConfig Page", () => {
       );
     });
   });
+
+  test("allows enabling Agentless (Basic) Mobile Management Auto-Quarantine with OU and Google Group scoping", async () => {
+    render(<AdminConfig />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("toggle-basic-mobile-quarantine")).toBeInTheDocument();
+    });
+
+    const basicMobileToggle = screen.getByTestId("toggle-basic-mobile-quarantine");
+    expect(basicMobileToggle).toHaveAttribute("role", "switch");
+    expect(basicMobileToggle).toHaveAttribute("aria-checked", "false");
+
+    // Toggle Agentless (Basic) Mobile Management Auto-Quarantine ON
+    fireEvent.click(basicMobileToggle);
+    expect(screen.getByTestId("confirm-toggle-modal")).toBeInTheDocument();
+    expect(
+      screen.getByText(/Enable Agentless \(Basic\) Mobile Management Auto-Quarantine\?/i)
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("confirm-autosave-btn"));
+
+    await waitFor(() => {
+      expect(mockUpdateAdminConfig).toHaveBeenCalledWith(
+        expect.objectContaining({
+          basic_mobile_auto_quarantine_enabled: true,
+          enforcement_mode: "BASIC_MOBILE_QUARANTINE",
+        })
+      );
+    });
+
+    expect(screen.getByTestId("toggle-basic-mobile-quarantine")).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByTestId("active-enforcement-mode-pill")).toHaveTextContent(/BASIC_MOBILE_QUARANTINE/i);
+
+    // Verify BOTH the master toggle AND all OU checkboxes (including Root '/') start UNCHECKED by default!
+    const basicRootCheckbox = screen.getByTestId("ou-tree-basic-mobile-checkbox-/") as HTMLInputElement;
+    const basicStaffCheckbox = screen.getByTestId("ou-tree-basic-mobile-checkbox-/Staff") as HTMLInputElement;
+    const basicStudentsCheckbox = screen.getByTestId("ou-tree-basic-mobile-checkbox-/Students") as HTMLInputElement;
+    expect(basicRootCheckbox.checked).toBe(false);
+    expect(basicRootCheckbox.disabled).toBe(false);
+    expect(basicStaffCheckbox.checked).toBe(false);
+    expect(basicStudentsCheckbox.checked).toBe(false);
+
+    // Admin can explicitly check Root (/) if they choose (`basic_mobile_target_ous: ["/"]`),
+    // or uncheck Root (/) and select /Staff Sub-OU + a Google Group
+    fireEvent.click(basicRootCheckbox);
+    await waitFor(() => {
+      expect(basicRootCheckbox.checked).toBe(true);
+      expect(basicRootCheckbox.disabled).toBe(false);
+      expect(mockUpdateAdminConfig).toHaveBeenCalledWith(
+        expect.objectContaining({
+          basic_mobile_auto_quarantine_enabled: true,
+          basic_mobile_target_ous: ["/"],
+        })
+      );
+    });
+
+    // Uncheck Root (/) and wait for auto-save to complete before selecting /Staff Sub-OU + a Google Group
+    fireEvent.click(basicRootCheckbox);
+    await waitFor(() => {
+      expect(basicRootCheckbox.checked).toBe(false);
+      expect(basicRootCheckbox.disabled).toBe(false);
+    });
+
+    fireEvent.click(basicStaffCheckbox);
+    await waitFor(() => {
+      expect(basicStaffCheckbox.checked).toBe(true);
+      expect(basicStaffCheckbox.disabled).toBe(false);
+    });
+
+    const basicMobileGroupInput = screen.getByTestId("group-selector-basic-mobile-input");
+    fireEvent.change(basicMobileGroupInput, {
+      target: { value: "mobile-byod-pilot@school.edu" },
+    });
+    fireEvent.blur(basicMobileGroupInput);
+
+    await waitFor(() => {
+      expect(mockUpdateAdminConfig).toHaveBeenCalledWith(
+        expect.objectContaining({
+          basic_mobile_auto_quarantine_enabled: true,
+          basic_mobile_target_ous: ["/Staff"],
+          basic_mobile_target_groups: ["mobile-byod-pilot@school.edu"],
+        })
+      );
+    });
+  });
 });
 

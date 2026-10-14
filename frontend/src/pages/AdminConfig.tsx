@@ -28,10 +28,12 @@ import { getTranslator } from "../i18n/translations";
 
 function deriveEnforcementMode(
   sessionWatch: boolean,
-  cookieThreat: boolean = false
+  cookieThreat: boolean = false,
+  basicMobileQuarantine: boolean = false
 ): string {
   if (sessionWatch) return "SESSION_WATCH";
   if (cookieThreat) return "COOKIE_SENTINEL";
+  if (basicMobileQuarantine) return "BASIC_MOBILE_QUARANTINE";
   return "DISABLED";
 }
 
@@ -110,6 +112,8 @@ interface OuAndGroupScopeSelectorProps {
   directoryOus: DirectoryOuNode[];
   directoryGroups?: DirectoryGroupNode[];
   disabled?: boolean;
+  disallowRootDomain?: boolean;
+  defaultRootUnchecked?: boolean;
 }
 
 const OuAndGroupScopeSelector: React.FC<OuAndGroupScopeSelectorProps> = ({
@@ -132,17 +136,20 @@ const OuAndGroupScopeSelector: React.FC<OuAndGroupScopeSelectorProps> = ({
   onCommitGroupsInput,
   directoryOus,
   disabled = false,
+  disallowRootDomain = false,
+  defaultRootUnchecked = false,
 }) => {
   const [collapsedParents, setCollapsedParents] = useState<Record<string, boolean>>({});
   const [customOuInput, setCustomOuInput] = useState("");
   const [extraCustomOus, setExtraCustomOus] = useState<string[]>([]);
-  const [rootUnchecked, setRootUnchecked] = useState(false);
+  const [rootUnchecked, setRootUnchecked] = useState(disallowRootDomain || defaultRootUnchecked);
 
   const selectedOus = ousInputValue
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean)
-    .map((s) => (s === "/" ? "/" : "/" + s.replace(/^\/+|\/+$/g, "")));
+    .map((s) => (s === "/" ? "/" : "/" + s.replace(/^\/+|\/+$/g, "")))
+    .filter((s) => !(disallowRootDomain && s === "/"));
 
   // Preserve exact comma-separated group order (1st in = Priority #1 / Highest Hierarchy)
   const selectedGroups: string[] = [];
@@ -154,7 +161,11 @@ const OuAndGroupScopeSelector: React.FC<OuAndGroupScopeSelectorProps> = ({
   }
 
   const hasSpecificChildOus = selectedOus.some((o) => o !== "/");
-  const isRootChecked = selectedOus.includes("/") || (!hasSpecificChildOus && !rootUnchecked);
+  const isRootChecked = disallowRootDomain
+    ? false
+    : defaultRootUnchecked
+    ? selectedOus.includes("/")
+    : selectedOus.includes("/") || (!hasSpecificChildOus && !rootUnchecked);
   const isGlobalOus = isRootChecked;
   const isGlobalScope = isGlobalOus && selectedGroups.length === 0;
 
@@ -195,8 +206,9 @@ const OuAndGroupScopeSelector: React.FC<OuAndGroupScopeSelectorProps> = ({
   const handleToggleOuCheckbox = (ouPath: string) => {
     if (disabled) return;
     if (ouPath === "/") {
+      if (disallowRootDomain) return;
       if (isRootChecked) {
-        // Uncheck Root (/) so admin can select individual child OUs
+        // Uncheck Root (/) so admin can select individual child OUs (or leave all unchecked)
         setRootUnchecked(true);
         if (ousInputValue.trim() !== "") {
           onChangeOusInput("");
@@ -205,10 +217,9 @@ const OuAndGroupScopeSelector: React.FC<OuAndGroupScopeSelectorProps> = ({
       } else {
         // Check Root (/) -> Global All OUs (all children become checked & locked via inheritance)
         setRootUnchecked(false);
-        if (ousInputValue.trim() !== "") {
-          onChangeOusInput("");
-          onCommitOusInput("");
-        }
+        const nextRootVal = defaultRootUnchecked ? "/" : "";
+        onChangeOusInput(nextRootVal);
+        onCommitOusInput(nextRootVal);
       }
       return;
     }
@@ -397,7 +408,7 @@ const OuAndGroupScopeSelector: React.FC<OuAndGroupScopeSelectorProps> = ({
             const inheritedFrom = !isRoot ? getInheritingAncestor(node.org_unit_path) : null;
             const isInherited = Boolean(inheritedFrom);
             const isChecked = explicitlyChecked || isInherited;
-            const isCheckboxDisabled = isInherited;
+            const isCheckboxDisabled = isInherited || (isRoot && disallowRootDomain);
             const hasChildren = parentPathsWithChildren.has(node.org_unit_path);
             const isCollapsed = Boolean(collapsedParents[node.org_unit_path]);
 
@@ -487,7 +498,23 @@ const OuAndGroupScopeSelector: React.FC<OuAndGroupScopeSelectorProps> = ({
                 </div>
 
                 <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
-                  {isRoot && isRootChecked && (
+                  {isRoot && disallowRootDomain && (
+                    <span
+                      data-testid={`${ouTreeTestId}-root-protected-badge`}
+                      style={{
+                        fontSize: "10.5px",
+                        fontWeight: 700,
+                        color: "#b06000",
+                        backgroundColor: "#fef7e0",
+                        padding: "1px 7px",
+                        borderRadius: "999px",
+                        border: "1px solid #feefc3",
+                      }}
+                    >
+                      🛡️ Root (/) Protected — Select Sub-OUs or Groups Only
+                    </span>
+                  )}
+                  {isRoot && isRootChecked && !disallowRootDomain && (
                     <span
                       style={{
                         fontSize: "10.5px",
@@ -818,6 +845,7 @@ interface PendingConfirmChange {
   overrides: Partial<{
     sessionWatchEnabled: boolean;
     cookieThreatDetectionEnabled: boolean;
+    basicMobileAutoQuarantineEnabled: boolean;
     sessionWatchExemptAdmins: boolean;
     sessionWatchDryRun: boolean;
     enableNetworkApproval: boolean;
@@ -842,10 +870,13 @@ export const AdminConfig: React.FC = () => {
   const [uiLocale, setUiLocale] = useState(() => localStorage.getItem("userLocale") || "en");
   const [sessionWatchEnabled, setSessionWatchEnabled] = useState(false);
   const [cookieThreatDetectionEnabled, setCookieThreatDetectionEnabled] = useState(false);
+  const [basicMobileAutoQuarantineEnabled, setBasicMobileAutoQuarantineEnabled] = useState(false);
   const [sessionWatchTargetOusInput, setSessionWatchTargetOusInput] = useState("");
   const [sessionWatchTargetGroupsInput, setSessionWatchTargetGroupsInput] = useState("");
   const [cookieThreatTargetOusInput, setCookieThreatTargetOusInput] = useState("");
   const [cookieThreatTargetGroupsInput, setCookieThreatTargetGroupsInput] = useState("");
+  const [basicMobileTargetOusInput, setBasicMobileTargetOusInput] = useState("");
+  const [basicMobileTargetGroupsInput, setBasicMobileTargetGroupsInput] = useState("");
   const [directoryOus, setDirectoryOus] = useState<DirectoryOuNode[]>([]);
   const [directoryGroups, setDirectoryGroups] = useState<DirectoryGroupNode[]>([]);
   const [sessionWatchExemptAdmins, setSessionWatchExemptAdmins] = useState(false);
@@ -882,7 +913,8 @@ export const AdminConfig: React.FC = () => {
   const t = getTranslator(uiLocale || defaultLocale || "en");
   const enforcementMode = deriveEnforcementMode(
     sessionWatchEnabled,
-    cookieThreatDetectionEnabled
+    cookieThreatDetectionEnabled,
+    basicMobileAutoQuarantineEnabled
   );
 
   useEffect(() => {
@@ -907,10 +939,13 @@ export const AdminConfig: React.FC = () => {
         }
         setSessionWatchEnabled(Boolean(data.session_watch_enabled));
         setCookieThreatDetectionEnabled(Boolean(data.cookie_threat_detection_enabled));
+        setBasicMobileAutoQuarantineEnabled(Boolean(data.basic_mobile_auto_quarantine_enabled));
         setSessionWatchTargetOusInput((data.session_watch_target_ous || []).join(", "));
         setSessionWatchTargetGroupsInput((data.session_watch_target_groups || []).join(", "));
         setCookieThreatTargetOusInput((data.cookie_threat_target_ous || []).join(", "));
         setCookieThreatTargetGroupsInput((data.cookie_threat_target_groups || []).join(", "));
+        setBasicMobileTargetOusInput((data.basic_mobile_target_ous || []).join(", "));
+        setBasicMobileTargetGroupsInput((data.basic_mobile_target_groups || []).join(", "));
         setSessionWatchExemptAdmins(Boolean(data.session_watch_exempt_admins));
         setSessionWatchDryRun(Boolean(data.session_watch_dry_run));
         setSessionWatchOnboardingGraceMinutes(data.session_watch_onboarding_grace_minutes || 15);
@@ -969,6 +1004,7 @@ export const AdminConfig: React.FC = () => {
     overrides: Partial<{
       sessionWatchEnabled: boolean;
       cookieThreatDetectionEnabled: boolean;
+      basicMobileAutoQuarantineEnabled: boolean;
       sessionWatchExemptAdmins: boolean;
       sessionWatchDryRun: boolean;
       enableNetworkApproval: boolean;
@@ -981,6 +1017,8 @@ export const AdminConfig: React.FC = () => {
       sessionWatchTargetGroupsInput: string;
       cookieThreatTargetOusInput: string;
       cookieThreatTargetGroupsInput: string;
+      basicMobileTargetOusInput: string;
+      basicMobileTargetGroupsInput: string;
       sessionWatchOnboardingGraceMinutes: number;
     }> = {},
     changeSummary: string = "Configuration updated"
@@ -991,6 +1029,7 @@ export const AdminConfig: React.FC = () => {
 
     const nextSw = overrides.sessionWatchEnabled ?? sessionWatchEnabled;
     const nextCookieThreat = overrides.cookieThreatDetectionEnabled ?? cookieThreatDetectionEnabled;
+    const nextBasicMobile = overrides.basicMobileAutoQuarantineEnabled ?? basicMobileAutoQuarantineEnabled;
     const nextExempt = overrides.sessionWatchExemptAdmins ?? sessionWatchExemptAdmins;
     const nextDryRun = overrides.sessionWatchDryRun ?? sessionWatchDryRun;
     const nextNetApp = overrides.enableNetworkApproval ?? enableNetworkApproval;
@@ -1003,9 +1042,11 @@ export const AdminConfig: React.FC = () => {
     const nextGroupsInput = overrides.sessionWatchTargetGroupsInput ?? sessionWatchTargetGroupsInput;
     const nextCookieOusInput = overrides.cookieThreatTargetOusInput ?? cookieThreatTargetOusInput;
     const nextCookieGroupsInput = overrides.cookieThreatTargetGroupsInput ?? cookieThreatTargetGroupsInput;
+    const nextBasicMobileOusInput = overrides.basicMobileTargetOusInput ?? basicMobileTargetOusInput;
+    const nextBasicMobileGroupsInput = overrides.basicMobileTargetGroupsInput ?? basicMobileTargetGroupsInput;
     const nextGraceMin = overrides.sessionWatchOnboardingGraceMinutes ?? sessionWatchOnboardingGraceMinutes;
 
-    const nextMode = deriveEnforcementMode(nextSw, nextCookieThreat);
+    const nextMode = deriveEnforcementMode(nextSw, nextCookieThreat, nextBasicMobile);
     const parsedTargetOus = nextOusInput
       .split(",")
       .map((s) => s.trim())
@@ -1019,6 +1060,14 @@ export const AdminConfig: React.FC = () => {
       .map((s) => s.trim())
       .filter(Boolean);
     const parsedCookieTargetGroups = nextCookieGroupsInput
+      .split(",")
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean);
+    const parsedBasicMobileTargetOus = nextBasicMobileOusInput
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const parsedBasicMobileTargetGroups = nextBasicMobileGroupsInput
       .split(",")
       .map((s) => s.trim().toLowerCase())
       .filter(Boolean);
@@ -1052,11 +1101,14 @@ export const AdminConfig: React.FC = () => {
       enforcement_mode: nextMode,
       session_watch_enabled: nextSw,
       cookie_threat_detection_enabled: nextCookieThreat,
+      basic_mobile_auto_quarantine_enabled: nextBasicMobile,
       caa_enforcement_enabled: false,
       session_watch_target_ous: parsedTargetOus,
       session_watch_target_groups: parsedTargetGroups,
       cookie_threat_target_ous: parsedCookieTargetOus,
       cookie_threat_target_groups: parsedCookieTargetGroups,
+      basic_mobile_target_ous: parsedBasicMobileTargetOus,
+      basic_mobile_target_groups: parsedBasicMobileTargetGroups,
       session_watch_exempt_admins: nextExempt,
       session_watch_dry_run: nextDryRun,
       session_watch_onboarding_grace_minutes: Math.max(5, Math.min(120, Number(nextGraceMin) || 15)),
@@ -1067,6 +1119,7 @@ export const AdminConfig: React.FC = () => {
       setConfig(updatedConfig);
       setSessionWatchEnabled(nextSw);
       setCookieThreatDetectionEnabled(nextCookieThreat);
+      setBasicMobileAutoQuarantineEnabled(nextBasicMobile);
       setSessionWatchExemptAdmins(nextExempt);
       setSessionWatchDryRun(nextDryRun);
       setEnableNetworkApproval(nextNetApp);
@@ -1089,11 +1142,14 @@ export const AdminConfig: React.FC = () => {
         enforcement_mode: updatedConfig.enforcement_mode,
         session_watch_enabled: updatedConfig.session_watch_enabled,
         cookie_threat_detection_enabled: updatedConfig.cookie_threat_detection_enabled,
+        basic_mobile_auto_quarantine_enabled: updatedConfig.basic_mobile_auto_quarantine_enabled,
         caa_enforcement_enabled: updatedConfig.caa_enforcement_enabled,
         session_watch_target_ous: updatedConfig.session_watch_target_ous,
         session_watch_target_groups: updatedConfig.session_watch_target_groups,
         cookie_threat_target_ous: updatedConfig.cookie_threat_target_ous,
         cookie_threat_target_groups: updatedConfig.cookie_threat_target_groups,
+        basic_mobile_target_ous: updatedConfig.basic_mobile_target_ous,
+        basic_mobile_target_groups: updatedConfig.basic_mobile_target_groups,
         session_watch_exempt_admins: updatedConfig.session_watch_exempt_admins,
         session_watch_dry_run: updatedConfig.session_watch_dry_run,
       });
@@ -1327,11 +1383,11 @@ export const AdminConfig: React.FC = () => {
               padding: "18px",
               borderRadius: "8px",
               border:
-                sessionWatchEnabled || cookieThreatDetectionEnabled
+                sessionWatchEnabled || cookieThreatDetectionEnabled || basicMobileAutoQuarantineEnabled
                   ? "1.5px solid #137333"
                   : "1px solid var(--dtg-border)",
               backgroundColor:
-                sessionWatchEnabled || cookieThreatDetectionEnabled
+                sessionWatchEnabled || cookieThreatDetectionEnabled || basicMobileAutoQuarantineEnabled
                   ? "rgba(19, 115, 51, 0.04)"
                   : "var(--dtg-surface-subtle)",
             }}
@@ -1399,7 +1455,7 @@ export const AdminConfig: React.FC = () => {
               </span>
             </div>
 
-            {!sessionWatchEnabled && !cookieThreatDetectionEnabled && (
+            {!sessionWatchEnabled && !cookieThreatDetectionEnabled && !basicMobileAutoQuarantineEnabled && (
               <div
                 style={{
                   marginBottom: "14px",
@@ -1515,6 +1571,58 @@ export const AdminConfig: React.FC = () => {
                   directoryOus={directoryOus}
                   directoryGroups={directoryGroups}
                   disabled={saving}
+                />
+              </div>
+
+              {/* Toggle 3: Agentless (Basic) Mobile Management Auto-Quarantine + Granular OU Tree & Group Scope */}
+              <div style={{ display: "grid", gap: "10px" }}>
+                <ToggleSwitch
+                  testId="toggle-basic-mobile-quarantine"
+                  checked={basicMobileAutoQuarantineEnabled}
+                  disabled={saving}
+                  activeColor="#137333"
+                  onToggle={(nextVal) =>
+                    requestToggleWithConfirmation({
+                      title: `${nextVal ? "Enable" : "Disable"} Agentless (Basic) Mobile Management Auto-Quarantine?`,
+                      summary: `Agentless (Basic) Mobile Management Auto-Quarantine turned ${nextVal ? "ON" : "OFF"}`,
+                      overrides: { basicMobileAutoQuarantineEnabled: nextVal },
+                    })
+                  }
+                  label="📱 Agentless (Basic) Mobile Management Auto-Quarantine (Android & iOS — Event-Driven, $0.00/mo, No MDM App)"
+                  description="OFF by Default (Advanced Mobile Management Mode: when OFF, zero Basic mobile portal work runs and Google Admin Console's Advanced MDM handles PENDING_APPROVAL natively). When turned ON (including at the Root Organization '/' or for specific Sub-OUs / Priority #1 -> #N Google Groups), newly enrolled (<15m) unverified Basic Android & iOS BYOD phones are quarantined to BLOCKED until approved in the portal, while pre-existing phones (>15m old), Company-Owned devices, Advanced MDM Work Profile devices, and active 15m Onboarding Grace Passes are automatically baselined and never accidentally blocked."
+                />
+                <OuAndGroupScopeSelector
+                  featureTitle="Agentless (Basic) Mobile Management Auto-Quarantine (Android & iOS)"
+                  ouTreeTestId="ou-tree-basic-mobile"
+                  groupSelectorTestId="group-selector-basic-mobile"
+                  ouInputId="basic-mobile-target-ous"
+                  groupInputId="basic-mobile-target-groups"
+                  ouLabel="Basic Mobile Auto-Quarantine Target Organizational Units (OUs — Unchecked by Default)"
+                  ouPlaceholder="e.g. / (Root), /Staff, /Students/HighSchool"
+                  ouHint="Unchecked by default (nothing blocked until you explicitly check Root Organization (/) or a Sub-OU / Group). Pre-existing phones (>15m old) are auto-baselined and never blocked."
+                  groupLabel="Basic Mobile Auto-Quarantine Target Google Groups (Priority #1 -> #N Hierarchy)"
+                  groupPlaceholder="mobile-byod-pilot@school.edu, staff@school.edu"
+                  groupHint="Comma-separated Google Group emails (1st in = Priority #1 / Highest Hierarchy). Leave blank when scoping by OU Tree."
+                  ousInputValue={basicMobileTargetOusInput}
+                  groupsInputValue={basicMobileTargetGroupsInput}
+                  onChangeOusInput={setBasicMobileTargetOusInput}
+                  onCommitOusInput={(nextVal) =>
+                    persistConfiguration(
+                      { basicMobileTargetOusInput: nextVal },
+                      `Updated Basic Mobile Auto-Quarantine Target OUs (${nextVal || "None"})`
+                    )
+                  }
+                  onChangeGroupsInput={setBasicMobileTargetGroupsInput}
+                  onCommitGroupsInput={(nextVal) =>
+                    persistConfiguration(
+                      { basicMobileTargetGroupsInput: nextVal },
+                      `Updated Basic Mobile Auto-Quarantine Target Groups (${nextVal || "None"})`
+                    )
+                  }
+                  directoryOus={directoryOus}
+                  directoryGroups={directoryGroups}
+                  disabled={saving}
+                  defaultRootUnchecked={true}
                 />
               </div>
             </div>

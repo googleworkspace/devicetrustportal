@@ -64,6 +64,9 @@ def health_check():
         "cookie_threat_detection_enabled": bool(
             getattr(config, "cookie_threat_detection_enabled", False)
         ),
+        "basic_mobile_auto_quarantine_enabled": bool(
+            getattr(config, "basic_mobile_auto_quarantine_enabled", False)
+        ),
         "caa_enforcement_enabled": bool(getattr(config, "caa_enforcement_enabled", False)),
         "branch_variation": "poc/fundamentals-session-watch",
     }
@@ -94,6 +97,9 @@ def get_public_config():
         "session_watch_enabled": bool(getattr(config, "session_watch_enabled", False)),
         "cookie_threat_detection_enabled": bool(
             getattr(config, "cookie_threat_detection_enabled", False)
+        ),
+        "basic_mobile_auto_quarantine_enabled": bool(
+            getattr(config, "basic_mobile_auto_quarantine_enabled", False)
         ),
         "caa_enforcement_enabled": bool(getattr(config, "caa_enforcement_enabled", False)),
         "enable_trust_chaining": bool(getattr(config, "enable_trust_chaining", False)),

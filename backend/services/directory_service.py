@@ -380,20 +380,45 @@ class DirectoryService:
         portal_admins: Optional[List[str]] = None,
         exempt_ous: Optional[List[str]] = None,
         exempt_groups: Optional[List[str]] = None,
+        require_non_root_explicit_scope: bool = False,
+        require_explicit_target_scope: bool = False,
     ) -> Tuple[bool, str]:
-        """Determines whether a user is in scope for Session Watch enforcement.
+        """Determines whether a user is in scope for Session Watch / Basic Mobile Auto-Quarantine enforcement.
 
         Returns (in_scope: bool, reason: str).
+        When `require_explicit_target_scope=True` (used by Basic Mobile Auto-Quarantine), an empty
+        `target_ous=[]` and `target_groups=[]` is NEVER enabled by default—an admin must explicitly
+        select Root (`"/"`), a Sub-OU (`"/Staff"`), or a Google Group (`"pilot@domain.org"`).
         Uses a 5-minute TTL cache so repeated login events for the same user do not
         consume extra Directory API quota.
         """
         target_email = user_email.lower().strip()
-        clean_ous = [o.strip() for o in (target_ous or []) if o and o.strip()]
+        if require_non_root_explicit_scope:
+            clean_ous = [
+                o.strip()
+                for o in (target_ous or [])
+                if o and o.strip() and o.strip() != "/"
+            ]
+        else:
+            clean_ous = [o.strip() for o in (target_ous or []) if o and o.strip()]
         clean_groups: List[str] = []
         for g in target_groups or []:
             gc = (g or "").strip().lower()
             if gc and gc not in clean_groups:
                 clean_groups.append(gc)
+
+        if require_non_root_explicit_scope and not clean_ous and not clean_groups:
+            return (
+                False,
+                "Skipped: Basic Mobile Auto-Quarantine requires an explicit non-root Sub-OU or Google Group (domain-wide root '/' scope is disabled)",
+            )
+
+        if require_explicit_target_scope and not clean_ous and not clean_groups:
+            return (
+                False,
+                "Skipped: Basic Mobile Auto-Quarantine has no target OU or Google Group selected (unchecked by default until Root '/', a Sub-OU, or a Group is explicitly selected)",
+            )
+
         clean_exempt_ous = [o.strip() for o in (exempt_ous or []) if o and o.strip()]
         clean_exempt_groups: List[str] = []
         for g in exempt_groups or []:
@@ -411,6 +436,7 @@ class DirectoryService:
         cache_key = (
             f"{target_email}|ous={','.join(sorted(clean_ous))}|grps={','.join(clean_groups)}"
             f"|ex={exempt_admins}|ex_ous={','.join(sorted(clean_exempt_ous))}|ex_grps={','.join(clean_exempt_groups)}"
+            f"|nonroot={require_non_root_explicit_scope}|explicit={require_explicit_target_scope}"
         )
         now = time.time()
         cached = self._scope_cache.get(cache_key)
@@ -420,6 +446,8 @@ class DirectoryService:
         if not self.service:
             if not clean_ous and not clean_groups:
                 return True, "Domain-wide scope"
+            if "/" in clean_ous:
+                return True, "Matched target OU '/' (Root Organization)"
             return False, "Directory service uninitialized; skipping scoped enforcement"
 
         user_ou = "/"
@@ -462,14 +490,7 @@ class DirectoryService:
             self._scope_cache[cache_key] = (now, res[0], res[1])
             return res
 
-        # 1. Check OU match (exact match or sub-OU hierarchy match, e.g. '/Students' matches '/Students/Grade9')
-        for ou in clean_ous:
-            if self.is_ou_matching(user_ou, ou):
-                res = (True, f"Matched target OU '{ou}' (user OU '{user_ou}')")
-                self._scope_cache[cache_key] = (now, res[0], res[1])
-                return res
-
-        # 2. Check Group membership match in comma-separated priority order (1st in = Priority #1)
+        # 1. Check Group membership match in comma-separated priority order (1st in = Priority #1, overriding OUs)
         for idx, group in enumerate(clean_groups, start=1):
             try:
                 member_check = (
@@ -486,6 +507,13 @@ class DirectoryService:
                     return res
             except Exception as e:
                 print(f"WARNING [directory_service.py]: Group membership check failed for '{group}': {e}")
+
+        # 2. Check OU match (exact match or sub-OU hierarchy match, e.g. '/Students' matches '/Students/Grade9')
+        for ou in clean_ous:
+            if self.is_ou_matching(user_ou, ou):
+                res = (True, f"Matched target OU '{ou}' (user OU '{user_ou}')")
+                self._scope_cache[cache_key] = (now, res[0], res[1])
+                return res
 
         res = (False, f"Outside target OUs/Groups (user OU '{user_ou}')")
         self._scope_cache[cache_key] = (now, res[0], res[1])

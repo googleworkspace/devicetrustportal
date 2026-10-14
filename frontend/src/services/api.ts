@@ -46,6 +46,9 @@ export interface TenantConfig {
   session_watch_target_groups?: string[];
   cookie_threat_target_ous?: string[];
   cookie_threat_target_groups?: string[];
+  basic_mobile_auto_quarantine_enabled?: boolean;
+  basic_mobile_target_ous?: string[];
+  basic_mobile_target_groups?: string[];
   session_watch_exempt_admins?: boolean;
   session_watch_dry_run?: boolean;
   session_watch_onboarding_grace_minutes?: number;
@@ -80,6 +83,9 @@ export interface SessionWatchMetricsResponse {
   session_watch_target_groups?: string[];
   cookie_threat_target_ous?: string[];
   cookie_threat_target_groups?: string[];
+  basic_mobile_auto_quarantine_enabled?: boolean;
+  basic_mobile_target_ous?: string[];
+  basic_mobile_target_groups?: string[];
   session_watch_exempt_admins?: boolean;
   session_watch_dry_run?: boolean;
   session_watch_onboarding_grace_minutes?: number;
@@ -94,6 +100,7 @@ export interface SessionWatchMetricsResponse {
     exemptions_skipped?: number;
     audit_would_signout?: number;
     signouts_executed: number;
+    basic_mobile_auto_quarantined?: number;
     reports_api_calls: number;
     directory_api_calls: number;
     directory_batch_http_calls: number;

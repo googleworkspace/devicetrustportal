@@ -18,7 +18,9 @@ This document outlines the mandatory Google Workspace Admin Console settings, ex
 ## 🏛 Executive Summary
 
 In Google Workspace:
-* **Mobile Devices (Android / iOS):** Require **Advanced Mobile Management** + **Require Admin Approval** to automatically enter a `PENDING_APPROVAL` / `BLOCKED` state upon enrollment.
+* **Mobile Devices (Android / iOS) — Two Supported Options:**
+  - **Option A (Recommended — Agentless `Basic` Mobile Management + Portal Auto-Quarantine):** Leave Mobile Management set to **Basic** in Google Admin Console so Android & iOS phones **never** prompt users to install the Google Device Policy MDM app or wipe their account, and enable **Agentless (`Basic`) Mobile Management Auto-Quarantine** in the Device Trust Portal (`#/admin`, scoped by **OU and/or Google Group**). Although Google Cloud Identity initially registers `Basic` mobile devices in `APPROVED` state (`CreateDeviceProducerModule`), the portal automatically flips any unverified `Basic` mobile BYOD device from `APPROVED` $\rightarrow$ `BLOCKED` in Cloud Identity (`DeviceStateMachine.initializeBasicActions()`) inline in `<0.4s` on portal load and within `~2–10s` via the background sweep until verified via Campus Network or 6-Digit Trust Chaining.
+  - **Option B (Strict MDM — `Advanced` Mobile Management):** Requires users to install the **Google Device Policy** MDM app / Android Work Profile (clicking *"No"* removes the Google Workspace account from the phone) and can only be scoped by **OU** (not by Google Group) in Admin Console, but places new mobile logins directly into `PENDING_APPROVAL` at account sign-in.
 * **Computers (macOS / Windows / Linux):**
   - Personal BYOD laptops do **not** require Chrome Browser Cloud Management (CBCM) machine enrollment (`CloudReportingEnabled` is ignored on unenrolled BYOD machines).
   - When **Profile reporting** (`CloudProfileReportingEnabled`), **Chrome signals sharing** (`UserSecuritySignalsReporting` & `UserSecurityAuthenticatedReporting`), **Universal Device signals**, and **Require admin approval** are enabled together, newly signed-in managed Chrome profiles register directly in **Pending approval** (`Device.managementState = PENDING`, `DeviceUser.managementState = PENDING_APPROVAL`).
@@ -59,11 +61,19 @@ Activates device signal collection across your entire organization.
 * **Email Notifications:** Enter the admin email address (e.g., `admin@yourdomain.com`) to receive enrollment alerts.
 * ⚠️ **Important:** Verify that sub-OUs (like `/Admin`, `/Staff`, `/Students`) inherit this setting or explicitly have **Require admin approval** selected.
 
-### 4. Enable Advanced Mobile Management (Mobile Devices)
+### 4. Configure Mobile Management (`Basic` Agentless vs. `Advanced` MDM)
 * **Path:** `Devices > Mobile & endpoints > Settings > Universal settings > General`
 * **Setting:** Expand **Mobile management**.
-* **Configuration:** Set Android and iOS to **Advanced**.
-* **Purpose:** Forces new Android and iOS logins into a `PENDING_APPROVAL` state upon initial account sign-in.
+* **Option A — `Basic` (Agentless — Recommended for BYOD Staff/Students & Google Group Scoping):**
+  - **Admin Console Configuration:** Set Android and iOS (or **Turn on mobile management**) to **Basic**.
+  - **Portal Configuration (`#/admin`):** Enable **📱 Agentless (Basic) Mobile Management Auto-Quarantine (Android & iOS — No MDM App Required)** and scope it to your target **Organizational Units (OUs)** and/or **Google Security Groups**.
+  - **Why Choose `Basic` + Portal Auto-Quarantine:**
+    1. **Zero MDM App Prompt / No Account Removal:** Users signing in on personal Android (Pixel/Samsung) or iOS phones are **never** forced to install the Google Device Policy MDM app or create a managed work profile, and their account is never wiped if they decline MDM enrollment.
+    2. **Google Group & OU Scoping:** Overcomes Google Admin Console's limitation where Mobile Management can only be toggled by OU and not by Security Group.
+    3. **How It Works:** Google's EMM backend (`CreateDeviceProducerModule`) registers `Basic` mobile devices in `APPROVED` state upon initial sign-in, but `DeviceStateMachine.initializeBasicActions()` permits `BLOCK` and `APPROVE` state transitions on `Basic` devices via the Cloud Identity Devices API. The Device Trust Portal automatically flips any unverified `Basic` mobile BYOD device from `APPROVED` $\rightarrow$ `BLOCKED` (updating `device.is_admin_approved_device = false` for Context-Aware Access and triggering `users.signOut` when Session Management is active) until the user approves the phone via Campus IP or 6-Digit Trust Chaining.
+* **Option B — `Advanced` (Full MDM Agent Required):**
+  - **Admin Console Configuration:** Set Android and iOS to **Advanced** (scoped by OU only in Admin Console).
+  - **Behavior:** Forces new Android and iOS logins directly into `PENDING_APPROVAL` upon initial account sign-in, but requires users to install the **Google Device Policy** app / Android Work Profile on their mobile device.
 
 ### 5. Enable Managed Chrome Profile Reporting, Signals Sharing & Sign-in Restrictions
 To enable zero-enrollment BYOD telemetry reporting and prevent employees/students from signing into corporate Workspace accounts inside unmanaged personal Chrome profiles:
@@ -119,7 +129,9 @@ Understanding how Google Cloud Identity treats different platform registrations:
 +-------------------+---------------------------------------------+-------------------------------------------------+
 | Platform Category | Required Management & Policy Settings       | Initial State in Cloud Identity                 |
 +-------------------+---------------------------------------------+-------------------------------------------------+
-| Android & iOS     | Advanced Mobile Management + Require Approv | PENDING_APPROVAL / BLOCKED                      |
+| Android & iOS     | Basic Mobile Mgmt + Portal Auto-Quarantine  | Auto-flipped APPROVED -> BLOCKED (No MDM App!)  |
++-------------------+---------------------------------------------+-------------------------------------------------+
+| Android & iOS     | Advanced Mobile Management + Require Approv | PENDING_APPROVAL / BLOCKED (Requires MDM App)   |
 +-------------------+---------------------------------------------+-------------------------------------------------+
 | macOS & Windows   | Profile Reporting + Chrome Signals Sharing  | PENDING (Device) / PENDING_APPROVAL (DeviceUser)|
 | (Managed Profile) | + Require Admin Approval                    |                                                 |

@@ -27,12 +27,35 @@ from backend.services.config_service import config_service
 from backend.services.directory_service import directory_service
 from backend.services.session_guard import (
     DeviceRecord,
+    EnforcementAction,
     LoginAuditEvent,
     SessionGuardService,
     TokenAuditEvent,
 )
 
 router = APIRouter(prefix="/api/session-watch", tags=["Session Watch (CAA-Free)"])
+
+
+def _is_mobile_byod_device(
+    device_type: str,
+    os_version: str = "",
+    model: str = "",
+    ownership_privilege: str = "",
+) -> bool:
+    """Returns True if the device represents an agentless (Basic) Android or iOS mobile device.
+    Excludes devices managed by Advanced Mobile Management MDM (PROFILE_OWNER, DEVICE_OWNER, DEVICE_ADMINISTRATOR).
+    """
+    priv = (ownership_privilege or "").strip().upper()
+    if priv in ("DEVICE_ADMINISTRATOR", "PROFILE_OWNER", "DEVICE_OWNER"):
+        return False
+    dt = (device_type or "").upper()
+    os_ver = (os_version or "").upper()
+    mdl = (model or "").upper()
+    if dt in ("ANDROID", "IOS") or "ANDROID" in dt or "IOS" in dt:
+        return True
+    if "ANDROID" in os_ver or "IOS" in os_ver or "IPHONE" in mdl or "IPAD" in mdl or "PIXEL" in mdl or "GALAXY" in mdl:
+        return True
+    return False
 
 def _live_signout_callback(user_email: str) -> bool:
     """Executes real Admin SDK Directory users.signOut circuit breaker."""
@@ -163,12 +186,56 @@ def _sync_live_inventory() -> Dict[str, Any]:
                     .list(customer=ci_customer, pageSize=200)
                     .execute()
                 )
+            basic_mobile_quarantine = bool(
+                getattr(config, "basic_mobile_auto_quarantine_enabled", False)
+            )
+            now_sync = time.time()
             for dev in resp.get("devices", []) or []:
                 serial = (dev.get("serialNumber") or "").strip().upper()
                 dev_name = dev.get("name", "")
                 device_id = dev_name.split("/")[-1] if dev_name else serial
                 owner_type = (dev.get("ownerType") or "").upper()
                 mgmt_state = (dev.get("managementState") or "APPROVED").upper()
+                android_attrs = dev.get("androidSpecificAttributes") or {}
+                ownership_priv = str(android_attrs.get("ownershipPrivilege") or "")
+                is_mobile_byod = (
+                    owner_type not in ("COMPANY", "CUSTOMER")
+                    and _is_mobile_byod_device(
+                        dev.get("deviceType") or "",
+                        dev.get("osVersion") or "",
+                        dev.get("model") or "",
+                        ownership_priv,
+                    )
+                )
+                if (
+                    basic_mobile_quarantine
+                    and is_mobile_byod
+                    and not session_guard.is_portal_approved_device(dev_name, serial)
+                ):
+                    create_or_sync = str(
+                        dev.get("createTime")
+                        or dev.get("firstSyncTime")
+                        or dev.get("lastSyncTime")
+                        or ""
+                    ).strip()
+                    dev_age_ok = False
+                    if create_or_sync:
+                        try:
+                            import datetime as _dt
+                            ep = _dt.datetime.fromisoformat(
+                                create_or_sync.replace("Z", "+00:00")
+                            ).timestamp()
+                            if (now_sync - ep) > 900.0:
+                                session_guard.record_portal_approved_device(
+                                    device_user_name=dev_name,
+                                    user_email="",
+                                    serial_number=serial,
+                                )
+                                dev_age_ok = True
+                        except Exception:
+                            pass
+                    if not dev_age_ok:
+                        continue
                 if serial and (
                     owner_type in ("COMPANY", "CUSTOMER")
                     or mgmt_state == "APPROVED"
@@ -622,15 +689,20 @@ def _execute_single_live_sweep_pass(
     include_reports_api: bool = True,
     run_login_sweep: bool = True,
     run_token_sweep: bool = False,
+    run_basic_mobile_sweep: bool = False,
 ) -> Dict[str, Any]:
-    """Executes a single pass of Admin SDK Reports API + Cloud Identity unapproved/blocked BYOD sync detection
-    and/or Stolen Cookie & Token Threat Detection (`token` audit stream)."""
+    """Executes a single pass of Admin SDK Reports API + Cloud Identity unapproved/blocked BYOD sync detection,
+    Agentless (Basic) Mobile Management Auto-Quarantine, and/or Stolen Cookie & Token Threat Detection (`token` audit stream)."""
     global _cold_start_baselined
     import datetime
 
     now = time.time()
     cid = normalize_customer_id(config.customer_id or "customers/my_customer")
     is_dry_run = getattr(config, "session_watch_dry_run", False)
+    basic_mobile_enabled = bool(
+        run_basic_mobile_sweep
+        or getattr(config, "basic_mobile_auto_quarantine_enabled", False)
+    )
 
     def _session_watch_scope_checker(email: str) -> tuple[bool, str]:
         return directory_service.is_user_in_session_watch_scope(
@@ -652,6 +724,18 @@ def _execute_single_live_sweep_pass(
             portal_admins=getattr(config, "portal_admins", []),
             exempt_ous=getattr(config, "session_guard_exempt_ous", []),
             exempt_groups=getattr(config, "session_guard_exempt_groups", []),
+        )
+
+    def _basic_mobile_scope_checker(email: str) -> tuple[bool, str]:
+        return directory_service.is_user_in_session_watch_scope(
+            user_email=email,
+            target_ous=getattr(config, "basic_mobile_target_ous", []),
+            target_groups=getattr(config, "basic_mobile_target_groups", []),
+            exempt_admins=getattr(config, "session_watch_exempt_admins", False),
+            portal_admins=getattr(config, "portal_admins", []),
+            exempt_ous=getattr(config, "session_guard_exempt_ous", []),
+            exempt_groups=getattr(config, "session_guard_exempt_groups", []),
+            require_explicit_target_scope=True,
         )
 
     raw_events: List[Dict[str, Any]] = []
@@ -683,10 +767,9 @@ def _execute_single_live_sweep_pass(
     actions: List[Any] = []
     evaluated_count = 0
 
-    if run_login_sweep:
-        # Scan Cloud Identity Devices API for real-time PENDING_APPROVAL and recently-synced BLOCKED BYOD devices!
-        # Chrome Profile Reporting updates `lastSyncTime` in ~1.7 seconds on sign-in, even when Admin SDK
-        # Reports API `login` logs lag by 15-60m or when the device was already in `BLOCKED` state.
+    if run_login_sweep or basic_mobile_enabled:
+        # Scan Cloud Identity Devices API for real-time PENDING_APPROVAL, recently-synced BLOCKED BYOD devices,
+        # and unverified Basic Mobile (Android/iOS) BYOD devices that auto-enrolled in APPROVED state!
         users_with_ci_events: set[str] = set()
         raw_ci_byod_records_by_user: Dict[str, List[Dict[str, Any]]] = {}
         if cloud_identity_service.service:
@@ -728,6 +811,9 @@ def _execute_single_live_sweep_pass(
                     ).upper()
                     model = parent_dev.get("model") or ("Company Device" if is_company_owned else "Personal BYOD Device")
                     dtype = (parent_dev.get("deviceType") or "BYOD").upper()
+                    os_ver = parent_dev.get("osVersion") or ""
+                    android_attrs = parent_dev.get("androidSpecificAttributes") or {}
+                    ownership_priv = str(android_attrs.get("ownershipPrivilege") or "")
                     serial = (parent_dev.get("serialNumber") or "N/A").strip() or "N/A"
                     last_sync_str = (
                         du.get("lastSyncTime")
@@ -742,15 +828,81 @@ def _execute_single_live_sweep_pass(
                     except Exception:
                         sync_epoch = now - 30.0
 
+                    create_str = (
+                        du.get("createTime")
+                        or du.get("firstSyncTime")
+                        or parent_dev.get("createTime")
+                        or ""
+                    )
+                    try:
+                        create_epoch = (
+                            datetime.datetime.fromisoformat(
+                                create_str.replace("Z", "+00:00")
+                            ).timestamp()
+                            if create_str
+                            else sync_epoch
+                        )
+                    except Exception:
+                        create_epoch = sync_epoch
+
                     if is_company_owned:
                         norm_state = "APPROVED"
                     else:
                         norm_state = "PENDING_APPROVAL" if raw_state in ("PENDING", "PENDING_APPROVAL") else raw_state
+
+                    # Agentless (Basic) Mobile Management Auto-Quarantine:
+                    # In Basic Mobile Management, Google creates Android/iOS BYOD devices in APPROVED state
+                    # without MDM app installation. If Basic Mobile Auto-Quarantine is enabled (at Root `/`
+                    # or for specific OUs/Groups):
+                    # - Pre-existing mobile devices (created >15 minutes ago) are automatically baselined into
+                    #   `portal_approved_devices` so existing phones across the domain are never blocked.
+                    # - Newly enrolled (<15m) unverified Basic mobile devices without an active Onboarding
+                    #   Grace Lease are immediately flipped to BLOCKED in Cloud Identity.
+                    just_quarantined_basic_mobile = False
+                    bm_scope_reason = ""
+                    if (
+                        not is_company_owned
+                        and basic_mobile_enabled
+                        and norm_state == "APPROVED"
+                        and _is_mobile_byod_device(dtype, os_ver, model, ownership_priv)
+                        and not session_guard.is_portal_approved_device(du_name, serial)
+                    ):
+                        if (now - create_epoch) > 900.0:
+                            session_guard.record_portal_approved_device(
+                                device_user_name=du_name,
+                                user_email=du_email,
+                                serial_number=serial,
+                            )
+                        else:
+                            has_grace, _ = session_guard.has_active_onboarding_lease(du_email)
+                            in_bm_scope, bm_scope_reason = _basic_mobile_scope_checker(du_email)
+                            if in_bm_scope and not has_grace:
+                                just_quarantined_basic_mobile = True
+                                if not is_dry_run:
+                                    try:
+                                        cloud_identity_service.revoke_device_user(
+                                            device_user_name=du_name,
+                                            customer_id=cid,
+                                            action="BLOCK",
+                                        )
+                                        auto_blocked_byod_count += 1
+                                        session_guard.metrics["basic_mobile_auto_quarantined"] = (
+                                            session_guard.metrics.get("basic_mobile_auto_quarantined", 0) + 1
+                                        )
+                                        norm_state = "BLOCKED"
+                                    except Exception as bm_blk_err:
+                                        print(
+                                            f"WARNING [session_watch.py]: Failed to auto-quarantine Basic mobile device '{du_name}' for {du_email}: {bm_blk_err}"
+                                        )
+                                else:
+                                    norm_state = "BLOCKED"
+
                     raw_ci_byod_records_by_user.setdefault(du_email, []).append(
                         {
                             "device_user_name": du_name,
                             "model": model,
                             "device_type": dtype,
+                            "os_version": os_ver,
                             "serial_number": serial,
                             "approval_state": norm_state,
                             "owner_type": owner_type,
@@ -762,13 +914,51 @@ def _execute_single_live_sweep_pass(
                     if is_company_owned:
                         continue
 
+                    if not run_login_sweep:
+                        # CAA + Basic Mobile Auto-Quarantine only mode (Session Management users.signOut disabled)
+                        if just_quarantined_basic_mobile:
+                            session_guard.record_unapproved_device(
+                                user_email=du_email,
+                                device_user_name=du_name,
+                                model=model,
+                                device_type=dtype,
+                                serial_number=serial,
+                                approval_state="BLOCKED",
+                                last_sync_epoch=sync_epoch,
+                            )
+                            session_guard.mark_device_sync_enforced(du_name, du_email, sync_epoch, now_epoch=now)
+                            quarantine_action = EnforcementAction(
+                                event_id=f"ci-basic-mobile-quarantine:{du_name}:{last_sync_str or int(now)}",
+                                user_email=du_email,
+                                ip_address="cloud-identity-sync",
+                                decision="AUDIT_WOULD_QUARANTINE_BASIC_MOBILE" if is_dry_run else "QUARANTINE_BASIC_MOBILE",
+                                reason=(
+                                    f"Agentless (Basic) Mobile Auto-Quarantine: {model} ({dtype}, SN: {serial}) "
+                                    f"auto-enrolled in APPROVED state without portal verification; flipped to BLOCKED in Cloud Identity ({bm_scope_reason})."
+                                ),
+                                matched_serial=serial if serial != "N/A" else None,
+                                detection_latency_sec=round(max(0.0, now - sync_epoch), 2),
+                                timestamp_iso=last_sync_str or datetime.datetime.fromtimestamp(now, tz=datetime.timezone.utc).isoformat(),
+                            )
+                            session_guard._persist_actions([quarantine_action])
+                            actions.append(quarantine_action)
+                            evaluated_count += 1
+                            unapproved_ci_byod_events_count += 1
+                        continue
+
                     is_pending = norm_state == "PENDING_APPROVAL"
                     is_blocked_or_unapproved = norm_state in ("BLOCKED", "UNAPPROVED")
                     age_since_sync = max(0.0, now - sync_epoch)
 
                     # On cold start, baseline historical BLOCKED devices that synced >15 minutes ago
-                    # so old blocked devices from hours/days/months ago never trigger false sign-outs.
-                    if is_blocked_or_unapproved and not _cold_start_baselined and age_since_sync > 900.0:
+                    # so old blocked devices from hours/days/months ago never trigger false sign-outs
+                    # (unless just quarantined by Basic Mobile Auto-Quarantine on this pass).
+                    if (
+                        is_blocked_or_unapproved
+                        and not just_quarantined_basic_mobile
+                        and not _cold_start_baselined
+                        and age_since_sync > 900.0
+                    ):
                         session_guard.mark_device_sync_enforced(du_name, du_email, sync_epoch, now_epoch=now)
                         continue
 
@@ -776,7 +966,7 @@ def _execute_single_live_sweep_pass(
                     last_user_signout = session_guard.get_last_signout_epoch(du_email)
 
                     should_trigger_unapproved_sync = False
-                    if is_pending and not already_enforced:
+                    if (is_pending or just_quarantined_basic_mobile) and not already_enforced:
                         should_trigger_unapproved_sync = True
                     elif (
                         is_blocked_or_unapproved
@@ -836,179 +1026,203 @@ def _execute_single_live_sweep_pass(
             except Exception as ci_scan_err:
                 print(f"WARNING [session_watch.py]: Cloud Identity pending sync scan notice: {ci_scan_err}")
 
-        audit_events = [
-            LoginAuditEvent(
-                event_id=ev["event_id"],
-                user_email=ev["user_email"],
-                ip_address=ev["ip_address"],
-                timestamp_epoch=ev["timestamp_epoch"],
-                login_type=ev.get("login_type", "exchange"),
-                is_suspicious=ev.get("is_suspicious", False),
-            )
-            for ev in raw_events
-        ]
-        evaluated_count += len(audit_events)
+        if run_login_sweep:
+            audit_events = [
+                LoginAuditEvent(
+                    event_id=ev["event_id"],
+                    user_email=ev["user_email"],
+                    ip_address=ev["ip_address"],
+                    timestamp_epoch=ev["timestamp_epoch"],
+                    login_type=ev.get("login_type", "exchange"),
+                    is_suspicious=ev.get("is_suspicious", False),
+                )
+                for ev in raw_events
+            ]
+            evaluated_count += len(audit_events)
 
-        checked_unapproved_by_user: Dict[str, Optional[Dict[str, Any]]] = {}
+            checked_unapproved_by_user: Dict[str, Optional[Dict[str, Any]]] = {}
 
-        def _unapproved_device_checker(email: str, _login_epoch: float) -> Optional[Dict[str, Any]]:
-            nonlocal auto_blocked_byod_count
-            norm_user = email.strip().lower()
-            if norm_user in checked_unapproved_by_user:
-                return checked_unapproved_by_user[norm_user]
+            def _unapproved_device_checker(email: str, _login_epoch: float) -> Optional[Dict[str, Any]]:
+                nonlocal auto_blocked_byod_count
+                norm_user = email.strip().lower()
+                if norm_user in checked_unapproved_by_user:
+                    return checked_unapproved_by_user[norm_user]
 
-            found_dev: Optional[Dict[str, Any]] = None
-            if cloud_identity_service.service:
-                try:
-                    raw_records = raw_ci_byod_records_by_user.get(norm_user)
-                    if raw_records is None:
-                        from backend.routes.devices import crawl_devices_for_user, sync_time_sort_key
+                found_dev: Optional[Dict[str, Any]] = None
+                if cloud_identity_service.service:
+                    try:
+                        raw_records = raw_ci_byod_records_by_user.get(norm_user)
+                        if raw_records is None:
+                            from backend.routes.devices import crawl_devices_for_user, sync_time_sort_key
 
-                        user_items, _ = crawl_devices_for_user(
-                            customer_id=cid,
-                            target_email=norm_user,
-                            query_filter=f"email:{norm_user}",
-                        )
-                        raw_records = []
-                        for it in user_items:
-                            it_sync_str = it.last_sync_time if it.last_sync_time and it.last_sync_time != "N/A" else ""
-                            it_sync_ep = sync_time_sort_key(it_sync_str) if it_sync_str else 0.0
-                            raw_records.append(
-                                {
-                                    "device_user_name": it.device_user_name,
-                                    "model": it.model,
-                                    "device_type": it.device_type,
-                                    "serial_number": it.serial_number,
-                                    "approval_state": "APPROVED" if it.owner_type in ("COMPANY", "CUSTOMER") else it.approval_state,
-                                    "owner_type": it.owner_type,
-                                    "sync_epoch": it_sync_ep if it_sync_ep > 0 else (now - 30.0),
-                                    "last_sync_str": it_sync_str,
-                                }
+                            user_items, _ = crawl_devices_for_user(
+                                customer_id=cid,
+                                target_email=norm_user,
+                                query_filter=f"email:{norm_user}",
                             )
+                            raw_records = []
+                            for it in user_items:
+                                it_sync_str = it.last_sync_time if it.last_sync_time and it.last_sync_time != "N/A" else ""
+                                it_sync_ep = sync_time_sort_key(it_sync_str) if it_sync_str else 0.0
+                                raw_records.append(
+                                    {
+                                        "device_user_name": it.device_user_name,
+                                        "model": it.model,
+                                        "device_type": it.device_type,
+                                        "os_version": getattr(it, "os_version", ""),
+                                        "serial_number": it.serial_number,
+                                        "approval_state": "APPROVED" if it.owner_type in ("COMPANY", "CUSTOMER") else it.approval_state,
+                                        "owner_type": it.owner_type,
+                                        "sync_epoch": it_sync_ep if it_sync_ep > 0 else (now - 30.0),
+                                        "last_sync_str": it_sync_str,
+                                    }
+                                )
 
-                    for rec in raw_records:
-                        if str(rec.get("owner_type") or "").upper() in ("COMPANY", "CUSTOMER"):
-                            continue
-                        rec_state = rec["approval_state"]
-                        rec_sync_ep = float(rec.get("sync_epoch") or (now - 30.0))
-                        is_active_unapproved = rec_state == "PENDING_APPROVAL" or (
-                            rec_state in ("BLOCKED", "UNAPPROVED")
-                            and not session_guard.is_device_sync_already_enforced(
-                                rec["device_user_name"], rec_sync_ep
-                            )
-                            and (now - rec_sync_ep) <= (req_body.lookback_minutes * 60.0)
-                        )
-                        if is_active_unapproved:
-                            found_dev = rec
-                            if not is_dry_run:
-                                try:
-                                    if rec_state == "PENDING_APPROVAL":
-                                        cloud_identity_service.revoke_device_user(
-                                            device_user_name=rec["device_user_name"],
-                                            customer_id=cid,
-                                            action="BLOCK",
-                                        )
-                                        auto_blocked_byod_count += 1
-                                    # Also block any stale serial-less APPROVED duplicate records of the same OS type for this user
-                                    for dup in raw_records:
-                                        if (
-                                            dup["device_user_name"] != rec["device_user_name"]
-                                            and dup["device_type"] == rec["device_type"]
-                                            and dup["approval_state"] == "APPROVED"
-                                            and (not dup["serial_number"] or dup["serial_number"] == "N/A")
-                                        ):
-                                            try:
-                                                cloud_identity_service.revoke_device_user(
-                                                    device_user_name=dup["device_user_name"],
-                                                    customer_id=cid,
-                                                    action="BLOCK",
-                                                )
-                                                auto_blocked_byod_count += 1
-                                            except Exception:
-                                                pass
-                                except Exception as blk_err:
-                                    print(
-                                        f"WARNING [session_watch.py]: Could not auto-block pending device '{rec['device_user_name']}': {blk_err}"
-                                    )
-                            session_guard.mark_device_sync_enforced(
-                                rec["device_user_name"],
-                                norm_user,
-                                rec_sync_ep,
-                                now_epoch=now,
-                            )
-                            session_guard.clear_unapproved_devices_for_user(
-                                norm_user, device_user_name=rec["device_user_name"]
-                            )
-                            break
-
-                    if found_dev is None:
-                        # If no unapproved device is active and Cloud Identity shows an APPROVED device
-                        # that synced within the last 180 seconds (or when evaluating a background OAuth
-                        # `reauth` / `0.0.0.0` event for a user with an approved device), auto-attest
-                        # so logging into or using an approved Chromebook/BYOD device isn't signed out.
-                        user_has_reauth_or_unspecified_ip = any(
-                            ev_item.user_email.strip().lower() == norm_user
-                            and (
-                                ev_item.login_type == "reauth"
-                                or (ev_item.ip_address or "").strip() in ("", "0.0.0.0", "unknown")
-                            )
-                            for ev_item in audit_events
-                        )
                         for rec in raw_records:
-                            rec_sync_ep = float(rec.get("sync_epoch") or 0.0)
-                            is_recent_sync = bool(
-                                rec.get("last_sync_str") and 0.0 <= (now - rec_sync_ep) <= 180.0
+                            if str(rec.get("owner_type") or "").upper() in ("COMPANY", "CUSTOMER"):
+                                continue
+                            rec_state = rec["approval_state"]
+                            rec_sync_ep = float(rec.get("sync_epoch") or (now - 30.0))
+                            is_unverified_basic_mobile = (
+                                basic_mobile_enabled
+                                and rec_state == "APPROVED"
+                                and _is_mobile_byod_device(
+                                    rec.get("device_type", ""),
+                                    rec.get("os_version", ""),
+                                    rec.get("model", ""),
+                                )
+                                and not session_guard.is_portal_approved_device(
+                                    rec["device_user_name"], rec.get("serial_number")
+                                )
+                                and _basic_mobile_scope_checker(norm_user)[0]
                             )
-                            if rec.get("approval_state") == "APPROVED" and (
-                                is_recent_sync or user_has_reauth_or_unspecified_ip
-                            ):
-                                eff_serial = (
-                                    rec["serial_number"].strip().upper()
-                                    if rec.get("serial_number") and rec["serial_number"] != "N/A"
-                                    else rec["device_user_name"].strip().upper()
+                            is_active_unapproved = (
+                                rec_state == "PENDING_APPROVAL"
+                                or is_unverified_basic_mobile
+                                or (
+                                    rec_state in ("BLOCKED", "UNAPPROVED")
+                                    and not session_guard.is_device_sync_already_enforced(
+                                        rec["device_user_name"], rec_sync_ep
+                                    )
+                                    and (now - rec_sync_ep) <= (req_body.lookback_minutes * 60.0)
                                 )
-                                dtype_tag = (
-                                    "CHROMEOS"
-                                    if "CHROME" in str(rec.get("device_type") or "").upper()
-                                    else "CLOUD_IDENTITY_APPROVED"
-                                )
-                                for ev_item in audit_events:
-                                    if ev_item.user_email.strip().lower() == norm_user:
-                                        if is_recent_sync or (
-                                            ev_item.login_type == "reauth"
-                                            or (ev_item.ip_address or "").strip() in ("", "0.0.0.0", "unknown")
-                                        ):
-                                            session_guard.promote_approved_device(
-                                                user_email=norm_user,
-                                                serial_number=eff_serial,
-                                                device_type=dtype_tag,
-                                                ip_address=ev_item.ip_address,
-                                                now_epoch=now,
+                            )
+                            if is_active_unapproved:
+                                found_dev = rec
+                                if not is_dry_run:
+                                    try:
+                                        if rec_state == "PENDING_APPROVAL" or is_unverified_basic_mobile:
+                                            cloud_identity_service.revoke_device_user(
+                                                device_user_name=rec["device_user_name"],
+                                                customer_id=cid,
+                                                action="BLOCK",
                                             )
+                                            auto_blocked_byod_count += 1
+                                            if is_unverified_basic_mobile:
+                                                session_guard.metrics["basic_mobile_auto_quarantined"] = (
+                                                    session_guard.metrics.get("basic_mobile_auto_quarantined", 0) + 1
+                                                )
+                                                rec["approval_state"] = "BLOCKED"
+                                        # Also block any stale serial-less APPROVED duplicate records of the same OS type for this user
+                                        for dup in raw_records:
+                                            if (
+                                                dup["device_user_name"] != rec["device_user_name"]
+                                                and dup["device_type"] == rec["device_type"]
+                                                and dup["approval_state"] == "APPROVED"
+                                                and (not dup["serial_number"] or dup["serial_number"] == "N/A")
+                                            ):
+                                                try:
+                                                    cloud_identity_service.revoke_device_user(
+                                                        device_user_name=dup["device_user_name"],
+                                                        customer_id=cid,
+                                                        action="BLOCK",
+                                                    )
+                                                    auto_blocked_byod_count += 1
+                                                except Exception:
+                                                    pass
+                                    except Exception as blk_err:
+                                        print(
+                                            f"WARNING [session_watch.py]: Could not auto-block pending device '{rec['device_user_name']}': {blk_err}"
+                                        )
+                                session_guard.mark_device_sync_enforced(
+                                    rec["device_user_name"],
+                                    norm_user,
+                                    rec_sync_ep,
+                                    now_epoch=now,
+                                )
+                                session_guard.clear_unapproved_devices_for_user(
+                                    norm_user, device_user_name=rec["device_user_name"]
+                                )
                                 break
-                except Exception as ci_err:
-                    print(
-                        f"WARNING [session_watch.py]: Unapproved device check notice for '{norm_user}': {ci_err}"
-                    )
 
-            checked_unapproved_by_user[norm_user] = found_dev
-            return found_dev
+                        if found_dev is None:
+                            # If no unapproved device is active and Cloud Identity shows an APPROVED device
+                            # that synced within the last 180 seconds (or when evaluating a background OAuth
+                            # `reauth` / `0.0.0.0` event for a user with an approved device), auto-attest
+                            # so logging into or using an approved Chromebook/BYOD device isn't signed out.
+                            user_has_reauth_or_unspecified_ip = any(
+                                ev_item.user_email.strip().lower() == norm_user
+                                and (
+                                    ev_item.login_type == "reauth"
+                                    or (ev_item.ip_address or "").strip() in ("", "0.0.0.0", "unknown")
+                                )
+                                for ev_item in audit_events
+                            )
+                            for rec in raw_records:
+                                rec_sync_ep = float(rec.get("sync_epoch") or 0.0)
+                                is_recent_sync = bool(
+                                    rec.get("last_sync_str") and 0.0 <= (now - rec_sync_ep) <= 180.0
+                                )
+                                if rec.get("approval_state") == "APPROVED" and (
+                                    is_recent_sync or user_has_reauth_or_unspecified_ip
+                                ):
+                                    eff_serial = (
+                                        rec["serial_number"].strip().upper()
+                                        if rec.get("serial_number") and rec["serial_number"] != "N/A"
+                                        else rec["device_user_name"].strip().upper()
+                                    )
+                                    dtype_tag = (
+                                        "CHROMEOS"
+                                        if "CHROME" in str(rec.get("device_type") or "").upper()
+                                        else "CLOUD_IDENTITY_APPROVED"
+                                    )
+                                    for ev_item in audit_events:
+                                        if ev_item.user_email.strip().lower() == norm_user:
+                                            if is_recent_sync or (
+                                                ev_item.login_type == "reauth"
+                                                or (ev_item.ip_address or "").strip() in ("", "0.0.0.0", "unknown")
+                                            ):
+                                                session_guard.promote_approved_device(
+                                                    user_email=norm_user,
+                                                    serial_number=eff_serial,
+                                                    device_type=dtype_tag,
+                                                    ip_address=ev_item.ip_address,
+                                                    now_epoch=now,
+                                                )
+                                    break
+                    except Exception as ci_err:
+                        print(
+                            f"WARNING [session_watch.py]: Unapproved device check notice for '{norm_user}': {ci_err}"
+                        )
 
-        try:
-            login_actions = session_guard.evaluate_login_batch(
-                audit_events,
-                now_epoch=now,
-                persist_all_allowed=req_body.persist_all_allowed,
-                scope_checker=_session_watch_scope_checker,
-                unapproved_device_checker=_unapproved_device_checker,
-                dry_run=is_dry_run,
-            )
-            actions.extend(login_actions)
-        except Exception as eval_err:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Error executing users.signOut circuit breaker during sweep: {eval_err}",
-            )
+                checked_unapproved_by_user[norm_user] = found_dev
+                return found_dev
+
+            try:
+                login_actions = session_guard.evaluate_login_batch(
+                    audit_events,
+                    now_epoch=now,
+                    persist_all_allowed=req_body.persist_all_allowed,
+                    scope_checker=_session_watch_scope_checker,
+                    unapproved_device_checker=_unapproved_device_checker,
+                    dry_run=is_dry_run,
+                )
+                actions.extend(login_actions)
+            except Exception as eval_err:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Error executing users.signOut circuit breaker during sweep: {eval_err}",
+                )
 
     # Pathway 3: Stolen Cookie & Token Threat Detection (Cloud Hosting ASN & Foreign IP Pivot Sentinel)
     token_log_events_count = 0
@@ -1091,13 +1305,17 @@ async def execute_live_reports_sweep(
         config, "enforcement_mode", "DISABLED"
     ) in ("SESSION_WATCH", "BOTH")
     cookie_enabled = bool(getattr(config, "cookie_threat_detection_enabled", False))
+    basic_mobile_enabled = bool(
+        getattr(config, "basic_mobile_auto_quarantine_enabled", False)
+    )
 
-    # If both Session Management and Stolen Cookie Threat Detection are disabled and force is not set, skip automatic sweep
-    if not sw_enabled and not cookie_enabled and not req_body.force:
+    # If Session Management, Stolen Cookie Threat Detection, and Basic Mobile Auto-Quarantine are all disabled and force is not set, skip automatic sweep
+    if not sw_enabled and not cookie_enabled and not basic_mobile_enabled and not req_body.force:
         return {
             "status": "SKIPPED_DISABLED",
             "session_watch_enabled": False,
             "cookie_threat_detection_enabled": False,
+            "basic_mobile_auto_quarantine_enabled": False,
             "triggered_by": "cloud_scheduler" if x_cloudscheduler else "portal_api",
             "message": "Both Session Management and Stolen Cookie Threat Detection are disabled in Admin Configurations; skipping automatic sweep.",
         }
@@ -1114,6 +1332,9 @@ async def execute_live_reports_sweep(
     if req_body.sub_poll_cycles is not None:
         cycles = max(1, min(10, int(req_body.sub_poll_cycles)))
     else:
+        # Only run 5 x 10s sub-polls when Session Management (users.signOut) is active.
+        # When only Basic Mobile Auto-Quarantine is enabled (CAA mode), run a single <0.8s pass
+        # so Cloud Run stays 100% inside the $0.00/mo GCP Monthly Free Tier!
         cycles = 5 if (x_cloudscheduler and run_login_sweep) else 1
     interval_sec = max(1.0, min(20.0, float(req_body.sub_poll_interval_sec)))
 
@@ -1134,6 +1355,7 @@ async def execute_live_reports_sweep(
             include_reports_api=include_reports,
             run_login_sweep=run_login_sweep,
             run_token_sweep=run_token_sweep,
+            run_basic_mobile_sweep=basic_mobile_enabled,
         )
         if cycle_idx == 0:
             total_audit_log_events = pass_res["audit_log_events_count"]
@@ -1163,6 +1385,7 @@ async def execute_live_reports_sweep(
         "triggered_by": "cloud_scheduler" if x_cloudscheduler else "portal_api",
         "session_watch_enabled": sw_enabled,
         "cookie_threat_detection_enabled": cookie_enabled,
+        "basic_mobile_auto_quarantine_enabled": basic_mobile_enabled,
         "sub_poll_cycles": cycles,
         "dry_run": is_dry_run,
         "lookback_minutes": req_body.lookback_minutes,
@@ -1217,6 +1440,11 @@ async def get_session_watch_metrics() -> Dict[str, object]:
         "session_watch_target_groups": getattr(config, "session_watch_target_groups", []),
         "cookie_threat_target_ous": getattr(config, "cookie_threat_target_ous", []),
         "cookie_threat_target_groups": getattr(config, "cookie_threat_target_groups", []),
+        "basic_mobile_auto_quarantine_enabled": bool(
+            getattr(config, "basic_mobile_auto_quarantine_enabled", False)
+        ),
+        "basic_mobile_target_ous": getattr(config, "basic_mobile_target_ous", []),
+        "basic_mobile_target_groups": getattr(config, "basic_mobile_target_groups", []),
         "onboarding_grace_minutes": getattr(config, "session_watch_onboarding_grace_minutes", 15),
         "session_watch_onboarding_grace_minutes": getattr(config, "session_watch_onboarding_grace_minutes", 15),
         "metrics": session_guard.metrics,

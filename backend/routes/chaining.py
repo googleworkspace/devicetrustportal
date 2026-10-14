@@ -21,7 +21,11 @@ from backend.services.config_service import config_service
 from backend.services.directory_service import directory_service
 from backend.services.cloud_identity import cloud_identity_service
 from backend.routes.session_watch import session_guard
-from backend.routes.devices import crawl_devices_for_user, sync_time_sort_key
+from backend.routes.devices import (
+    crawl_devices_for_user,
+    is_mobile_byod_device,
+    sync_time_sort_key,
+)
 from backend.routes.admin import get_current_user_email
 
 try:
@@ -324,11 +328,23 @@ def verify_pairing_code(request: VerifyRequest, http_request: Request = None):
     except Exception as crawl_err:
         print(f"WARNING [chaining.py]: Auto-discovery crawl during pairing code redemption failed: {crawl_err}")
 
+    basic_mobile_quarantine = bool(
+        getattr(config, "basic_mobile_auto_quarantine_enabled", False)
+    )
     unapproved_byod = [
         d
         for d in discovered_devices
-        if (d.owner_type or "").upper() != "COMPANY"
-        and (d.approval_state or "").upper() in ("PENDING_APPROVAL", "BLOCKED")
+        if (d.owner_type or "").upper() not in ("COMPANY", "CUSTOMER")
+        and (
+            (d.approval_state or "").upper() in ("PENDING_APPROVAL", "BLOCKED")
+            or (
+                basic_mobile_quarantine
+                and is_mobile_byod_device(d.device_type, d.os_version, d.model)
+                and not session_guard.is_portal_approved_device(
+                    d.device_user_name, d.serial_number
+                )
+            )
+        )
     ]
 
     if unapproved_byod:

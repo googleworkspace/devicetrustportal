@@ -50,6 +50,8 @@ class DeviceUserItem(BaseModel):
     approval_state: str
     owner_type: str
     last_sync_time: str
+    create_time: Optional[str] = ""
+    ownership_privilege: Optional[str] = ""
     annotated_user: Optional[str] = ""
     last_known_ip: Optional[str] = ""
     region_code: Optional[str] = ""
@@ -75,6 +77,62 @@ def is_valid_serial(s: Any) -> bool:
         return False
     cleaned = str(s).strip().upper()
     return bool(cleaned and cleaned not in INVALID_SERIALS)
+
+
+def is_mobile_byod_device(
+    device_type: Any,
+    os_version: Any = "",
+    model: Any = "",
+    ownership_privilege: Any = "",
+) -> bool:
+    """Returns True if the device represents an Android or iOS Basic (Agentless) mobile endpoint.
+
+    Devices managed by Google Endpoint Verification / Advanced Mobile Management MDM
+    (e.g. Android Work Profile `PROFILE_OWNER`, `DEVICE_OWNER`, `DEVICE_ADMINISTRATOR`)
+    are automatically excluded so Advanced MDM deployments are never touched by Basic
+    Mobile Auto-Quarantine.
+    """
+    priv = str(ownership_privilege or "").strip().upper()
+    if priv in ("DEVICE_ADMINISTRATOR", "PROFILE_OWNER", "DEVICE_OWNER"):
+        return False
+    dt = str(device_type or "").strip().upper()
+    os_v = str(os_version or "").strip().upper()
+    mdl = str(model or "").strip().upper()
+    if "CHROME" in dt or "CHROME" in os_v:
+        return False
+    if any(tok in dt for tok in ("ANDROID", "IOS", "IPHONE", "IPAD")):
+        return True
+    if any(tok in os_v for tok in ("ANDROID", "IOS", "IPHONE", "IPAD")):
+        return True
+    if any(tok in mdl for tok in ("PIXEL", "IPHONE", "IPAD", "GALAXY")):
+        return True
+    return False
+
+
+def is_newly_enrolled_basic_mobile_device(
+    create_time_str: Any,
+    last_sync_time_str: Any = "",
+    now_epoch: Optional[float] = None,
+    max_age_seconds: float = 900.0,
+) -> bool:
+    """Returns True if a Basic mobile device was newly enrolled within `max_age_seconds` (default 15m).
+
+    Safeguard against accidental domain-wide blocking when an admin enables Basic Mobile
+    Auto-Quarantine at the Root Organization (`/`):
+    - If `create_time_str` (Cloud Identity `createTime` / `firstSyncTime`) is older than 15 minutes
+      (`> 900s`), this is a pre-existing mobile device and MUST be baselined as approved rather
+      than blocked.
+    - If `create_time_str` is absent, falls back to `last_sync_time_str` so pre-existing phones
+      that synced >15 minutes ago are also baselined as approved rather than blocked.
+    """
+    now = now_epoch if now_epoch is not None else datetime.now(timezone.utc).timestamp()
+    create_ep = sync_time_sort_key(create_time_str)
+    if create_ep > 0:
+        return (now - create_ep) <= max_age_seconds
+    sync_ep = sync_time_sort_key(last_sync_time_str)
+    if sync_ep > 0:
+        return (now - sync_ep) <= max_age_seconds
+    return True
 
 def normalize_sync_time(t: Any) -> str:
     cleaned = str(t or "").strip()
@@ -134,7 +192,10 @@ def extract_device_metadata(d: Dict[str, Any]) -> Dict[str, str]:
     raw_serial = extract_field(d, "serialNumber", "deviceSerialNumber", "imei", "meid", default="")
     serial_number = raw_serial if is_valid_serial(raw_serial) else "N/A"
     dev_last_sync = normalize_sync_time(d.get("lastSyncTime"))
+    dev_create_time = normalize_sync_time(d.get("createTime") or d.get("firstSyncTime"))
     dev_mgmt_state = extract_field(d, "managementState", "approvalState", default="")
+    android_attrs = d.get("androidSpecificAttributes") if isinstance(d.get("androidSpecificAttributes"), dict) else {}
+    ownership_privilege = extract_field(android_attrs, "ownershipPrivilege", default="").upper()
     return {
         "device_type": device_type,
         "model": model,
@@ -142,7 +203,9 @@ def extract_device_metadata(d: Dict[str, Any]) -> Dict[str, str]:
         "owner_type": owner_type,
         "serial_number": serial_number,
         "last_sync_time": dev_last_sync,
+        "create_time": dev_create_time,
         "management_state": dev_mgmt_state,
+        "ownership_privilege": ownership_privilege,
     }
 
 def crawl_devices_for_user(
@@ -283,6 +346,8 @@ def crawl_devices_for_user(
                             )
                             du_sync = normalize_sync_time(du.get("lastSyncTime"))
                             effective_sync = du_sync if du_sync != "N/A" else meta["last_sync_time"]
+                            du_create = normalize_sync_time(du.get("createTime") or du.get("firstSyncTime"))
+                            effective_create = du_create if du_create != "N/A" else meta["create_time"]
                             matched_items.append(
                                 DeviceUserItem(
                                     device_user_name=du_name,
@@ -293,6 +358,8 @@ def crawl_devices_for_user(
                                     approval_state=state,
                                     owner_type=meta["owner_type"],
                                     last_sync_time=effective_sync,
+                                    create_time=effective_create,
+                                    ownership_privilege=meta["ownership_privilege"],
                                     annotated_user=norm_email,
                                 )
                             )
@@ -350,6 +417,8 @@ def crawl_devices_for_user(
                             )
                             du_sync = normalize_sync_time(du.get("lastSyncTime"))
                             effective_sync = du_sync if du_sync != "N/A" else meta["last_sync_time"]
+                            du_create = normalize_sync_time(du.get("createTime") or du.get("firstSyncTime"))
+                            effective_create = du_create if du_create != "N/A" else meta["create_time"]
 
                             matched_items.append(
                                 DeviceUserItem(
@@ -361,6 +430,8 @@ def crawl_devices_for_user(
                                     approval_state=state,
                                     owner_type=meta["owner_type"],
                                     last_sync_time=effective_sync,
+                                    create_time=effective_create,
+                                    ownership_privilege=meta["ownership_privilege"],
                                     annotated_user=norm_email,
                                 )
                             )
@@ -631,6 +702,69 @@ def get_my_approved_devices(
         reverse=True,
     )
 
+    # Inline Basic (Agentless) Mobile Management Auto-Quarantine (<0.4s):
+    # Under Google Workspace Basic Mobile Management, newly signed-in Android/iOS phones are
+    # registered in Cloud Identity as APPROVED (skipping PENDING_APPROVAL). When Basic Mobile
+    # Auto-Quarantine is enabled (including at the Root Organization `/` or for specific OUs/Groups),
+    # pre-existing mobile devices (created >15 minutes ago) are automatically baselined into
+    # `portal_approved_devices` so existing phones across the domain are never accidentally blocked.
+    # Newly enrolled (<15m) unverified Basic mobile BYOD devices are immediately flipped from
+    # APPROVED -> BLOCKED so the user must approve them in the Device Trust Portal.
+    if getattr(config, "basic_mobile_auto_quarantine_enabled", False):
+        in_basic_scope, _ = directory_service.is_user_in_session_watch_scope(
+            user_email=target_email,
+            target_ous=getattr(config, "basic_mobile_target_ous", []),
+            target_groups=getattr(config, "basic_mobile_target_groups", []),
+            exempt_admins=getattr(config, "session_watch_exempt_admins", False),
+            portal_admins=getattr(config, "portal_admins", []),
+            exempt_ous=getattr(config, "session_guard_exempt_ous", []),
+            exempt_groups=getattr(config, "session_guard_exempt_groups", []),
+            require_explicit_target_scope=True,
+        )
+        has_grace_lease, _ = session_guard.has_active_onboarding_lease(target_email)
+        if in_basic_scope and not has_grace_lease:
+            is_dry_run = getattr(config, "session_watch_dry_run", False)
+            for d in deduped_devices:
+                if (
+                    d.owner_type not in ("COMPANY", "CUSTOMER")
+                    and d.approval_state == "APPROVED"
+                    and is_mobile_byod_device(
+                        d.device_type,
+                        d.os_version,
+                        d.model,
+                        d.ownership_privilege,
+                    )
+                    and not session_guard.is_portal_approved_device(
+                        d.device_user_name, d.serial_number
+                    )
+                ):
+                    if not is_newly_enrolled_basic_mobile_device(
+                        d.create_time, d.last_sync_time
+                    ):
+                        # Pre-existing mobile device (>15m old): auto-baseline so existing domain
+                        # phones are never accidentally blocked when enabled at Root (/).
+                        session_guard.record_portal_approved_device(
+                            device_user_name=d.device_user_name,
+                            user_email=target_email,
+                            serial_number=d.serial_number,
+                        )
+                        continue
+                    if not is_dry_run:
+                        try:
+                            cloud_identity_service.revoke_device_user(
+                                device_user_name=d.device_user_name,
+                                customer_id=cid,
+                                action="BLOCK",
+                            )
+                            d.approval_state = "BLOCKED"
+                            session_guard.metrics["basic_mobile_auto_quarantined"] = (
+                                session_guard.metrics.get("basic_mobile_auto_quarantined", 0) + 1
+                            )
+                        except Exception as blk_err:
+                            print(
+                                f"WARNING [devices.py]: Could not auto-quarantine Basic mobile device '{d.device_user_name}': {blk_err}"
+                            )
+
     # Warm SessionGuard approved serial cache and register any PENDING_APPROVAL BYOD devices
     # Note: Onboarding grace leases are NEVER auto-granted here; the user must explicitly click
     # "+ Add Personal Device (15m Grace Pass)" or generate a Trust Chaining code.
@@ -655,7 +789,7 @@ def get_my_approved_devices(
                         assigned_user=target_email,
                     )
                 )
-        elif d.owner_type != "COMPANY" and d.approval_state == "PENDING_APPROVAL":
+        elif d.owner_type != "COMPANY" and d.approval_state in ("PENDING_APPROVAL", "BLOCKED"):
             session_guard.record_unapproved_device(
                 user_email=target_email,
                 device_user_name=d.device_user_name,
@@ -910,6 +1044,11 @@ def revoke_device(request: DeviceActionRequest, user_email: str = Depends(get_cu
             customer_id=cid,
             action=config.revocation_action
         )
+        revoked_serial = extract_field(dev_resp, "serialNumber", "deviceSerialNumber", default="")
+        session_guard.demote_approved_device(
+            device_user_name=request.device_user_name,
+            serial_number=revoked_serial,
+        )
         return {"status": "SUCCESS", "message": f"Device revoked successfully via {config.revocation_action}."}
     except HTTPException:
         raise
@@ -931,6 +1070,7 @@ def revoke_device_bulk(request: BulkRevokeRequest, user_email: str = Depends(get
     try:
         # Filter out company anchors before batch execution
         bulk_targets = []
+        bulk_serials: Dict[str, str] = {}
         for du_name in request.device_user_names:
             parent_dev = du_name.split("/deviceUsers/")[0]
             if parent_dev.startswith("directory/"):
@@ -940,6 +1080,7 @@ def revoke_device_bulk(request: BulkRevokeRequest, user_email: str = Depends(get
                 dev_resp = dev_req.execute()
             if dev_resp.get("ownerType") != "COMPANY":
                 bulk_targets.append(du_name)
+                bulk_serials[du_name] = extract_field(dev_resp, "serialNumber", "deviceSerialNumber", default="")
 
         if not bulk_targets:
             return {"status": "SUCCESS", "revoked_count": 0, "message": "No eligible BYOD devices to revoke."}
@@ -949,6 +1090,11 @@ def revoke_device_bulk(request: BulkRevokeRequest, user_email: str = Depends(get
             customer_id=cid,
             action=config.revocation_action
         )
+        for du_name in bulk_targets:
+            session_guard.demote_approved_device(
+                device_user_name=du_name,
+                serial_number=bulk_serials.get(du_name, ""),
+            )
         return res
     except HTTPException:
         raise

@@ -93,6 +93,18 @@ class TenantConfig(BaseModel):
         default=[],
         description="Google Groups scoped for Stolen Cookie & Token Threat Detection (e.g. ['cookie-sentinel-pilot@gwfe.org'])",
     )
+    basic_mobile_auto_quarantine_enabled: bool = Field(
+        default=False,
+        description="Enable Agentless (Basic) Mobile Management Auto-Quarantine: automatically flips unverified BYOD Android/iOS devices from Google's default Basic APPROVED state to BLOCKED via Cloud Identity API (No MDM app required)",
+    )
+    basic_mobile_target_ous: List[str] = Field(
+        default=[],
+        description="Organizational Units scoped for Basic Mobile Management Auto-Quarantine (e.g. ['/Students']). If empty and basic_mobile_target_groups is empty, all non-exempt users are evaluated.",
+    )
+    basic_mobile_target_groups: List[str] = Field(
+        default=[],
+        description="Google Groups / Security Groups scoped for Basic Mobile Management Auto-Quarantine (e.g. ['mobile-pilot@gwfe.org'])",
+    )
     session_watch_exempt_admins: bool = Field(
         default=False,
         description="Optional Admin Safe-Harbor: exempt Workspace Super Admins and Portal Admins from users.signOut circuit breaker",
@@ -138,11 +150,13 @@ class TenantConfig(BaseModel):
             self.session_watch_enabled
             or self.caa_enforcement_enabled
             or self.cookie_threat_detection_enabled
+            or self.basic_mobile_auto_quarantine_enabled
         ):
             self.enforcement_mode = _derive_enforcement_mode(
                 self.session_watch_enabled,
                 self.caa_enforcement_enabled,
                 self.cookie_threat_detection_enabled,
+                self.basic_mobile_auto_quarantine_enabled,
             )
         return self
 
@@ -151,6 +165,7 @@ def _derive_enforcement_mode(
     session_watch_enabled: bool,
     caa_enforcement_enabled: bool,
     cookie_threat_detection_enabled: bool = False,
+    basic_mobile_auto_quarantine_enabled: bool = False,
 ) -> str:
     if session_watch_enabled and caa_enforcement_enabled:
         return "BOTH"
@@ -160,6 +175,8 @@ def _derive_enforcement_mode(
         return "CAA"
     if cookie_threat_detection_enabled:
         return "COOKIE_SENTINEL"
+    if basic_mobile_auto_quarantine_enabled:
+        return "BASIC_MOBILE_QUARANTINE"
     return "DISABLED"
 
 
@@ -197,13 +214,17 @@ class ConfigService:
                     or data.get("session_guard_block_hosting_asns", False)
                 )
                 caa_enabled = bool(data.get("caa_enforcement_enabled", False))
+                basic_mobile_enabled = bool(data.get("basic_mobile_auto_quarantine_enabled", False))
                 data["session_watch_enabled"] = sw_enabled
                 data["cookie_threat_detection_enabled"] = cookie_enabled
                 data["session_guard_watch_token_stream"] = cookie_enabled
                 data["session_guard_block_hosting_asns"] = cookie_enabled
                 data["enable_session_guard"] = bool(sw_enabled or cookie_enabled or data.get("enable_session_guard", False))
                 data["caa_enforcement_enabled"] = caa_enabled
-                data["enforcement_mode"] = _derive_enforcement_mode(sw_enabled, caa_enabled, cookie_enabled)
+                data["basic_mobile_auto_quarantine_enabled"] = basic_mobile_enabled
+                data["enforcement_mode"] = _derive_enforcement_mode(
+                    sw_enabled, caa_enabled, cookie_enabled, basic_mobile_enabled
+                )
                 config = TenantConfig(**data)
                 if env_admin and env_admin not in [a.lower().strip() for a in config.portal_admins]:
                     config.portal_admins.append(env_admin)
@@ -229,7 +250,10 @@ class ConfigService:
             or os.getenv("TENANT_ENABLE_SESSION_GUARD", "false").lower() == "true"
         )
         caa_enabled_env = os.getenv("TENANT_CAA_ENFORCEMENT_ENABLED", "false").lower() == "true"
-        derived_mode = _derive_enforcement_mode(sw_enabled_env, caa_enabled_env, cookie_enabled_env)
+        basic_mobile_enabled_env = os.getenv("TENANT_BASIC_MOBILE_AUTO_QUARANTINE_ENABLED", "false").lower() == "true"
+        derived_mode = _derive_enforcement_mode(
+            sw_enabled_env, caa_enabled_env, cookie_enabled_env, basic_mobile_enabled_env
+        )
         exempt_admins_env = os.getenv("TENANT_SESSION_WATCH_EXEMPT_ADMINS", "false").lower() == "true"
         dry_run_env = os.getenv("TENANT_SESSION_WATCH_DRY_RUN", "false").lower() == "true"
         guard_mode_env = os.getenv("TENANT_SESSION_GUARD_MODE", "DISABLED").upper()
@@ -264,6 +288,9 @@ class ConfigService:
             session_watch_target_groups=json.loads(os.getenv("TENANT_SESSION_WATCH_TARGET_GROUPS", '[]')),
             cookie_threat_target_ous=json.loads(os.getenv("TENANT_COOKIE_THREAT_TARGET_OUS", '[]')),
             cookie_threat_target_groups=json.loads(os.getenv("TENANT_COOKIE_THREAT_TARGET_GROUPS", '[]')),
+            basic_mobile_auto_quarantine_enabled=basic_mobile_enabled_env,
+            basic_mobile_target_ous=json.loads(os.getenv("TENANT_BASIC_MOBILE_TARGET_OUS", '[]')),
+            basic_mobile_target_groups=json.loads(os.getenv("TENANT_BASIC_MOBILE_TARGET_GROUPS", '[]')),
             session_watch_exempt_admins=exempt_admins_env,
             session_watch_dry_run=dry_run_env,
             session_watch_onboarding_grace_minutes=int(os.getenv("TENANT_SESSION_WATCH_GRACE_MINUTES", 15)),
@@ -276,10 +303,12 @@ class ConfigService:
             or config.session_guard_watch_token_stream
             or config.session_guard_block_hosting_asns
         )
+        basic_mobile_flag = bool(getattr(config, "basic_mobile_auto_quarantine_enabled", False))
         config.session_watch_enabled = sw_flag
         config.cookie_threat_detection_enabled = cookie_flag
         config.session_guard_watch_token_stream = cookie_flag
         config.session_guard_block_hosting_asns = cookie_flag
+        config.basic_mobile_auto_quarantine_enabled = basic_mobile_flag
         config.enable_session_guard = bool(sw_flag or cookie_flag)
         if sw_flag or cookie_flag:
             config.session_guard_mode = (
@@ -288,7 +317,7 @@ class ConfigService:
         else:
             config.session_guard_mode = "DISABLED"
         config.enforcement_mode = _derive_enforcement_mode(
-            sw_flag, bool(config.caa_enforcement_enabled), cookie_flag
+            sw_flag, bool(config.caa_enforcement_enabled), cookie_flag, basic_mobile_flag
         )
         config_dict = config.model_dump()
         config_json = json.dumps(config_dict)
@@ -337,6 +366,9 @@ class ConfigService:
         set_key(dotenv_path, "TENANT_SESSION_WATCH_TARGET_GROUPS", json.dumps(config.session_watch_target_groups))
         set_key(dotenv_path, "TENANT_COOKIE_THREAT_TARGET_OUS", json.dumps(config.cookie_threat_target_ous))
         set_key(dotenv_path, "TENANT_COOKIE_THREAT_TARGET_GROUPS", json.dumps(config.cookie_threat_target_groups))
+        set_key(dotenv_path, "TENANT_BASIC_MOBILE_AUTO_QUARANTINE_ENABLED", "true" if config.basic_mobile_auto_quarantine_enabled else "false")
+        set_key(dotenv_path, "TENANT_BASIC_MOBILE_TARGET_OUS", json.dumps(config.basic_mobile_target_ous))
+        set_key(dotenv_path, "TENANT_BASIC_MOBILE_TARGET_GROUPS", json.dumps(config.basic_mobile_target_groups))
         set_key(dotenv_path, "TENANT_SESSION_WATCH_EXEMPT_ADMINS", "true" if config.session_watch_exempt_admins else "false")
         set_key(dotenv_path, "TENANT_SESSION_WATCH_DRY_RUN", "true" if config.session_watch_dry_run else "false")
         set_key(dotenv_path, "TENANT_SESSION_WATCH_GRACE_MINUTES", str(config.session_watch_onboarding_grace_minutes))
