@@ -153,15 +153,15 @@ Activates device signal collection across your entire Google Workspace tenant.
 4. Enter your admin email address to receive enrollment notifications.
 5. ⚠️ **Sub-OU Check:** In the left Organizational Units tree, click sub-OUs (such as `/Admin`, `/Staff`, and `/Students`) and verify that **Require admin approval** is explicitly selected or inherited.
 
-### Step 4: Mobile Management Settings (`Basic` Agentless vs. `Advanced` MDM)
+### Step 4: Mobile Management Settings (`Advanced` vs. `Basic`)
 1. Go to **Devices > Mobile & endpoints > Settings > Universal settings > General**.
-2. Expand **Mobile management** and choose between **Option A (`Basic` Agentless)** or **Option B (`Advanced` MDM)**:
-   * **Option A — `Basic` Agentless Mobile Management + Portal Auto-Quarantine (Recommended for BYOD Phones & Google Group Scoping):**
-     - Set **Android** and **iOS** (or **Turn on mobile management**) to **Basic**. Users are **never** forced to install the Google Device Policy MDM app or create an Android Work Profile, and their Workspace account is never removed from the phone if they decline MDM enrollment.
-     - In the Device Trust Portal (`#/admin`), **📱 Agentless (`Basic`) Mobile Management Auto-Quarantine** starts **OFF by default** (`basic_mobile_auto_quarantine_enabled: false`) with all OU Tree checkboxes **unchecked** (`basic_mobile_target_ous: []`).
-     - When you toggle it **ON** and explicitly select **`Root Organization (/)`**, specific **Sub-OUs** (with automatic child Sub-OU inheritance), or **`Priority #1 -> #N` Google Security Groups**, the portal automatically intercepts newly enrolled (`createTime <= 15m`) unverified `Basic` Android/iOS BYOD devices and flips them from `APPROVED` $\rightarrow$ `BLOCKED` via the single-pass background sweep or event-driven **`POST /api/webhook/mobile-audit`** webhook (`$0.00/mo` within Cloud Run free tier). Pre-existing phones (`createTime > 15m`) are automatically baselined into `portal_approved_devices` and never disrupted.
-   * **Option B — `Advanced` Mobile Management (Full MDM Agent — Default Portal Mode):**
-     - Set **Android** and **iOS** management to **Advanced** and keep **Agentless (`Basic`) Mobile Management Auto-Quarantine** **OFF** in `#/admin`. *(Forces new mobile device sign-ins directly into `PENDING_APPROVAL` / `BLOCKED` status in Admin Console, but requires users to install the Google Device Policy MDM app).*
+2. Expand **Mobile management**:
+   * **Using `Advanced` Mobile Management (Default Portal Mode):**
+     - You can set **Android** and **iOS** management to **Advanced** to force new mobile device sign-ins directly into `PENDING_APPROVAL` / `BLOCKED` status in Google Admin Console. *(Note: `Advanced` management requires users to install the Google Device Policy MDM app / Android Work Profile upon sign-in and can only be scoped by OU in Admin Console. Leave **Agentless (`Basic`) Mobile Management Auto-Quarantine** **OFF** in `#/admin`).*
+   * **If You Use `Basic` (Agentless) Mobile Management:**
+     - If you set **Android** and **iOS** (or **Turn on mobile management**) to **Basic** so users are **not** required to install the Google Device Policy MDM app (or if you need to scope mobile device blocking by **Google Security Group**), Google Admin Console will register new `Basic` mobile devices as `APPROVED` by default.
+     - To block unapproved `Basic` phones until verified in the portal, open `#/admin` and toggle on **📱 Agentless (`Basic`) Mobile Management Auto-Quarantine** (which is **OFF and unchecked by default**).
+     - Explicitly check **`Root Organization (/)`**, specific **Sub-OUs** (with automatic child Sub-OU inheritance), or enter **`Priority #1 -> #N` Google Security Groups**. The portal will automatically flip newly enrolled (`createTime <= 15m`) unverified `Basic` Android/iOS BYOD devices from `APPROVED` $\rightarrow$ `BLOCKED` via the single-pass sweep or event-driven **`POST /api/webhook/mobile-audit`** webhook (`$0.00/mo` within Cloud Run free tier), while automatically baselining pre-existing phones (`createTime > 15m`) so existing users are never disrupted.
 
 ### Step 5: Enable Managed Chrome Profile Reporting, Signals Sharing & Sign-in Restrictions
 > [!IMPORTANT]
