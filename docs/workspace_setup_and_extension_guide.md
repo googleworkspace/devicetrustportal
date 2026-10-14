@@ -66,13 +66,21 @@ Activates device signal collection across your entire organization.
 * **Setting:** Expand **Mobile management**.
 * **Option A — `Basic` (Agentless — Recommended for BYOD Staff/Students & Google Group Scoping):**
   - **Admin Console Configuration:** Set Android and iOS (or **Turn on mobile management**) to **Basic**.
-  - **Portal Configuration (`#/admin`):** Enable **📱 Agentless (Basic) Mobile Management Auto-Quarantine (Android & iOS — No MDM App Required)** and scope it to your target **Organizational Units (OUs)** and/or **Google Security Groups**.
+  - **Portal Configuration (`#/admin` — Strictly OFF & Unchecked by Default):**
+    1. By default, **📱 Agentless (`Basic`) Mobile Management Auto-Quarantine** (`basic_mobile_auto_quarantine_enabled: false`) is **OFF** and every Organizational Unit checkbox in its OU Tree (including `Root Organization (/)`) starts **unchecked** (`basic_mobile_target_ous: []`, `basic_mobile_target_groups: []`).
+    2. To activate it, toggle on **Agentless (`Basic`) Mobile Management Auto-Quarantine** in `#/admin` and explicitly check **`Root Organization (/)`** (for domain-wide protection), select specific **Sub-OUs** (e.g., `/Staff` — child Sub-OUs inherit automatically), or enter comma-separated **Google Security Groups** (`Priority #1 -> #N` hierarchy).
   - **Why Choose `Basic` + Portal Auto-Quarantine:**
     1. **Zero MDM App Prompt / No Account Removal:** Users signing in on personal Android (Pixel/Samsung) or iOS phones are **never** forced to install the Google Device Policy MDM app or create a managed work profile, and their account is never wiped if they decline MDM enrollment.
-    2. **Google Group & OU Scoping:** Overcomes Google Admin Console's limitation where Mobile Management can only be toggled by OU and not by Security Group.
-    3. **How It Works:** Google's EMM backend (`CreateDeviceProducerModule`) registers `Basic` mobile devices in `APPROVED` state upon initial sign-in, but `DeviceStateMachine.initializeBasicActions()` permits `BLOCK` and `APPROVE` state transitions on `Basic` devices via the Cloud Identity Devices API. The Device Trust Portal automatically flips any unverified `Basic` mobile BYOD device from `APPROVED` $\rightarrow$ `BLOCKED` (updating `device.is_admin_approved_device = false` for Context-Aware Access and triggering `users.signOut` when Session Management is active) until the user approves the phone via Campus IP or 6-Digit Trust Chaining.
-* **Option B — `Advanced` (Full MDM Agent Required):**
-  - **Admin Console Configuration:** Set Android and iOS to **Advanced** (scoped by OU only in Admin Console).
+    2. **Google Group (`Priority #1 -> #N`) & OU Tree Scoping:** Overcomes Google Admin Console's limitation where Mobile Management can only be toggled by OU and not by Security Group.
+    3. **How It Works (`$0.00/mo` Event-Driven & Single-Pass Architecture):** Google's EMM backend (`CreateDeviceProducerModule`) registers `Basic` mobile devices in `APPROVED` state upon initial sign-in, ignoring the Admin Console's **Require admin approval** checkbox, while `DeviceStateMachine.initializeBasicActions()` permits `BLOCK` and `APPROVE` state transitions on `Basic` devices via the Cloud Identity Devices API. The Device Trust Portal automatically flips any newly enrolled (`createTime <= 15m`) unverified `Basic` mobile BYOD device from `APPROVED` $\rightarrow$ `BLOCKED` (updating `device.is_admin_approved_device = false` for Context-Aware Access and triggering `users.signOut` when Session Management is active) via its single-pass background sweep or event-driven **`POST /api/webhook/mobile-audit`** endpoint (`< 2 seconds` latency).
+    4. **5 Built-In Safeguards Against Accidental Domain Lockouts (Safe Even at Root `/`):**
+       - **Pre-Existing Phone Auto-Baseline (`createTime > 15m`):** Phones enrolled more than 15 minutes ago are automatically baselined into `portal_approved_devices` and **never** blocked, ensuring existing faculty/admin phones stay uninterrupted when enabled at Root (`/`).
+       - **Active 15-Minute Onboarding Grace Lease Protection:** Users mid-enrollment (`+ Add Personal Device (15m Grace Pass)` or 6-Digit Pairing Code) are never blocked during sign-in.
+       - **Advanced MDM Coexistence:** Automatically skips Android devices carrying `PROFILE_OWNER`, `DEVICE_OWNER`, or `DEVICE_ADMINISTRATOR` `ownershipPrivilege`.
+       - **Company-Owned & Desktop Exclusion:** Never touches `COMPANY`-owned inventory or `CHROME_OS`, `MAC_OS`, `WINDOWS`, or `LINUX` endpoints.
+       - **Audit-Only (`Dry-Run`) Support:** Respects `session_watch_dry_run` (`AUDIT_WOULD_QUARANTINE_BASIC_MOBILE`).
+* **Option B — `Advanced` (Full MDM Agent Required — Default Portal Mode):**
+  - **Admin Console Configuration:** Set Android and iOS to **Advanced** (scoped by OU only in Admin Console) and leave **Agentless (`Basic`) Mobile Management Auto-Quarantine** **OFF** in `#/admin`.
   - **Behavior:** Forces new Android and iOS logins directly into `PENDING_APPROVAL` upon initial account sign-in, but requires users to install the **Google Device Policy** app / Android Work Profile on their mobile device.
 
 ### 5. Enable Managed Chrome Profile Reporting, Signals Sharing & Sign-in Restrictions

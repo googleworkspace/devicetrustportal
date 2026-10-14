@@ -33,13 +33,18 @@ For complete documentation detailing supported Workspace editions, end-user flow
 👉 **[docs/caa_architecture_overview.md](docs/caa_architecture_overview.md)** — Enterprise zero-trust architecture whitepaper.
 
 ### Key Architectural Principles:
-* **Dual Enforcement Modes — Disabled by Default on New Installs:** Supports **Session Management & Circuit Breaker** for Google Workspace for Education Fundamentals (`session_watch_enabled`), **Context-Aware Access (CAA) Integration** for Education Standard/Plus (`caa_enforcement_enabled`), or **BOTH** simultaneously. On any **new installation** (`./deploy.sh`), both modes start **disabled by default (`enforcement_mode: "DISABLED"`)** in safe standby mode until an administrator explicitly configures and enables them in `#/admin`.
+* **Context-Aware Access (CAA) Always Active by Default + Three Optional Enforcement Toggles (All OFF by Default):**
+  - **Context-Aware Access (CAA) Integration (Education Standard/Plus & Enterprise):** Always active by default—approving or revoking a device in the portal immediately updates `device.is_admin_approved_device` and `device.is_corp_owned_device` in Cloud Identity.
+  - **Three Optional Enforcement Toggles in `#/admin` (All OFF by Default on New Installs):**
+    1. **Session Management & `users.signOut` Circuit Breaker (`session_watch_enabled: false` by default)** for Google Workspace for Education Fundamentals.
+    2. **Stolen Cookie & Token Threat Detection (`cookie_threat_detection_enabled: false` by default)** for cloud hosting/proxy ASN and foreign IP token replay revocation.
+    3. **📱 Agentless (`Basic`) Mobile Management Auto-Quarantine (`basic_mobile_auto_quarantine_enabled: false` — OFF & Unchecked by Default, `$0.00/mo`):** Allows Google Admin Console Mobile Management to stay on **Basic** (so Android & iOS phones never prompt for the Google Device Policy MDM app or wipe accounts), while automatically flipping newly enrolled (`<15m`) unverified Basic mobile BYOD devices from `APPROVED` $\rightarrow$ `BLOCKED` in Cloud Identity for explicitly selected OUs (`/` Root or Sub-OUs) or `Priority #1 -> #N` Google Groups. Pre-existing phones (`>15m` old) are automatically baselined and never blocked.
 * **Sub-10-Second Unapproved Device Termination (3-Layer Pipeline):**
   1. **Layer 1 (`< 0.5s` Inline Portal Check & `8s` Heartbeat):** Opening the portal on an unapproved or `BLOCKED` device immediately triggers `users.signOut` + OAuth grant revocation and returns `401 SESSION_REVOKED_UNAPPROVED_DEVICE`. Backend JWT authentication compares the token's `iat` claim against the user's last sign-out timestamp to immediately reject pre-revocation tokens.
-  2. **Layer 2 (`~2–10s` Cloud Identity `lastSyncTime` Sub-Polling):** A 1-minute Cloud Scheduler job (`session-watch-login-sweep`) executes 5 rapid sub-polls spaced 10 seconds apart (`t=0s, 10s, 20s, 30s, 40s`), inspecting Cloud Identity `deviceUsers` for both `PENDING_APPROVAL` and re-logged-in `BLOCKED` BYOD devices whose `lastSyncTime` updated after the user's last sign-out.
-  3. **Layer 3 (Admin SDK `login` Audit Sweep + OAuth Token Revocation):** Sweeps `admin.reports_v1.activities.list(applicationName='login')` and revokes both Google session cookies (`users.signOut`) and OAuth token grants (`directory.tokens.delete`).
-* **Unified User & Admin Experience:** All users—including Super Administrators—see the exact same clean device approval view on `#/`, with **Company-Owned Devices** strictly filtered to hardware the signed-in user has personally accessed (`recentUsers`). Admin-only operational controls (`Sync Inventory Cache`, `Attest Current Session`, `Run Live Login Sweep`) and enforcement telemetry reside exclusively on `#/admin`.
-* **Unmanaged BYOD Hardware:** Personal devices do **not** require intrusive Mobile Device Management (MDM) enrollment or profiles. Users sign into their managed Chrome profile with the Endpoint Verification extension, registering the device as "Unmanaged" while allowing the backend to approve (`devices.deviceUsers.approve`) or block (`devices.deviceUsers.block`) access.
+  2. **Layer 2 (`~2–10s` Cloud Identity `lastSyncTime` Sub-Polling & Event-Driven Mobile Audit Webhook):** A 1-minute Cloud Scheduler job (`session-watch-login-sweep`) executes 5 rapid sub-polls spaced 10 seconds apart (`t=0s, 10s, 20s, 30s, 40s`) when Session Management is active (or a single `<0.8s` Free-Tier pass / `$0.00/mo` `POST /api/webhook/mobile-audit` push webhook when only Basic Mobile Auto-Quarantine is enabled).
+  3. **Layer 3 (Admin SDK `login` & `token` Audit Sweep + OAuth Token Revocation):** Sweeps `admin.reports_v1.activities.list(applicationName='login'|'token')` and revokes both Google session cookies (`users.signOut`) and OAuth token grants (`directory.tokens.delete`).
+* **Unified User & Admin Experience:** All users—including Super Administrators—see the exact same clean device approval view on `#/`, with **Company-Owned Devices** strictly filtered to hardware the signed-in user has personally accessed (`recentUsers`). Admin-only configuration switches, interactive OU Trees with inheritance, and ordered `Priority #1 -> #N` Google Group selectors reside exclusively on `#/admin`.
+* **Agentless Unmanaged BYOD Hardware (Desktop & Mobile):** Personal computers and mobile phones do **not** require intrusive Mobile Device Management (MDM) enrollment or profiles. Desktop users sign into their managed Chrome profile with the Endpoint Verification extension, and mobile users can sign in under **Basic** (agentless) Mobile Management while the portal enforces `APPROVED` / `BLOCKED` status (`devices.deviceUsers.approve` / `.block`).
 * **Automated Lifecycle Management:** A secure cron endpoint (`/api/cron/cleanup`) automatically revokes access for inactive BYOD devices older than X days and syncs newly enrolled Chromebooks.
 
 ---
@@ -71,7 +76,7 @@ Because `devicetrustportal` evaluates domain login and Cloud Identity sync event
 | Deployment & Enforcement Mode | Detection Speed | Est. Monthly Cost (1,000 – 40,000 Students) | Why |
 | :--- | :--- | :--- | :--- |
 | **1. On-Premise Docker** (`./deploy.sh --target 2`) | **~2 – 10s** | **$0.00 / mo** | Runs on any existing district VM (~60 MB RAM). |
-| **2. Cloud Run — CAA-Only Mode** (*Education Standard / Plus*, `session_watch_enabled: false`) | **Immediate (Edge 403)** | **$0.00 – $0.20 / mo** | Scales to zero when idle; `< 3%` of GCP's 180k vCPU-s monthly Free Tier. |
+| **2. Cloud Run — CAA-Only or CAA + Basic Mobile Auto-Quarantine** (`session_watch_enabled: false`) | **Immediate (Edge 403 / `<0.4s` Webhook & Inline)** | **$0.00 – $0.20 / mo** | Scales to zero / single `<0.8s` pass (`< 20%` of GCP's 180k vCPU-s monthly Free Tier). |
 | **3. Cloud Run — Free-Tier 1-Minute Session Sweep** (*Education Fundamentals*, `--sweep-cadence 1min`) | **~30 – 60s** | **$0.00 – $0.20 / mo** | 1 sweep/min (~110k vCPU-s/mo) fits **100% inside GCP's 180k vCPU-s Free Tier**. |
 | **4. Cloud Run — 24/7 Sub-10s Rapid Polling** (*Education Fundamentals / `BOTH`*, default `--sweep-cadence sub10s`) | **~2 – 10s** | **~$38.00 – $43.00 / mo** | 5× 10s sub-polls/min (~43s/min active window ≈ 1.88M vCPU-s/mo at `1 vCPU, 512 MiB`). |
 
@@ -516,29 +521,33 @@ gcloud run deploy device-trust-gateway --image gcr.io/YOUR_PROJECT_ID/device-tru
 
 ## ⚙️ Configuration & Admin UI (`#/admin`)
 
-Once the application is running, Workspace Administrators can dynamically configure enforcement modes, rollout scope, and inspect real-time session telemetry directly via the Admin Portal (`#/admin`).
+Once the application is running, Workspace Administrators can dynamically configure enforcement modes, interactive OU Trees with inheritance, and ordered `Priority #1 -> #N` Google Group hierarchies directly via the Admin Portal (`#/admin`).
 
-### 1. New Installation Default (`DISABLED` Standby Mode) vs. Active Enforcement
-* **Fresh Installations Start Disabled by Default:** Every new installation via `./deploy.sh`, Docker Compose, or a blank Secret Manager secret initializes with:
-  * `session_watch_enabled: false` (Session Management for Education Fundamentals)
-  * `caa_enforcement_enabled: false` (Context-Aware Access Integration for Education Standard & Plus)
+### 1. New Installation Defaults (`DISABLED` Standby Mode) vs. Active Enforcement
+* **Context-Aware Access (CAA) Integration — Always ON by Default:** Approving or revoking a device in the portal always updates `device.is_admin_approved_device` and `device.is_corp_owned_device` in Cloud Identity immediately.
+* **Three Optional Enforcement Toggles Start OFF by Default:** Every new installation via `./deploy.sh`, Docker Compose, or a blank Secret Manager secret initializes with:
+  * `session_watch_enabled: false` (Session Management & `users.signOut` Circuit Breaker)
+  * `cookie_threat_detection_enabled: false` (Stolen Cookie & Token Threat Detection)
+  * `basic_mobile_auto_quarantine_enabled: false` (Agentless `Basic` Mobile Management Auto-Quarantine — with `basic_mobile_target_ous: []` and `basic_mobile_target_groups: []` **unchecked by default**)
   * `enforcement_mode: "DISABLED"`
-* **Why Standby by Default?** This ensures zero unexpected session revocations or user lockouts while the administrator completes initial Domain-Wide Delegation, Chrome Profile Reporting, and Chromebook inventory seeding. While disabled, administrators see a prominent `⚙️ ENFORCEMENT STANDBY — CONFIGURE IN ADMIN` badge in the top bar, and the 1-minute Cloud Scheduler sweep safely returns `SKIPPED_DISABLED`.
 * **Activating Enforcement in `#/admin`:**
   1. Navigate to `#/admin` (or click **⚙️ Admin Config** in the top navigation bar).
-  2. Check **Session Management (Education Fundamentals)** to enable the 3-layer `<0.5s` inline check + `~2–10s` Cloud Identity `lastSyncTime` sub-polling + `users.signOut` & OAuth grant revocation pipeline.
-  3. Check **Context-Aware Access Integration (Education Standard & Plus)** to enable CAA policy remediation banners and self-service pairing code workflows.
-  4. *(Optional)* Enable **Both** simultaneously (`enforcement_mode: "BOTH"`) for defense-in-depth (CAA blocks Workspace web apps at the edge while Session Management immediately terminates underlying `accounts.google.com` sessions and OAuth tokens on unapproved devices).
-  5. Click **💾 Save Configurations**. Changes persist immediately to Google Cloud Secret Manager (`device_trust_gateway_config`) or `.env`.
+  2. **Session Management & `users.signOut` Circuit Breaker (`toggle-session-watch`):** Enable for Google Workspace for Education Fundamentals (or alongside CAA as `BOTH`) and scope via its interactive OU Tree and `Priority #1 -> #N` Google Group selector.
+  3. **Stolen Cookie & Token Threat Detection (`toggle-cookie-threat-detection`):** Enable independently or alongside Session Management to detect and revoke session tokens replayed from datacenter/VPN hosting ASNs (`AS13335`, etc.) or foreign IPs.
+  4. **📱 Agentless (`Basic`) Mobile Management Auto-Quarantine (`toggle-basic-mobile-quarantine` — OFF & Unchecked by Default):**
+     - **Advanced Mobile Management Coexistence:** Leave **OFF** if using Google's Advanced Mobile Management (zero extra API calls run, and Android Work Profile `PROFILE_OWNER`/`DEVICE_OWNER` devices are automatically skipped).
+     - **Enabling for Basic (Agentless) Mobile Management:** Turn **ON** and explicitly check **`Root Organization (/)`**, specific **Sub-OUs** (e.g. `/Staff`, `/Students/HighSchool` — child Sub-OUs inherit automatically), or enter comma-separated **Google Groups** (`1st in = Priority #1 / Highest Hierarchy`).
+     - **5 Built-In Anti-Accidental-Block Safeguards:**
+       1. **Pre-Existing Phone Auto-Baseline (`createTime > 15m`):** Existing phones enrolled more than 15 minutes ago are automatically baselined into `portal_approved_devices` and **never** blocked when enabled at Root (`/`). Only newly enrolled (`<= 15m`) unverified Basic mobile BYOD devices are flipped from `APPROVED` $\rightarrow$ `BLOCKED`.
+       2. **Active 15-Minute Onboarding Grace Pass:** Users with an active 15m Grace Pass (`+ Add Personal Device` or 6-digit Pairing Code) are never blocked mid-onboarding.
+       3. **Advanced MDM Exclusion:** Skips Android devices with `ownershipPrivilege` in `("PROFILE_OWNER", "DEVICE_OWNER", "DEVICE_ADMINISTRATOR")`.
+       4. **Company-Owned & Desktop Exclusion:** Never touches `COMPANY`/`CUSTOMER` devices or `CHROME_OS`, `MAC_OS`, `WINDOWS`, or `LINUX`.
+       5. **Audit-Only (`Dry-Run`) Mode:** Logs `AUDIT_WOULD_QUARANTINE_BASIC_MOBILE` to Google Cloud Logging without blocking devices when Audit-Only Mode is active.
 
 ### 2. Unified User/Admin View (`#/`) vs. Admin-Only Controls (`#/admin`)
 * **Unified Main Dashboard (`#/`):** All users—including Super Administrators—experience the exact same clean device approval interface on `#/`.
   * **Company-Owned Devices (`ownerType: COMPANY`):** Strictly filtered to hardware the signed-in user has personally accessed (`email in recentUsers`). Administrators are never cluttered with domain-wide Chromebooks they haven't logged into.
-  * **Personal BYOD Devices (`ownerType: USER`):** Displays the user's personal laptops and phones with self-service **✓ Approve**, **✕ Revoke**, **🔗 Generate Pairing Code**, and **⏱️ + Add Personal Device (15m Grace Pass)** actions.
-* **Admin-Only Operational Controls (`#/admin`):**
-  * **🔄 Sync Inventory Cache:** Pre-warms and synchronizes approved ChromeOS serials and Cloud Identity `APPROVED` BYOD serials into the backend SQLite/RAM cache.
-  * **🛡️ Attest Current Session:** Manually records an attested browser heartbeat for the admin's current session.
-  * **⚡ Run Live Login Sweep:** Triggers an immediate on-demand audit sweep (`force=true`) across Cloud Identity `deviceUsers` (`PENDING_APPROVAL` & `BLOCKED` syncs) and Admin SDK Reports API `login` events, displaying evaluated counts, revocations, and the **Recent Session Enforcement & Verification Events** feed.
+  * **Personal BYOD Devices (`ownerType: BYOD`):** Displays the user's personal laptops and phones with zero-cost origin IP/Country/ASN context, self-service **✓ Approve**, **✕ Revoke**, **🔗 Generate 6-Digit Pairing Code (24h)**, and **⏱️ + Add Personal Device (15m Grace Pass)** actions.
 
 ---
 
@@ -548,27 +557,27 @@ Once the application is running, Workspace Administrators can dynamically config
 | Setting / Capability | New Install Default (`./deploy.sh`) | Active Live Test Environment (`gwfe.org`) |
 | :--- | :--- | :--- |
 | **`session_watch_enabled` (Fundamentals Session Management)** | `false` (Standby until enabled in `#/admin`) | **`true` (Enabled for live testing)** |
-| **`caa_enforcement_enabled` (Standard/Plus CAA Integration)** | `false` (Standby until enabled in `#/admin`) | **`true` (Enabled for live testing)** |
-| **`enforcement_mode`** | `"DISABLED"` | **`"BOTH"`** |
-| **Cloud Scheduler (`session-watch-login-sweep`)** | `* * * * *` (No-ops with `SKIPPED_DISABLED` until enabled) | **`* * * * *` (Active: 5x 10s sub-polls per minute)** |
-| **Inline Portal Session Check (`GET /api/session-watch/session-status`)** | Inactive until `session_watch_enabled: true` | **Active (`< 0.5s` on mount + `8s` heartbeat + JWT `iat` validation)** |
+| **`cookie_threat_detection_enabled` (Cookie & Token Sentinel)** | `false` (Standby until enabled in `#/admin`) | **`false` (Configurable in `#/admin`)** |
+| **`basic_mobile_auto_quarantine_enabled` (Basic Mobile Quarantine)** | `false` (OFF & all OUs unchecked by default) | **`false` (Configurable in `#/admin`)** |
+| **`caa_enforcement_enabled` (Standard/Plus CAA Integration)** | `true` (CAA attributes always synced) | **`true` (Always active)** |
 | **Admin Exemption (`session_watch_exempt_admins`)** | `false` (Admins can test enforcement with their own account) | **`false` (Verified live with `claycodes@gwfe.org`)** |
 
-### Running the Automated Test Suite (85 Total Tests)
+### Running the Automated Test Suite (118 Total Tests)
 You can run the complete backend and frontend test suites locally before deploying:
 
 ```bash
-# 1. Run Backend Unit & Integration Tests (75 pytest tests covering 3-layer session guard,
+# 1. Run Backend Unit & Integration Tests (98 pytest tests covering 3-layer session guard,
+#    Agentless Basic Mobile Auto-Quarantine, pre-existing device baseline, event-driven webhook,
 #    Cloud Identity PENDING_APPROVAL & re-logged-in BLOCKED sweeps, JWT iat invalidation,
-#    shared Wi-Fi NAT protection, OU/Group scoping, and strict recentUsers filtering):
-PYTHONPATH=. backend/venv/bin/pytest backend/tests/ -q
+#    shared Wi-Fi NAT protection, OU/Group hierarchy scoping, and strict recentUsers filtering):
+PYTHONPATH=. pytest backend/tests/ -q
 
-# 2. Run Frontend Component & Heartbeat Tests (10 Vitest tests covering unified Dashboard,
-#    inline 401 session termination, 15m onboarding grace pass, and Admin Config):
-npm --prefix frontend test
+# 2. Run Frontend Component & Heartbeat Tests (20 Vitest tests covering unified Dashboard,
+#    inline 401 session termination, 15m onboarding grace pass, and Admin Config OU/Group trees):
+cd frontend && npx vitest run
 
 # 3. Verify Production Frontend Bundle Compilation:
-npm --prefix frontend run build
+cd frontend && npm run build
 ```
 
 ---

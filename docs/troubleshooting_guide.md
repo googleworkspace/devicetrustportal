@@ -251,6 +251,16 @@ The portal displays a red alert banner:
      ./backend/venv/bin/python backend/scripts/mass_revoke_byod_approvals.py --force
      ```
 
+### Issue C: Android / iOS Users Prompted to Install "Google Device Policy" MDM App (or Account Removed on Decline)
+* **Cause:**
+  1. In Google Admin Console (`Devices > Mobile & endpoints > Settings > Universal settings > General > Mobile management`), setting Android or iOS to **Advanced** triggers Google's EMM workflow (`ApprovalRequiredNotificationProcessor`). Upon sign-in, Android/iOS forces the user to download the **Google Device Policy** app / Android Work Profile, and declining the prompt automatically removes the Google Workspace account from the phone.
+  2. Conversely, setting Admin Console to **Basic** alone causes Google's EMM backend (`CreateDeviceProducerModule`) to ignore the **Require admin approval** checkbox and auto-create `Basic` mobile devices in `APPROVED` state.
+* **Fix (Agentless `Basic` Mobile Auto-Quarantine — Zero MDM App Required):**
+  1. In Google Admin Console (`Universal settings > General > Mobile management`), switch Android and iOS (or **Turn on mobile management**) to **Basic**.
+  2. In the Device Trust Portal (`#/admin`), toggle on **📱 Agentless (`Basic`) Mobile Management Auto-Quarantine** (`basic_mobile_auto_quarantine_enabled: true` — **OFF by default**).
+  3. Explicitly check **`Root Organization (/)`**, specific **Sub-OUs**, or enter **`Priority #1 -> #N` Google Security Groups** (all checkboxes start **unchecked by default** so nothing is ever blocked until an admin chooses a target scope).
+  4. **Safe Rollout Guarantee:** Pre-existing phones (`createTime > 15 minutes` old) are automatically baselined into `portal_approved_devices` and **never** blocked, while newly added (`<= 15m`) unverified `Basic` phones are flipped from `APPROVED` $\rightarrow$ `BLOCKED` until approved in the portal via Campus IP or a 6-Digit Pairing Code (`+ Add Personal Device (15m Grace Pass)`).
+
 ---
 
 ## ⚡ 10. Unapproved Mac/PC Sessions Staying Signed In After Login (3-Layer Session Termination)
