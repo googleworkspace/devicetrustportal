@@ -32,6 +32,30 @@ def sync_chromebook_fleet_inventory(customer_id: str) -> Dict[str, Any]:
     cust_key = ci_customer.replace("customers/", "").strip() or "my_customer"
 
     try:
+        existing_serials = set()
+        try:
+            ci_page_token = None
+            while True:
+                ci_resp = cloud_identity_service.execute_with_retry(
+                    lambda pt=ci_page_token: cloud_identity_service.service.devices().list(
+                        customer=ci_customer,
+                        pageSize=100,
+                        pageToken=pt,
+                    ).execute()
+                )
+                if not isinstance(ci_resp, dict):
+                    break
+                for existing_dev in ci_resp.get("devices", []) or []:
+                    if isinstance(existing_dev, dict):
+                        s = (existing_dev.get("serialNumber") or "").strip()
+                        if s:
+                            existing_serials.add(s)
+                ci_page_token = ci_resp.get("nextPageToken")
+                if not ci_page_token:
+                    break
+        except Exception:
+            pass
+
         page_token = None
         total_synced = 0
         max_pages = 10
@@ -39,20 +63,24 @@ def sync_chromebook_fleet_inventory(customer_id: str) -> Dict[str, Any]:
 
         while page < max_pages:
             page += 1
-            req = directory_service.service.chromeosdevices().list(
-                customerId=cust_key,
-                pageToken=page_token,
-                maxResults=50,
-                projection="FULL"
+            resp = directory_service._execute_with_retry(
+                lambda pt=page_token: directory_service.service.chromeosdevices().list(
+                    customerId=cust_key,
+                    pageToken=pt,
+                    maxResults=50,
+                    projection="FULL"
+                ).execute()
             )
-            resp = req.execute()
-            devices = resp.get("chromeosdevices", [])
+            devices = resp.get("chromeosdevices", []) if isinstance(resp, dict) else []
             if not devices:
                 break
 
             for dev in devices:
-                serial = dev.get("serialNumber")
+                serial = (dev.get("serialNumber") or "").strip()
                 if not serial:
+                    continue
+                if serial in existing_serials:
+                    total_synced += 1
                     continue
                 body = {
                     "deviceType": "CHROME_OS",
@@ -63,16 +91,19 @@ def sync_chromebook_fleet_inventory(customer_id: str) -> Dict[str, Any]:
                     "ownerType": "COMPANY"
                 }
                 try:
-                    cloud_identity_service.service.devices().create(
-                        customer=ci_customer,
-                        body=body
-                    ).execute()
+                    cloud_identity_service.execute_with_retry(
+                        lambda b=body: cloud_identity_service.service.devices().create(
+                            customer=ci_customer,
+                            body=b
+                        ).execute()
+                    )
+                    existing_serials.add(serial)
                     total_synced += 1
                 except Exception:
-                    # Device already exists or already registered
+                    # Device already exists or transient limit handled silently
                     pass
 
-            page_token = resp.get("nextPageToken")
+            page_token = resp.get("nextPageToken") if isinstance(resp, dict) else None
             if not page_token:
                 break
 

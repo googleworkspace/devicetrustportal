@@ -15,6 +15,7 @@
 import os
 import ssl
 import time
+import random
 import threading
 from typing import List, Dict, Any, Optional, Tuple, Callable
 try:
@@ -27,7 +28,7 @@ except ImportError:
     class HttpError(Exception):
         pass
 
-from backend.services.cloud_identity import resolve_dwd_key_path
+from backend.services.cloud_identity import resolve_dwd_key_path, is_retryable_http_error
 
 
 def _is_transient_transport_error(exc: Exception) -> bool:
@@ -129,9 +130,11 @@ class DirectoryService:
         attr_name: str = "service",
         api_version: str = "directory_v1",
         scopes: Optional[List[str]] = None,
-        max_attempts: int = 3,
+        max_attempts: int = 5,
+        base_delay: float = 1.0,
+        max_delay: float = 32.0,
     ) -> Any:
-        """Executes a googleapiclient request under lock, rebuilding the client on broken pipe / TLS EOF."""
+        """Executes a googleapiclient request under lock with silent exponential backoff on 429/5xx and socket resets."""
         lock = getattr(self, "_lock", None)
         last_err: Optional[Exception] = None
         for attempt in range(max_attempts):
@@ -142,17 +145,19 @@ class DirectoryService:
                 return op()
             except Exception as exc:
                 last_err = exc
-                if not _is_transient_transport_error(exc) or attempt + 1 >= max_attempts:
-                    raise
-                print(
-                    f"WARNING [directory_service.py]: Transient transport error on '{attr_name}' "
-                    f"(attempt {attempt + 1}/{max_attempts}): {exc}; resetting connection pool."
-                )
-                if lock:
-                    with lock:
+                if _is_transient_transport_error(exc) and attempt + 1 < max_attempts:
+                    if lock:
+                        with lock:
+                            self._rebuild_client(attr_name=attr_name, api_version=api_version, scopes=scopes)
+                    else:
                         self._rebuild_client(attr_name=attr_name, api_version=api_version, scopes=scopes)
-                else:
-                    self._rebuild_client(attr_name=attr_name, api_version=api_version, scopes=scopes)
+                    continue
+                if is_retryable_http_error(exc) and attempt + 1 < max_attempts:
+                    sleep_sec = min(max_delay, base_delay * (2 ** attempt)) + random.uniform(0.0, 0.25 * max(base_delay, 0.01))
+                    if sleep_sec > 0:
+                        time.sleep(sleep_sec)
+                    continue
+                raise
         if last_err:
             raise last_err
         return None

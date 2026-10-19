@@ -15,7 +15,9 @@
 import os
 import sys
 import time
+import random
 from pathlib import Path
+from typing import Callable, Any
 
 # Ensure repository root is always in sys.path
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -26,7 +28,30 @@ import google.auth
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
-from backend.services.cloud_identity import resolve_dwd_key_path, normalize_customer_id
+from backend.services.cloud_identity import (
+    resolve_dwd_key_path,
+    normalize_customer_id,
+    is_retryable_http_error,
+    is_transient_socket_error,
+)
+
+
+def _execute_with_backoff(
+    op: Callable[[], Any],
+    max_retries: int = 6,
+    base_delay: float = 2.0,
+    max_delay: float = 65.0,
+) -> Any:
+    """Executes a Cloud Identity call with silent exponential backoff on 429/5xx rate limits."""
+    for attempt in range(max_retries + 1):
+        try:
+            return op()
+        except Exception as exc:
+            if (is_retryable_http_error(exc) or is_transient_socket_error(exc)) and attempt < max_retries:
+                sleep_sec = min(max_delay, base_delay * (2 ** attempt)) + random.uniform(0.0, 1.5)
+                time.sleep(sleep_sec)
+                continue
+            raise
 
 def execute_mass_byod_revocation():
     print("\n===================================================================================================")
@@ -76,12 +101,13 @@ def execute_mass_byod_revocation():
         print(f"INFO: Fetching Cloud Identity devices.list [Page {page_count}]...")
 
         try:
-            request = service.devices().list(
-                customer=customer_id,
-                pageToken=next_page_token
+            response = _execute_with_backoff(
+                lambda pt=next_page_token: service.devices().list(
+                    customer=customer_id,
+                    pageToken=pt
+                ).execute()
             )
-            response = request.execute()
-            devices = response.get("devices", [])
+            devices = response.get("devices", []) if isinstance(response, dict) else []
             total_devices_inspected += len(devices)
 
             for d in devices:
@@ -99,50 +125,41 @@ def execute_mass_byod_revocation():
                 du_page_token = None
                 while True:
                     try:
-                        du_req = service.devices().deviceUsers().list(
-                            parent=device_name,
-                            customer=customer_id,
-                            pageToken=du_page_token
+                        du_resp = _execute_with_backoff(
+                            lambda dn=device_name, pt=du_page_token: service.devices().deviceUsers().list(
+                                parent=dn,
+                                customer=customer_id,
+                                pageToken=pt
+                            ).execute()
                         )
-                        du_resp = du_req.execute()
 
-                        for du in du_resp.get("deviceUsers", []):
+                        for du in (du_resp.get("deviceUsers", []) if isinstance(du_resp, dict) else []):
                             state = (du.get("managementState") or du.get("approvalState") or "UNKNOWN_STATE").upper()
                             if state == "APPROVED":
                                 du_name = du["name"]
                                 user_email = du.get("userEmail", "Unknown User")
                                 print(f"REVOKING: Blocking BYOD binding '{du_name}' ({model}) for '{user_email}'...")
                                 
-                                block_req = service.devices().deviceUsers().block(
-                                    name=du_name,
-                                    body={"customer": customer_id}
+                                _execute_with_backoff(
+                                    lambda dn=du_name: service.devices().deviceUsers().block(
+                                        name=dn,
+                                        body={"customer": customer_id}
+                                    ).execute()
                                 )
-                                block_req.execute()
                                 total_revoked += 1
                                 
-                        du_page_token = du_resp.get("nextPageToken")
+                        du_page_token = du_resp.get("nextPageToken") if isinstance(du_resp, dict) else None
                         if not du_page_token:
                             break
-                    except HttpError as e:
-                        print(f"WARNING: API error inspecting deviceUsers for '{device_name}': {e}")
-                        total_errors += 1
-                        break
-                    except Exception as e:
-                        print(f"WARNING: Unexpected error inspecting deviceUsers for '{device_name}': {e}")
+                    except Exception:
                         total_errors += 1
                         break
 
-            next_page_token = response.get("nextPageToken")
+            next_page_token = response.get("nextPageToken") if isinstance(response, dict) else None
             if not next_page_token:
                 break
 
-        except HttpError as e:
-            print(f"ERROR: Cloud Identity API pagination error on Page {page_count}: {e}")
-            total_errors += 1
-            time.sleep(5)
-            break
-        except Exception as e:
-            print(f"ERROR: Unexpected pagination error on Page {page_count}: {e}")
+        except Exception:
             total_errors += 1
             break
 

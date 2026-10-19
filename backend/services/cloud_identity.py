@@ -14,6 +14,8 @@
 
 import os
 import ssl
+import time
+import random
 import datetime
 import threading
 from typing import List, Dict, Any, Optional, Callable
@@ -28,6 +30,42 @@ except ImportError:
     class HttpError(Exception):
         pass
     BatchHttpRequest = None
+
+
+def get_http_error_status(exc: Exception) -> Optional[int]:
+    """Extracts the HTTP status code from a googleapiclient HttpError or duck-typed exception."""
+    resp = getattr(exc, "resp", None)
+    status = getattr(resp, "status", None) if resp is not None else getattr(exc, "status_code", None)
+    if status is not None:
+        try:
+            return int(status)
+        except (ValueError, TypeError):
+            pass
+    return None
+
+
+def is_retryable_http_error(exc: Exception) -> bool:
+    """Returns True if exc is a rate-limit (429) or transient server error (500, 502, 503, 504)."""
+    status = get_http_error_status(exc)
+    if status in (429, 500, 502, 503, 504):
+        return True
+    msg = str(exc).lower()
+    rate_markers = (
+        "rate_limit_exceeded",
+        "ratelimitexceeded",
+        "userratelimitexceeded",
+        "quota exceeded",
+        "quota_exceeded",
+        "resource_exhausted",
+        "too many requests",
+        "backend error",
+        "service unavailable",
+    )
+    if isinstance(exc, HttpError) and any(m in msg for m in rate_markers):
+        return True
+    if status == 403 and any(m in msg for m in ("rate_limit_exceeded", "ratelimitexceeded", "userratelimitexceeded", "quota exceeded")):
+        return True
+    return False
 
 
 def is_transient_socket_error(exc: Exception) -> bool:
@@ -138,8 +176,14 @@ class CloudIdentityService:
         except Exception as rebuild_err:
             print(f"WARNING [cloud_identity.py]: Failed to rebuild Cloud Identity client: {rebuild_err}")
 
-    def execute_with_retry(self, op: Callable[[], Any], max_attempts: int = 3) -> Any:
-        """Executes a Cloud Identity request under lock, rebuilding the client on broken pipe / TLS EOF."""
+    def execute_with_retry(
+        self,
+        op: Callable[[], Any],
+        max_attempts: int = 5,
+        base_delay: float = 1.0,
+        max_delay: float = 32.0,
+    ) -> Any:
+        """Executes a Cloud Identity request under lock with silent exponential backoff on 429/5xx and socket resets."""
         lock = getattr(self, "_lock", None)
         last_err: Optional[Exception] = None
         for attempt in range(max_attempts):
@@ -150,17 +194,19 @@ class CloudIdentityService:
                 return op()
             except Exception as exc:
                 last_err = exc
-                if not is_transient_socket_error(exc) or attempt + 1 >= max_attempts:
-                    raise
-                print(
-                    f"WARNING [cloud_identity.py]: Transient socket error "
-                    f"(attempt {attempt + 1}/{max_attempts}): {exc}; resetting connection pool."
-                )
-                if lock:
-                    with lock:
+                if is_transient_socket_error(exc) and attempt + 1 < max_attempts:
+                    if lock:
+                        with lock:
+                            self._rebuild_service()
+                    else:
                         self._rebuild_service()
-                else:
-                    self._rebuild_service()
+                    continue
+                if is_retryable_http_error(exc) and attempt + 1 < max_attempts:
+                    sleep_sec = min(max_delay, base_delay * (2 ** attempt)) + random.uniform(0.0, 0.25 * max(base_delay, 0.01))
+                    if sleep_sec > 0:
+                        time.sleep(sleep_sec)
+                    continue
+                raise
         if last_err:
             raise last_err
         return None
@@ -286,33 +332,62 @@ class CloudIdentityService:
         except HttpError as e:
             raise Exception(f"Cloud Identity API error during revocation: {e}")
 
-    def revoke_device_users_bulk(self, device_user_names: List[str], customer_id: str, action: str = "BLOCK") -> Dict[str, Any]:
+    def revoke_device_users_bulk(
+        self,
+        device_user_names: List[str],
+        customer_id: str,
+        action: str = "BLOCK",
+        max_attempts: int = 5,
+        base_delay: float = 1.0,
+        max_delay: float = 32.0,
+    ) -> Dict[str, Any]:
         if not self.service:
             raise Exception("Cloud Identity service not initialized with valid credentials")
 
         cid = normalize_customer_id(customer_id)
-        print(f"INFO [cloud_identity.py]: Executing BatchHttpRequest for {len(device_user_names)} device revocation(s) using BLOCK method...")
-        errors: List[Any] = []
+        pending_names = list(device_user_names)
+        non_retryable_errors: List[Any] = []
 
-        def _run_batch():
-            errors.clear()
-            batch = self.service.new_batch_http_request()
+        for attempt in range(max_attempts):
+            if not pending_names:
+                break
+            rate_limited_names: List[str] = []
+            non_retryable_errors.clear()
 
-            def callback(request_id, response, exception):
-                if exception:
-                    errors.append(exception)
+            def _run_batch(targets: List[str] = pending_names):
+                rate_limited_names.clear()
+                non_retryable_errors.clear()
+                batch = self.service.new_batch_http_request()
 
-            body = {"customer": cid}
-            for du_name in device_user_names:
-                req = self.service.devices().deviceUsers().block(name=du_name, body=body)
-                batch.add(req, callback=callback)
+                def callback(request_id, response, exception):
+                    if exception:
+                        if is_retryable_http_error(exception) and attempt + 1 < max_attempts:
+                            rate_limited_names.append(request_id)
+                        else:
+                            non_retryable_errors.append(exception)
 
-            batch.execute()
+                body = {"customer": cid}
+                for idx, du_name in enumerate(targets):
+                    req = self.service.devices().deviceUsers().block(name=du_name, body=body)
+                    batch.add(req, request_id=du_name if du_name else str(idx), callback=callback)
 
-        self.execute_with_retry(_run_batch)
-        if errors:
-            raise Exception(f"Batch revocation encountered {len(errors)} error(s). First error: {errors[0]}")
-            
+                batch.execute()
+
+            self.execute_with_retry(_run_batch, max_attempts=max_attempts, base_delay=base_delay, max_delay=max_delay)
+
+            if not rate_limited_names:
+                break
+
+            pending_names = list(rate_limited_names)
+            sleep_sec = min(max_delay, base_delay * (2 ** attempt)) + random.uniform(0.0, 0.25 * max(base_delay, 0.01))
+            if sleep_sec > 0:
+                time.sleep(sleep_sec)
+
+        if non_retryable_errors:
+            raise Exception(
+                f"Batch revocation encountered {len(non_retryable_errors)} error(s). First error: {non_retryable_errors[0]}"
+            )
+
         return {"status": "SUCCESS", "revoked_count": len(device_user_names)}
 
 cloud_identity_service = CloudIdentityService()
