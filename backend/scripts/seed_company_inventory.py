@@ -60,6 +60,14 @@ def _is_rate_or_transient_error(exc: Exception) -> bool:
     return is_retryable_http_error(exc) or is_transient_socket_error(exc)
 
 
+def is_active_chromeos_device(device: Dict[str, Any]) -> bool:
+    """Returns True only if the Directory API ChromeOS device is in ACTIVE status."""
+    if not isinstance(device, dict):
+        return False
+    status = (device.get("status") or "ACTIVE").strip().upper()
+    return status == "ACTIVE"
+
+
 class InventorySeeder:
     def __init__(
         self,
@@ -127,6 +135,7 @@ class InventorySeeder:
             "total_directory_devices": 0,
             "created_in_cloud_identity": 0,
             "already_registered": 0,
+            "skipped_inactive": 0,
             "bindings_approved": 0,
             "errors": 0
         }
@@ -221,6 +230,7 @@ class InventorySeeder:
                 response = self._execute_with_backoff(
                     lambda pt=page_token: self.admin_service.chromeosdevices().list(
                         customerId=self.directory_customer_id,
+                        query="status:ACTIVE",
                         pageToken=pt,
                         maxResults=batch_size,
                         projection="FULL"
@@ -231,9 +241,15 @@ class InventorySeeder:
                 if not devices:
                     break
 
-                self._process_device_batch(devices)
-                self.stats["total_directory_devices"] += len(devices)
-                print(f"Processed batch of {len(devices)} device(s) (Total discovered: {self.stats['total_directory_devices']})...")
+                active_devices = [d for d in devices if is_active_chromeos_device(d)]
+                inactive_count = len(devices) - len(active_devices)
+                if inactive_count > 0:
+                    self.stats["skipped_inactive"] += inactive_count
+
+                if active_devices:
+                    self._process_device_batch(active_devices)
+                    self.stats["total_directory_devices"] += len(active_devices)
+                    print(f"Processed batch of {len(active_devices)} active device(s) (Total active discovered: {self.stats['total_directory_devices']})...")
 
                 page_token = response.get("nextPageToken") if isinstance(response, dict) else None
                 if not page_token:
@@ -251,9 +267,11 @@ class InventorySeeder:
                 
         print("\n=========================================================")
         print(f"✔ Live Inventory Seeding Run Complete!")
-        print(f"  • Total Directory Chromebooks Discovered: {self.stats['total_directory_devices']}")
+        print(f"  • Total Active Chromebooks Discovered:    {self.stats['total_directory_devices']}")
         print(f"  • Newly Anchored in Cloud Identity:      {self.stats['created_in_cloud_identity']}")
         print(f"  • Already Anchored (Pre-existing):        {self.stats['already_registered']}")
+        if self.stats["skipped_inactive"] > 0:
+            print(f"  • Skipped Inactive / Deprovisioned:       {self.stats['skipped_inactive']}")
         print(f"  • Device User Bindings Approved:          {self.stats['bindings_approved']}")
         if self.stats["errors"] > 0:
             print(f"  • Errors Encountered:                    {self.stats['errors']}")
@@ -268,6 +286,8 @@ class InventorySeeder:
     def _process_device_batch(self, devices: List[Dict[str, Any]]):
         pending_by_serial: Dict[str, Dict[str, Any]] = {}
         for device in devices:
+            if not is_active_chromeos_device(device):
+                continue
             serial = (device.get("serialNumber") or "").strip()
             if not serial:
                 continue

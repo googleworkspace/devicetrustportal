@@ -66,6 +66,7 @@ def sync_chromebook_fleet_inventory(customer_id: str) -> Dict[str, Any]:
             resp = directory_service._execute_with_retry(
                 lambda pt=page_token: directory_service.service.chromeosdevices().list(
                     customerId=cust_key,
+                    query="status:ACTIVE",
                     pageToken=pt,
                     maxResults=50,
                     projection="FULL"
@@ -76,6 +77,8 @@ def sync_chromebook_fleet_inventory(customer_id: str) -> Dict[str, Any]:
                 break
 
             for dev in devices:
+                if (dev.get("status") or "ACTIVE").strip().upper() != "ACTIVE":
+                    continue
                 serial = (dev.get("serialNumber") or "").strip()
                 if not serial:
                     continue

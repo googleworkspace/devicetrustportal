@@ -360,15 +360,19 @@ def test_seed_company_inventory_preloads_existing_and_retries_429_silently(capsy
     }
     mock_ci.devices().deviceUsers().list().execute.return_value = {"deviceUsers": []}
 
-    # Directory returns 3 Chromebooks:
-    # 1. NX-EXISTING-01 (already in Cloud Identity -> skipped before write)
-    # 2. NX-RATE-LIMIT-02 (fails with 429 RATE_LIMIT_EXCEEDED on attempt 1, succeeds on attempt 2)
-    # 3. NX-CONFLICT-03 (returns 409 Conflict inside batch -> counted as already_registered)
+    # Directory returns 5 Chromebooks:
+    # 1. NX-EXISTING-01 (ACTIVE, already in Cloud Identity -> skipped before write)
+    # 2. NX-RATE-LIMIT-02 (ACTIVE, fails with 429 RATE_LIMIT_EXCEEDED on attempt 1, succeeds on attempt 2)
+    # 3. NX-CONFLICT-03 (ACTIVE, returns 409 Conflict inside batch -> counted as already_registered)
+    # 4. NX-DEPROVISIONED-04 (DEPROVISIONED -> skipped completely, never created)
+    # 5. NX-DISABLED-05 (DISABLED -> skipped completely, never created)
     mock_admin.chromeosdevices().list().execute.return_value = {
         "chromeosdevices": [
-            {"serialNumber": "NX-EXISTING-01", "model": "Acer Chromebook"},
-            {"serialNumber": "NX-RATE-LIMIT-02", "model": "HP Chromebook"},
+            {"serialNumber": "NX-EXISTING-01", "model": "Acer Chromebook", "status": "ACTIVE"},
+            {"serialNumber": "NX-RATE-LIMIT-02", "model": "HP Chromebook", "status": "ACTIVE"},
             {"serialNumber": "NX-CONFLICT-03", "model": "Dell Chromebook"},
+            {"serialNumber": "NX-DEPROVISIONED-04", "model": "Old Chromebook", "status": "DEPROVISIONED"},
+            {"serialNumber": "NX-DISABLED-05", "model": "Lost Chromebook", "status": "DISABLED"},
         ]
     }
 
@@ -427,11 +431,21 @@ def test_seed_company_inventory_preloads_existing_and_retries_429_silently(capsy
     # 3. NX-RATE-LIMIT-02 was retried on attempt 2 and succeeded
     assert created_serials.count("NX-RATE-LIMIT-02") == 2
     assert batch_attempt["count"] == 2
-    # 4. Stats accurately reflect 3 discovered, 1 newly created, 2 already registered, 0 errors
+    # 4. Stats accurately reflect 3 active discovered, 1 newly created, 2 already registered, 2 skipped inactive, 0 errors
+    assert "NX-DEPROVISIONED-04" not in created_serials
+    assert "NX-DISABLED-05" not in created_serials
     assert seeder.stats["total_directory_devices"] == 3
     assert seeder.stats["created_in_cloud_identity"] == 1
     assert seeder.stats["already_registered"] == 2
+    assert seeder.stats["skipped_inactive"] == 2
     assert seeder.stats["errors"] == 0
+    mock_admin.chromeosdevices().list.assert_called_with(
+        customerId="C01234567",
+        query="status:ACTIVE",
+        pageToken=None,
+        maxResults=50,
+        projection="FULL",
+    )
 
 
 def test_cloud_identity_execute_with_retry_and_bulk_revoke_429():

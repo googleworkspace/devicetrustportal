@@ -551,6 +551,7 @@ class DirectoryService:
                         lambda pt=page_token: self.service.chromeosdevices()
                         .list(
                             customerId=cust_key,
+                            query="status:ACTIVE",
                             pageToken=pt,
                             maxResults=100,
                             projection="FULL",
@@ -565,6 +566,8 @@ class DirectoryService:
 
                 target_prefix = target_email.split("@")[0] if "@" in target_email else target_email
                 for dev in devices:
+                    if (dev.get("status") or "ACTIVE").strip().upper() != "ACTIVE":
+                        continue
                     annotated_user = dev.get("annotatedUser", "").lower().strip()
                     recent_users = [u.get("email", "").lower().strip() for u in dev.get("recentUsers", []) if isinstance(u, dict)]
                     
@@ -639,6 +642,7 @@ class DirectoryService:
                     lambda pt=page_token: self.service.chromeosdevices()
                     .list(
                         customerId=cust_key,
+                        query="status:ACTIVE",
                         pageToken=pt,
                         maxResults=200,
                         projection="BASIC",
@@ -651,6 +655,8 @@ class DirectoryService:
             if not devices:
                 break
             for dev in devices:
+                if (dev.get("status") or "ACTIVE").strip().upper() != "ACTIVE":
+                    continue
                 serial = (dev.get("serialNumber") or "").strip().upper()
                 if not serial:
                     continue
