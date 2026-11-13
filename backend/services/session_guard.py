@@ -132,7 +132,7 @@ class SessionGuardService:
         self,
         sqlite_path: str = ":memory:",
         attestation_ttl_sec: int = 14400,  # 4 hours per school block
-        grace_window_sec: int = 15,  # Wait up to 15s for extension heartbeat
+        grace_window_sec: int = 60,  # Wait up to 60s for 2SV / ChromeOS / Cloud Identity sync or extension heartbeat
         signout_cooldown_sec: int = 300,  # Cooldown for duplicate events with older timestamps
         campus_egress_ips: Optional[Set[str]] = None,
         signout_callback: Optional[Callable[[str], bool]] = None,
@@ -170,6 +170,8 @@ class SessionGuardService:
         self._enforced_device_syncs: Dict[str, float] = {}
         # Enforced event IDs so the exact same event_id is never fired twice
         self._enforced_event_ids: Set[str] = set()
+        # Logged ALLOW_ATTESTED event IDs so duplicate sweeps don't spam enforcement logs
+        self._logged_allowed_event_ids: Set[str] = set()
         # Persisted device sign-in network/geolocation context indexed by device_user_name
         self._device_network_context: Dict[str, Dict[str, Any]] = {}
         # Authoritative registry of BYOD devices explicitly approved via the Device Trust Portal
@@ -299,6 +301,12 @@ class SessionGuardService:
                             self._recent_signouts[norm_u] = ep
                     except Exception:
                         pass
+            cur.execute(
+                "SELECT DISTINCT event_id FROM session_enforcement_log WHERE decision = 'ALLOW_ATTESTED'"
+            )
+            for (ev_id,) in cur.fetchall():
+                if ev_id:
+                    self._logged_allowed_event_ids.add(str(ev_id))
 
     def record_device_network_context(
         self,
@@ -838,20 +846,26 @@ class SessionGuardService:
                 f"OS platform mismatch: cannot attest a non-ChromeOS browser session using ChromeOS serial '{serial_key}'.",
             )
 
+        clean_ip = ip_address.strip()
         attestation = SessionAttestation(
             user_email=email_key,
             serial_number=serial_key,
-            ip_address=ip_address.strip(),
+            ip_address=clean_ip,
             attested_at_epoch=now,
             user_agent=user_agent,
             session_id=session_id,
         )
-        existing = self._active_attestations.get(email_key, [])
-        # Prune expired attestations for this user
-        cutoff = now - self.attestation_ttl_sec
-        fresh = [a for a in existing if a.attested_at_epoch >= cutoff]
-        fresh.append(attestation)
-        self._active_attestations[email_key] = fresh
+        with self._lock:
+            existing = self._active_attestations.get(email_key, [])
+            # Prune expired attestations and replace any duplicate (serial_number, ip_address) entry
+            cutoff = now - self.attestation_ttl_sec
+            fresh = [
+                a for a in existing
+                if a.attested_at_epoch >= cutoff
+                and not (a.serial_number == serial_key and a.ip_address == clean_ip)
+            ]
+            fresh.append(attestation)
+            self._active_attestations[email_key] = fresh
         return True, f"Verified {device.device_type} device '{serial_key}'."
 
     def refresh_user_attestation(
@@ -1054,7 +1068,11 @@ class SessionGuardService:
                 )
                 if matched_att is not None:
                     self.metrics["allowed_attested"] += 1
-                    if persist_all_allowed:
+                    if persist_all_allowed and (
+                        not ev.event_id or ev.event_id not in self._logged_allowed_event_ids
+                    ):
+                        if ev.event_id:
+                            self._logged_allowed_event_ids.add(ev.event_id)
                         actions.append(
                             EnforcementAction(
                                 event_id=ev.event_id,

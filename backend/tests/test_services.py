@@ -501,5 +501,171 @@ def test_cloud_identity_execute_with_retry_and_bulk_revoke_429():
     assert bulk_wave["n"] == 2
 
 
+def test_session_guard_60s_grace_window_and_attestation_dedup():
+    from backend.services.session_guard import SessionGuardService, LoginAuditEvent
+
+    guard = SessionGuardService(enabled=True)
+    assert guard.grace_window_sec == 60
+
+    # 1. A login 15.08s old must defer under the 60s grace window instead of falsely revoking
+    ev_15s = LoginAuditEvent(
+        event_id="ev-grace-15s",
+        user_email="teacher@example.com",
+        ip_address="203.0.113.10",
+        timestamp_epoch=1000.0,
+        login_type="google_password",
+    )
+    actions_deferred = guard.evaluate_login_batch([ev_15s], now_epoch=1015.08)
+    assert actions_deferred == []
+    assert guard.metrics["deferred_grace_window"] == 1
+    assert guard.metrics["signouts_executed"] == 0
+
+    # 2. Promoting / re-attesting the same (serial, ip) replaces rather than duplicating attestations,
+    #    and persist_all_allowed logs ALLOW_ATTESTED only once per event_id across repeated sweeps.
+    guard.promote_approved_device(
+        serial_number="C1L14000LH",
+        user_email="teacher@example.com",
+        ip_address="203.0.113.10",
+        now_epoch=1020.0,
+        device_type="CHROMEOS",
+    )
+    guard.promote_approved_device(
+        serial_number="C1L14000LH",
+        user_email="teacher@example.com",
+        ip_address="203.0.113.10",
+        now_epoch=1030.0,
+        device_type="CHROMEOS",
+    )
+    assert len(guard._active_attestations.get("teacher@example.com", [])) == 1
+
+    ev_dup = LoginAuditEvent(
+        event_id="ev-allow-dedup",
+        user_email="teacher@example.com",
+        ip_address="203.0.113.10",
+        timestamp_epoch=1025.0,
+        login_type="google_password",
+    )
+    first_pass = guard.evaluate_login_batch([ev_dup], now_epoch=1090.0, persist_all_allowed=True)
+    second_pass = guard.evaluate_login_batch([ev_dup], now_epoch=1100.0, persist_all_allowed=True)
+    assert len(first_pass) == 1
+    assert first_pass[0].decision == "ALLOW_ATTESTED"
+    assert len(second_pass) == 0
+    assert guard.metrics["allowed_attested"] == 2
+
+    # 3. Unapproved BYOD devices still bypass grace_window_sec and revoke immediately even at age 5.0s
+    guard.record_unapproved_device(
+        user_email="byod-user@example.com",
+        device_user_name="devices/byod-1/deviceUsers/u1",
+        serial_number="BYOD-UNAPPROVED",
+        approval_state="PENDING_APPROVAL",
+        last_sync_epoch=1095.0,
+    )
+    ev_byod = LoginAuditEvent(
+        event_id="ev-byod-5s",
+        user_email="byod-user@example.com",
+        ip_address="203.0.113.20",
+        timestamp_epoch=1095.0,
+        login_type="google_password",
+    )
+    byod_actions = guard.evaluate_login_batch([ev_byod], now_epoch=1100.0)
+    assert len(byod_actions) == 1
+    assert byod_actions[0].decision == "REVOKE_SIGN_OUT"
+
+
+def test_live_sweep_accepts_mid_sweep_approved_device_sync():
+    import time
+    from datetime import datetime, timezone
+    from fastapi.testclient import TestClient
+    from backend.main import app
+    from backend.routes.session_watch import session_guard
+
+    client = TestClient(app)
+
+    session_guard._recent_signouts.clear()
+    session_guard._enforced_device_syncs.clear()
+    session_guard._enforced_event_ids.clear()
+    session_guard._logged_allowed_event_ids.clear()
+    session_guard._unapproved_devices.clear()
+    session_guard._active_attestations.clear()
+
+    now_ep = time.time()
+    login_ep = now_ep - 70.0
+    mid_sweep_sync_iso = (
+        datetime.fromtimestamp(now_ep + 2.0, tz=timezone.utc)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+
+    mock_ci = MagicMock()
+    mock_devices_res = MagicMock()
+    mock_du_res = MagicMock()
+    mock_ci.devices.return_value = mock_devices_res
+    mock_devices_res.deviceUsers.return_value = mock_du_res
+
+    mock_devices_res.list.return_value.execute.return_value = {
+        "devices": [
+            {
+                "name": "devices/cros-c1l14000lh",
+                "deviceType": "CHROME_OS",
+                "model": "Chromebook",
+                "serialNumber": "C1L14000LH",
+                "ownerType": "COMPANY",
+                "lastSyncTime": mid_sweep_sync_iso,
+            }
+        ]
+    }
+    mock_du_res.list.return_value.execute.return_value = {
+        "deviceUsers": [
+            {
+                "name": "devices/cros-c1l14000lh/deviceUsers/du-1",
+                "userEmail": "teacher@example.com",
+                "managementState": "APPROVED",
+                "lastSyncTime": mid_sweep_sync_iso,
+            }
+        ]
+    }
+
+    login_events = [
+        {
+            "event_id": "teacher@example.com:mid-sweep-1",
+            "user_email": "teacher@example.com",
+            "ip_address": "2a00:79e1:2c00:6100::1",
+            "timestamp_epoch": login_ep,
+            "timestamp_iso": datetime.fromtimestamp(login_ep, tz=timezone.utc)
+            .isoformat()
+            .replace("+00:00", "Z"),
+            "login_type": "google_password",
+            "is_suspicious": False,
+        }
+    ]
+
+    cfg = TenantConfig(
+        customer_id="customers/my_customer",
+        session_watch_enabled=True,
+        session_watch_dry_run=False,
+        enforcement_mode="BOTH",
+    )
+    with patch("backend.routes.session_watch.config_service.get_tenant_config", return_value=cfg), \
+         patch("backend.routes.session_watch.cloud_identity_service.service", mock_ci), \
+         patch("backend.routes.devices.cloud_identity_service.service", mock_ci), \
+         patch("backend.routes.session_watch.directory_service.list_recent_login_events", return_value=login_events), \
+         patch("backend.routes.session_watch.directory_service.get_user_chromeos_devices", return_value=[]), \
+         patch("backend.routes.session_watch.directory_service.is_user_in_session_watch_scope", return_value=(True, "IN_SCOPE")), \
+         patch("backend.routes.session_watch.directory_service.sign_out_user", return_value=True) as mock_sign_out:
+        resp = client.post(
+            "/api/session-watch/live-sweep",
+            json={"lookback_minutes": 60, "force": True},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["revoked_count"] == 0
+        mock_sign_out.assert_not_called()
+        allowed_actions = [
+            a for a in session_guard.get_recent_actions() if a.get("decision") == "ALLOW_ATTESTED"
+        ]
+        assert any(a.get("matched_serial") == "C1L14000LH" for a in allowed_actions)
+
+
+
 
 

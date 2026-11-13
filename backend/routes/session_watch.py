@@ -1157,9 +1157,10 @@ def _execute_single_live_sweep_pass(
 
                         if found_dev is None:
                             # If no unapproved device is active and Cloud Identity shows an APPROVED device
-                            # that synced within the last 180 seconds (or when evaluating a background OAuth
-                            # `reauth` / `0.0.0.0` event for a user with an approved device), auto-attest
-                            # so logging into or using an approved Chromebook/BYOD device isn't signed out.
+                            # that synced recently (allowing for mid-sweep syncs and clock skew) or when evaluating
+                            # a background OAuth `reauth` / `0.0.0.0` event for a user with an approved device,
+                            # auto-attest so logging into or using an approved Chromebook/BYOD device isn't signed out.
+                            fresh_now = time.time()
                             user_has_reauth_or_unspecified_ip = any(
                                 ev_item.user_email.strip().lower() == norm_user
                                 and (
@@ -1168,10 +1169,11 @@ def _execute_single_live_sweep_pass(
                                 )
                                 for ev_item in audit_events
                             )
+                            promoted_any = False
                             for rec in raw_records:
                                 rec_sync_ep = float(rec.get("sync_epoch") or 0.0)
                                 is_recent_sync = bool(
-                                    rec.get("last_sync_str") and 0.0 <= (now - rec_sync_ep) <= 180.0
+                                    rec.get("last_sync_str") and -60.0 <= (fresh_now - rec_sync_ep) <= 300.0
                                 )
                                 if rec.get("approval_state") == "APPROVED" and (
                                     is_recent_sync or user_has_reauth_or_unspecified_ip
@@ -1197,9 +1199,51 @@ def _execute_single_live_sweep_pass(
                                                     serial_number=eff_serial,
                                                     device_type=dtype_tag,
                                                     ip_address=ev_item.ip_address,
-                                                    now_epoch=now,
+                                                    now_epoch=fresh_now,
                                                 )
+                                                promoted_any = True
                                     break
+                            if not promoted_any:
+                                from backend.routes.devices import sync_time_sort_key
+
+                                cros_devs = (
+                                    directory_service.get_user_chromeos_devices(
+                                        user_email=norm_user, customer_id=cid
+                                    )
+                                    or []
+                                )
+                                for cb in cros_devs:
+                                    cros_sync_str = cb.get("last_sync_time")
+                                    cros_sync_ep = (
+                                        sync_time_sort_key(cros_sync_str)
+                                        if cros_sync_str and cros_sync_str != "N/A"
+                                        else 0.0
+                                    )
+                                    is_cros_recent = bool(
+                                        cros_sync_ep > 0 and -60.0 <= (fresh_now - cros_sync_ep) <= 300.0
+                                    )
+                                    if is_cros_recent or user_has_reauth_or_unspecified_ip:
+                                        eff_serial = (
+                                            str(cb.get("serial_number") or cb.get("device_user_name") or "")
+                                            .strip()
+                                            .upper()
+                                        )
+                                        if not eff_serial or eff_serial == "N/A":
+                                            continue
+                                        for ev_item in audit_events:
+                                            if ev_item.user_email.strip().lower() == norm_user:
+                                                if is_cros_recent or (
+                                                    ev_item.login_type == "reauth"
+                                                    or (ev_item.ip_address or "").strip() in ("", "0.0.0.0", "unknown")
+                                                ):
+                                                    session_guard.promote_approved_device(
+                                                        user_email=norm_user,
+                                                        serial_number=eff_serial,
+                                                        device_type="CHROMEOS",
+                                                        ip_address=ev_item.ip_address,
+                                                        now_epoch=fresh_now,
+                                                    )
+                                        break
                     except Exception as ci_err:
                         print(
                             f"WARNING [session_watch.py]: Unapproved device check notice for '{norm_user}': {ci_err}"
